@@ -7,7 +7,6 @@ import { stripFrontmatter } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type { McpClientManager } from "../mcp/index.js";
 import type { SkillRegistry } from "./skill-registry.js";
-import { registerMcpToolProxies } from "./mcp-tool-proxy.js";
 
 const LoadSkillParams = Type.Object({
   name: Type.String({ description: "Name of the MCP skill to load" }),
@@ -118,12 +117,11 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Register MCP tool proxies and gate them into visibility
+      // Activate allowed-tools (already pre-registered as proxies at session_start)
       let activatedTools: string[] = [];
       if (skill.allowedTools.length > 0) {
-        const registered = registerMcpToolProxies(skill.allowedTools, mcpManager, pi);
         const currentTools = pi.getActiveTools();
-        activatedTools = registered.filter((t) => !currentTools.includes(t));
+        activatedTools = skill.allowedTools.filter((t) => !currentTools.includes(t));
         if (activatedTools.length > 0) {
           pi.setActiveTools([...currentTools, ...activatedTools]);
         }

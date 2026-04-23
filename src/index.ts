@@ -6,6 +6,7 @@ import {
   createLoadSkillTool,
   discoverSkillsFromServer,
   formatMcpSkillsForPrompt,
+  registerMcpToolProxies,
 } from "./skills/index.js";
 
 export default function (pi: ExtensionAPI) {
@@ -44,6 +45,10 @@ export default function (pi: ExtensionAPI) {
         log(
           `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
         );
+
+        // Pre-register all MCP tools as Pi tool proxies (hidden until skill activation)
+        const allToolNames = tools.map((t) => t.name);
+        registerMcpToolProxies(allToolNames, mcpManager, pi);
 
         // Discover skills from all connected servers
         for (const serverName of mcpManager.getConnectedServers()) {
