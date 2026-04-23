@@ -50,3 +50,10 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** Can Pi's `github-copilot` provider use the Actions `GITHUB_TOKEN` for model inference in CI?
 **Decision:** Yes. The GitHub Models API (GA since April 2025) grants model inference to the Actions `GITHUB_TOKEN` when the workflow declares `permissions: models: read`. Pi's `--provider github-copilot` uses this same API. The CI workflow declares this permission so future e2e tests can run Pi with model access without a PAT.
 **Rationale:** Using the built-in `GITHUB_TOKEN` avoids storing secrets for CI model access. The `models: read` scope is the minimum required — no write access needed. This enables full trajectory e2e tests in CI (connect to MCP servers, run Pi agent, verify results).
+
+## 007 — Custom skill registry for MCP skills, not Pi's native skill system
+
+**Date:** 2026-04-23
+**Context:** Should MCP-discovered skills use Pi's built-in `loadSkills`/`formatSkillsForPrompt` pipeline (writing SKILL.md files to disk) or a custom in-extension registry?
+**Decision:** Custom `SkillRegistry` + `load_skill` tool + `formatMcpSkillsForPrompt`, styled after Pi's native skill system but fully self-contained in the extension. Skills are discovered from MCP `skill://` resources and injected into the system prompt via the `before_agent_start` hook.
+**Rationale:** MCP skills live on remote servers, not on disk. Writing them to temp files would be fragile and unnecessary. The custom approach keeps MCP skills self-contained, gives us full control over the activation → tool gating flow, and avoids coupling to Pi's internal skill loader. The XML format matches Pi's `<available_skills>` pattern so models already know how to interact with it.
