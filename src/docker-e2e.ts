@@ -15,14 +15,13 @@ const DockerE2EParams = Type.Object({
   }),
   model: Type.Optional(
     Type.String({
-      description:
-        "Model to use (e.g. claude-sonnet-4-5). Defaults to the provider default.",
-    })
+      description: "Model to use (e.g. claude-sonnet-4-5). Defaults to the provider default.",
+    }),
   ),
   timeout: Type.Optional(
     Type.Number({
       description: "Timeout in seconds. Defaults to 300 (5 minutes).",
-    })
+    }),
   ),
 });
 
@@ -115,16 +114,8 @@ export function extractModel(log: RunLogEntry[]): string | undefined {
   return undefined;
 }
 
-export function buildDockerArgs(
-  image: string,
-  params: DockerE2EInput
-): string[] {
-  const args = [
-    "run",
-    "--rm",
-    "-e",
-    `GITHUB_TOKEN=${params.token}`,
-  ];
+export function buildDockerArgs(image: string, params: DockerE2EInput): string[] {
+  const args = ["run", "--rm", "-e", `GITHUB_TOKEN=${params.token}`];
 
   if (params.model) {
     args.push("-e", `PI_MODEL=${params.model}`);
@@ -139,8 +130,7 @@ export const dockerE2ETool = {
   label: "Docker E2E",
   description:
     "Run a task end-to-end inside an isolated Docker container with pi and this project's extensions. Returns the full run log for evaluation.",
-  promptSnippet:
-    "Run an isolated e2e task in Docker. Requires a GitHub token and task prompt.",
+  promptSnippet: "Run an isolated e2e task in Docker. Requires a GitHub token and task prompt.",
   parameters: DockerE2EParams,
 
   async execute(
@@ -148,7 +138,7 @@ export const dockerE2ETool = {
     params: DockerE2EInput,
     signal: AbortSignal | undefined,
     onUpdate: AgentToolUpdateCallback<DockerE2EDetails> | undefined,
-    _ctx: ExtensionContext
+    _ctx: ExtensionContext,
   ): Promise<AgentToolResult<DockerE2EDetails>> {
     const startTime = Date.now();
     const timeoutMs = (params.timeout ?? 300) * 1000;

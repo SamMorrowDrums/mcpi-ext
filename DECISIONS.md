@@ -7,7 +7,7 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Date:** 2026-04-23
 **Context:** Should we fork pi to build the MCP agent harness, or use the extension API?
 **Decision:** Build as a pi extension. The extension API provides everything we need: `registerTool()`, `setActiveTools()`, `on("tool_result", ...)`, `exec()`, lifecycle hooks.
-**Rationale:** Everything in scope (skill-gated tool visibility, football CLI, code mode, output offloading) is policy and orchestration — deciding *when* and *how* to expose MCP tools to the model. That's extension territory. We'd only need to fork if we needed to change pi's tool dispatch, context assembly, or model loop.
+**Rationale:** Everything in scope (skill-gated tool visibility, football CLI, code mode, output offloading) is policy and orchestration — deciding _when_ and _how_ to expose MCP tools to the model. That's extension territory. We'd only need to fork if we needed to change pi's tool dispatch, context assembly, or model loop.
 
 ## 002 — Agent harness controls tool visibility, not MCP servers
 
@@ -22,11 +22,11 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** How should the model access MCP tools?
 **Decision:** Three tiers of access, all complementary:
 
-| Tier | Mechanism | When Used |
-|------|-----------|-----------|
-| 1 — Skills (#1) | Skill loaded → `allowed-tools` exact-matched → tools visible | MCP server ships skills |
-| 2 — Football (#2) | CLI progressive discovery → HITL for writes | Ad-hoc exploration, no skills |
-| 3 — Code Mode (#4) | search+execute → no HITL | Read-only tools with structured output |
+| Tier               | Mechanism                                                    | When Used                              |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------- |
+| 1 — Skills (#1)    | Skill loaded → `allowed-tools` exact-matched → tools visible | MCP server ships skills                |
+| 2 — Football (#2)  | CLI progressive discovery → HITL for writes                  | Ad-hoc exploration, no skills          |
+| 3 — Code Mode (#4) | search+execute → no HITL                                     | Read-only tools with structured output |
 
 **Rationale:** Different situations call for different access patterns. Skills give direct access with workflow knowledge. Football gives interactive access with safety. Code mode gives autonomous access to safe operations at scale.
 

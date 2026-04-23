@@ -41,6 +41,9 @@ mise run build       # compile TypeScript
 mise run test        # run tests
 mise run dev         # watch mode for development
 mise run check       # type-check only
+mise run lint        # lint TypeScript files
+mise run format      # auto-format code with Prettier
+mise run format:check # check formatting (CI mode)
 ```
 
 ## Project Structure
@@ -52,6 +55,15 @@ mise.toml      Tool versions and tasks
 package.json   Dependencies and npm scripts
 tsconfig.json  TypeScript configuration
 ```
+
+## Code Quality
+
+- **ESLint** — flat config with `typescript-eslint` (strict + stylistic) and Prettier compat
+- **Prettier** — auto-formatting (double quotes, semicolons, trailing commas, 100 char width)
+- **CI** — GitHub Actions runs lint → format:check → type-check → build → test on every PR
+- **Dependabot** — automated dependency updates (npm + GitHub Actions)
+
+Run `mise run lint` and `mise run format` before committing. CI will reject PRs that fail any check.
 
 ## Decision Log
 

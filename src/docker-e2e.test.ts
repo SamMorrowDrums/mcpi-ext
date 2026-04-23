@@ -12,15 +12,15 @@ describe("parseJsonlLine", () => {
     const line = '{"type":"message_start","message":{"role":"assistant"}}';
     const result = parseJsonlLine(line);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("message_start");
-    expect(result!.raw).toBe(line);
+    expect(result?.type).toBe("message_start");
+    expect(result?.raw).toBe(line);
   });
 
   it("returns raw type for non-JSON", () => {
     const result = parseJsonlLine("some plain text output");
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("raw");
-    expect(result!.raw).toBe("some plain text output");
+    expect(result?.type).toBe("raw");
+    expect(result?.raw).toBe("some plain text output");
   });
 
   it("returns null for empty lines", () => {
@@ -30,7 +30,7 @@ describe("parseJsonlLine", () => {
 
   it("defaults to unknown type when type field missing", () => {
     const result = parseJsonlLine('{"data":"hello"}');
-    expect(result!.type).toBe("unknown");
+    expect(result?.type).toBe("unknown");
   });
 });
 
