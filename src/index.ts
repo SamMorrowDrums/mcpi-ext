@@ -18,27 +18,29 @@ export default function (pi: ExtensionAPI) {
     }
 
     const configPath = pi.getFlag("mcp-config") as string | undefined;
+    const log = (msg: string) => {
+      if (ctx.hasUI) {
+        ctx.ui.notify(msg, "info");
+      } else {
+        console.error(msg);
+      }
+    };
     try {
       const config = await loadMcpConfig(configPath);
       const serverCount = Object.keys(config.mcpServers).length;
       if (serverCount > 0) {
-        await mcpManager.connectAll(config, (msg) => {
-          if (ctx.hasUI) {
-            ctx.ui.notify(msg, "info");
-          }
-        });
+        await mcpManager.connectAll(config, log);
         const tools = mcpManager.getTools();
-        if (ctx.hasUI) {
-          ctx.ui.notify(
-            `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
-            "info",
-          );
-        }
+        log(
+          `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
+        );
       }
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
       if (ctx.hasUI) {
         ctx.ui.notify(msg, "warning");
+      } else {
+        console.error(msg);
       }
     }
   });

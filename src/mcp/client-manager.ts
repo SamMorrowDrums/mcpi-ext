@@ -74,7 +74,7 @@ export class McpClientManager {
             onChanged: (_error, tools) => {
               if (tools) {
                 const conn = this.connections.get(name);
-                if (conn) {
+                if (conn && conn.client === client) {
                   conn.tools = toMcpTools(name, tools);
                   log(`[mcp] Tools updated for "${name}" (${conn.tools.length} tools)`);
                 }
@@ -85,13 +85,32 @@ export class McpClientManager {
       },
     );
 
-    await client.connect(transport);
+    // Insert placeholder so listChanged notifications during connect aren't dropped
+    this.connections.set(name, { client, transport, tools: [] });
 
-    const toolsResult = await client.listTools();
-    const tools = toMcpTools(name, toolsResult.tools);
-    log(`[mcp] Connected to "${name}" (${tools.length} tools)`);
+    try {
+      await client.connect(transport);
 
-    this.connections.set(name, { client, transport, tools });
+      const toolsResult = await client.listTools();
+      const tools = toMcpTools(name, toolsResult.tools);
+      const conn = this.connections.get(name);
+      if (conn && conn.client === client) {
+        conn.tools = tools;
+      }
+      log(`[mcp] Connected to "${name}" (${tools.length} tools)`);
+    } catch (error) {
+      // Clean up on failure so we don't leak a partially connected client
+      const conn = this.connections.get(name);
+      if (conn && conn.client === client) {
+        this.connections.delete(name);
+      }
+      try {
+        await client.close();
+      } catch {
+        // best-effort cleanup
+      }
+      throw error;
+    }
   }
 
   /** Disconnect a single server. */

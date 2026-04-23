@@ -222,4 +222,29 @@ describe("McpClientManager", () => {
       Client.prototype.connect = origConnect;
     }
   });
+
+  it("updates tools when list_changed notification fires", async () => {
+    const logs: string[] = [];
+    await manager.connectAll({ mcpServers: { srv: { type: "stdio", command: "echo" } } }, (msg) =>
+      logs.push(msg),
+    );
+
+    expect(manager.getToolsForServer("srv")).toHaveLength(2);
+
+    // Simulate a tools/list_changed notification via the mock
+    const client = manager.getClient("srv") as unknown as {
+      _simulateToolsChanged: (tools: unknown[]) => void;
+    };
+    client._simulateToolsChanged([
+      {
+        name: "new_tool",
+        description: "A dynamically added tool",
+        inputSchema: { type: "object", properties: {} },
+      },
+    ]);
+
+    expect(manager.getToolsForServer("srv")).toHaveLength(1);
+    expect(manager.getToolsForServer("srv")[0].name).toBe("new_tool");
+    expect(logs.some((l) => l.includes("Tools updated"))).toBe(true);
+  });
 });
