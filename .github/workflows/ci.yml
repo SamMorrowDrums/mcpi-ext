@@ -28,6 +28,11 @@ jobs:
       - name: Lint
         run: aube run lint
 
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+
       - name: Check formatting
         run: aube run format:check
 
@@ -39,3 +44,6 @@ jobs:
 
       - name: Test
         run: aube run test
+
+      - name: MCP integration smoke test
+        run: mise run test:integration
