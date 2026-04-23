@@ -14,6 +14,9 @@ importers:
       picomatch:
         specifier: ^3 || ^4
         version: 4.0.4
+      typebox:
+        specifier: ^1.1.31
+        version: 1.1.31
       vite:
         specifier: ^6.0.0 || ^7.0.0 || ^8.0.0
         version: 8.0.10(@types/node@25.6.0)(yaml@2.8.3)

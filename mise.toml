@@ -21,3 +21,7 @@ run = "aube run check"
 [tasks.start]
 description = "Run the built project"
 run = "aube run start"
+
+[tasks.docker-build]
+description = "Build the Docker e2e image"
+run = "docker build -t pi-mcp-agent-e2e ."
