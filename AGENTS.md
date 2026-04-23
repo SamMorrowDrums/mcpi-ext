@@ -61,7 +61,6 @@ tsconfig.json  TypeScript configuration
 - **ESLint** — flat config with `typescript-eslint` (strict + stylistic) and Prettier compat
 - **Prettier** — auto-formatting (double quotes, semicolons, trailing commas, 100 char width)
 - **CI** — GitHub Actions runs lint → format:check → type-check → build → test on every PR
-- **CodeQL** — automated code scanning for security vulnerabilities
 - **Dependabot** — automated dependency updates (npm + GitHub Actions)
 
 Run `mise run lint` and `mise run format` before committing. CI will reject PRs that fail any check.
