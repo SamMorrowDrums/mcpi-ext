@@ -47,8 +47,14 @@ export function registerMcpToolProxies(
 }
 
 function createMcpToolProxy(mcpTool: McpTool, mcpManager: McpClientManager) {
-  // Use a permissive schema — MCP server validates the real constraints
-  const parameters = Type.Record(Type.String(), Type.Unknown());
+  // Pass through the MCP tool's JSON Schema directly via Type.Unsafe()
+  // This preserves the original property names and types for the model
+  const inputSchema = mcpTool.inputSchema;
+  const parameters = Type.Unsafe({
+    type: "object",
+    properties: (inputSchema.properties as Record<string, unknown>) ?? {},
+    required: (inputSchema.required as string[]) ?? [],
+  });
 
   return {
     name: mcpTool.name,
