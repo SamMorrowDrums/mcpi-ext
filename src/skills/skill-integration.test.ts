@@ -15,11 +15,17 @@ describe("skill integration (weather server)", () => {
   const registry = new SkillRegistry();
   let activeTools: string[];
   let client: Client;
+  const registeredTools = new Map<string, unknown>();
 
   const mockPi = {
     getActiveTools: () => [...activeTools],
     setActiveTools: (tools: string[]) => {
       activeTools = tools;
+    },
+    getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registerTool: (tool: any) => {
+      registeredTools.set(tool.name, tool);
     },
   };
 

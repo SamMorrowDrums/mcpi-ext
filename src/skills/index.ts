@@ -6,3 +6,4 @@ export {
   type LoadSkillDetails,
 } from "./load-skill-tool.js";
 export { discoverSkillsFromServer } from "./discover.js";
+export { registerMcpToolProxies } from "./mcp-tool-proxy.js";
