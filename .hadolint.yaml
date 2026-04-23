@@ -1,0 +1,6 @@
+# hadolint configuration
+# DL3008: Pin versions in apt-get — not practical for a dev/e2e image
+# SC1091: Can't follow sourced file (/etc/os-release) — false positive
+ignored:
+  - DL3008
+  - SC1091
