@@ -53,6 +53,10 @@ package.json   Dependencies and npm scripts
 tsconfig.json  TypeScript configuration
 ```
 
+## Decision Log
+
+We maintain a [DECISIONS.md](DECISIONS.md) file recording key architectural and design decisions. Keep it up to date when making significant choices — add a new numbered entry with date, context, decision, and rationale.
+
 ## Conventions
 
 - ESM (`"type": "module"`)
