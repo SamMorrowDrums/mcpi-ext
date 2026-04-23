@@ -64,8 +64,12 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
+        // Hide MCP tools that are gated behind skills
         if (skillRegistry.size > 0) {
-          log(`MCP: ${skillRegistry.size} skill(s) discovered`);
+          const gatedTools = new Set(skillRegistry.getAll().flatMap((s) => s.allowedTools));
+          const activeTools = pi.getActiveTools().filter((t) => !gatedTools.has(t));
+          pi.setActiveTools(activeTools);
+          log(`MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.size} tool(s) gated`);
         }
       }
     } catch (err) {
