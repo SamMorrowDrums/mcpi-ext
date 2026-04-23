@@ -18,6 +18,18 @@ run = "aube run test"
 description = "Type-check without emitting"
 run = "aube run check"
 
+[tasks.lint]
+description = "Lint TypeScript files"
+run = "aube run lint"
+
+[tasks.format]
+description = "Format code with Prettier"
+run = "aube run format"
+
+[tasks."format:check"]
+description = "Check code formatting"
+run = "aube run format:check"
+
 [tasks.start]
 description = "Run the built project"
 run = "aube run start"
