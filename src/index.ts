@@ -1,6 +1,13 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
+import {
+  SkillRegistry,
+  createLoadSkillTool,
+  discoverSkillsFromServer,
+  formatMcpSkillsForPrompt,
+  registerMcpToolProxies,
+} from "./skills/index.js";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool(dockerE2ETool);
@@ -11,6 +18,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   const mcpManager = new McpClientManager();
+  const skillRegistry = new SkillRegistry();
+
+  // Register the load_skill tool so the model can activate MCP skills
+  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.hasUI) {
@@ -34,6 +45,28 @@ export default function (pi: ExtensionAPI) {
         log(
           `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
         );
+
+        // Pre-register all MCP tools as Pi tool proxies (hidden until skill activation)
+        const allToolNames = tools.map((t) => t.name);
+        registerMcpToolProxies(allToolNames, mcpManager, pi);
+
+        // Discover skills from all connected servers
+        for (const serverName of mcpManager.getConnectedServers()) {
+          const client = mcpManager.getClient(serverName);
+          if (!client) continue;
+          try {
+            const skills = await discoverSkillsFromServer(client, serverName, log);
+            skillRegistry.registerAll(skills);
+          } catch (err) {
+            log(
+              `[skills] Failed to discover skills from "${serverName}": ${(err as Error).message}`,
+            );
+          }
+        }
+
+        if (skillRegistry.size > 0) {
+          log(`MCP: ${skillRegistry.size} skill(s) discovered`);
+        }
       }
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
@@ -45,7 +78,16 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  // Inject MCP skills into the system prompt before each agent loop
+  pi.on("before_agent_start", async (event) => {
+    const skills = skillRegistry.getAll();
+    if (skills.length === 0) return;
+    const skillsSection = formatMcpSkillsForPrompt(skills);
+    return { systemPrompt: event.systemPrompt + skillsSection };
+  });
+
   pi.on("session_shutdown", async () => {
     await mcpManager.disconnectAll();
+    skillRegistry.clear();
   });
 }

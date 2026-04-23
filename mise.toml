@@ -42,3 +42,8 @@ run = "docker build -t pi-mcp-agent-e2e ."
 description = "Run MCP integration smoke test"
 depends = ["build"]
 run = "node scripts/test-mcp-integration.mjs"
+
+[tasks."test:skill-integration"]
+description = "Run skill discovery integration test (requires build)"
+depends = ["build"]
+run = "npx vitest run src/skills/skill-integration.test.ts"
