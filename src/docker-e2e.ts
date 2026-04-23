@@ -138,7 +138,7 @@ export const dockerE2ETool = {
     params: DockerE2EInput,
     signal: AbortSignal | undefined,
     onUpdate: AgentToolUpdateCallback<DockerE2EDetails> | undefined,
-    _ctx: ExtensionContext, // eslint-disable-line @typescript-eslint/no-unused-vars
+    _ctx: ExtensionContext,
   ): Promise<AgentToolResult<DockerE2EDetails>> {
     const startTime = Date.now();
     const timeoutMs = (params.timeout ?? 300) * 1000;
