@@ -23,8 +23,8 @@ export function formatMcpSkillsForPrompt(skills: McpSkillMetadata[]): string {
     "",
     "",
     "The following MCP skills provide specialized instructions for specific tasks.",
-    "Use the load_skill tool to activate a skill when the task matches its description.",
-    "On activation, the skill's instructions load into context and its tools become available.",
+    "You MUST call load_skill before using any MCP tool. MCP tools will be blocked until their skill is loaded.",
+    "On activation, the skill's instructions load into context and its tools become usable.",
     "",
     "<available_mcp_skills>",
   ];

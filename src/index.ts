@@ -19,6 +19,8 @@ export default function (pi: ExtensionAPI) {
 
   const mcpManager = new McpClientManager();
   const skillRegistry = new SkillRegistry();
+  // Tracks which MCP tools have been activated via load_skill
+  const activatedMcpTools = new Set<string>();
 
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
@@ -46,7 +48,7 @@ export default function (pi: ExtensionAPI) {
           `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
         );
 
-        // Pre-register all MCP tools as Pi tool proxies (hidden until skill activation)
+        // Pre-register all MCP tools as Pi tool proxies (visible to model)
         const allToolNames = tools.map((t) => t.name);
         registerMcpToolProxies(allToolNames, mcpManager, pi);
 
@@ -64,12 +66,8 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // Hide MCP tools that are gated behind skills
         if (skillRegistry.size > 0) {
-          const gatedTools = new Set(skillRegistry.getAll().flatMap((s) => s.allowedTools));
-          const activeTools = pi.getActiveTools().filter((t) => !gatedTools.has(t));
-          pi.setActiveTools(activeTools);
-          log(`MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.size} tool(s) gated`);
+          log(`MCP: ${skillRegistry.size} skill(s) discovered`);
         }
       }
     } catch (err) {
@@ -90,8 +88,39 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt + skillsSection };
   });
 
+  // Block MCP tools that haven't been activated via load_skill
+  pi.on("tool_call", async (event) => {
+    if (event.toolName === "load_skill") {
+      // After load_skill executes, track its activated tools.
+      // We peek at the skill registry to know which tools to unlock.
+      const name = (event as { input: { name?: string } }).input.name;
+      if (name) {
+        const skill = skillRegistry.get(name);
+        if (skill) {
+          for (const tool of skill.allowedTools) {
+            activatedMcpTools.add(tool);
+          }
+        }
+      }
+      return;
+    }
+
+    // Check if this is a gated MCP tool that hasn't been activated
+    const allGated = new Set(skillRegistry.getAll().flatMap((s) => s.allowedTools));
+    if (allGated.has(event.toolName) && !activatedMcpTools.has(event.toolName)) {
+      // Find which skill gates this tool
+      const skill = skillRegistry.getAll().find((s) => s.allowedTools.includes(event.toolName));
+      const skillName = skill?.name ?? "unknown";
+      return {
+        block: true,
+        reason: `Tool "${event.toolName}" requires loading the "${skillName}" skill first. Call load_skill({"name": "${skillName}"}) to activate it.`,
+      };
+    }
+  });
+
   pi.on("session_shutdown", async () => {
     await mcpManager.disconnectAll();
     skillRegistry.clear();
+    activatedMcpTools.clear();
   });
 }
