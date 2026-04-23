@@ -198,7 +198,10 @@ describe("McpClientManager", () => {
     Client.prototype.connect = async function (transport: unknown) {
       callCount++;
       if (callCount === 1) throw new Error("Connection refused");
-      return origConnect.call(this, transport as import("@modelcontextprotocol/sdk/shared/transport.js").Transport);
+      return origConnect.call(
+        this,
+        transport as import("@modelcontextprotocol/sdk/shared/transport.js").Transport,
+      );
     };
 
     try {

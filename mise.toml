@@ -37,3 +37,8 @@ run = "aube run start"
 [tasks.docker-build]
 description = "Build the Docker e2e image"
 run = "docker build -t pi-mcp-agent-e2e ."
+
+[tasks."test:integration"]
+description = "Run MCP integration smoke test"
+depends = ["build"]
+run = "node scripts/test-mcp-integration.mjs"

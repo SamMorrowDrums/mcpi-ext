@@ -65,6 +65,14 @@ tsconfig.json  TypeScript configuration
 
 Run `mise run lint` and `mise run format` before committing. CI will reject PRs that fail any check.
 
+**Before pushing**, always run:
+
+```sh
+mise run lint        # lint must pass
+mise run test        # tests must pass
+mise run format:check # formatting must pass
+```
+
 ## Decision Log
 
 We maintain a [DECISIONS.md](DECISIONS.md) file recording key architectural and design decisions. Keep it up to date when making significant choices — add a new numbered entry with date, context, decision, and rationale.
