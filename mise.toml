@@ -1,0 +1,23 @@
+[tools]
+aube = "latest"
+node = "22"
+
+[tasks.build]
+description = "Build TypeScript"
+run = "aube run build"
+
+[tasks.dev]
+description = "Watch mode"
+run = "aube run dev"
+
+[tasks.test]
+description = "Run tests"
+run = "aube run test"
+
+[tasks.check]
+description = "Type-check without emitting"
+run = "aube run check"
+
+[tasks.start]
+description = "Run the built project"
+run = "aube run start"
