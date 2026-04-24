@@ -2,7 +2,7 @@
   "name": "pi-mcp-agent",
   "version": "0.1.0",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "@mariozechner/pi-coding-agent": "file:../../../repos/pi-mono/packages/coding-agent",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "isolated-vm": "^6.1.2",
     "typebox": "^1.1.31",
