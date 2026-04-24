@@ -21,4 +21,13 @@ describe("formatToolCliForPrompt", () => {
     const result = formatToolCliForPrompt(1);
     expect(result).toContain("prefer the skill");
   });
+
+  it("includes shell chaining and piping examples", () => {
+    const result = formatToolCliForPrompt(1);
+    expect(result).toContain("grep");
+    expect(result).toContain("|");
+    expect(result).toContain("jq");
+    expect(result).toContain("xargs");
+    expect(result).toContain("Prefer piping and chaining");
+  });
 });
