@@ -28,7 +28,7 @@ export function registerMcpToolProxies(
   const allTools = mcpManager.getTools();
 
   // Check which tools are already registered to avoid double-registration
-  const existingTools = new Set(pi.getAllTools().map((t) => t.name));
+  const existingTools = new Set(pi.getAllTools().map((t: { name: string }) => t.name));
 
   for (const name of toolNames) {
     if (existingTools.has(name)) {

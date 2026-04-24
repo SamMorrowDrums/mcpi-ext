@@ -1,4 +1,9 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type {
+  BeforeAgentStartEvent,
+  ExtensionAPI,
+  ExtensionContext,
+  SessionStartEvent,
+} from "@mariozechner/pi-coding-agent";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
 import {
@@ -23,7 +28,7 @@ export default function (pi: ExtensionAPI) {
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     if (ctx.hasUI) {
       ctx.ui.notify("pi-mcp-agent loaded", "info");
     }
@@ -68,7 +73,7 @@ export default function (pi: ExtensionAPI) {
         // Requires pi >= 0.70.0 (dynamic tool refresh in agent loop).
         if (skillRegistry.size > 0) {
           const gatedTools = new Set(skillRegistry.getAll().flatMap((s) => s.allowedTools));
-          const activeTools = pi.getActiveTools().filter((t) => !gatedTools.has(t));
+          const activeTools = pi.getActiveTools().filter((t: string) => !gatedTools.has(t));
           pi.setActiveTools(activeTools);
           log(`MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.size} tool(s) gated`);
         }
@@ -84,7 +89,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Inject MCP skills into the system prompt before each agent loop
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", async (event: BeforeAgentStartEvent) => {
     const skills = skillRegistry.getAll();
     if (skills.length === 0) return;
     const skillsSection = formatMcpSkillsForPrompt(skills);
