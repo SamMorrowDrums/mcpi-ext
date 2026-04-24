@@ -117,7 +117,13 @@ describe("skill integration (weather server)", () => {
       arguments: { city: "Tokyo" },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((weather.content as any)[0].text).toContain("26°C");
+    expect((weather.content as any)[0].text).toContain("26");
+    expect(weather.structuredContent).toEqual({
+      temperature: 26,
+      conditions: "Sunny",
+      humidity: 55,
+      city: "Tokyo",
+    });
 
     const forecast = await client.callTool({
       name: "check_weekly_forecast_for_city",
@@ -125,6 +131,8 @@ describe("skill integration (weather server)", () => {
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((forecast.content as any)[0].text).toContain("London");
+    expect(forecast.structuredContent).toHaveProperty("city", "London");
+    expect(forecast.structuredContent).toHaveProperty("forecast");
   });
 
   it("load_skill returns error for unknown skill", async () => {
