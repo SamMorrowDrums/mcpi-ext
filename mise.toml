@@ -3,7 +3,13 @@ node = "22"
 
 [tasks.build]
 description = "Build TypeScript and link CLI binaries"
-run = ["npx tsc", "chmod +x dist/tool-cli/cli.js", "ln -sf ../../dist/tool-cli/cli.js node_modules/.bin/tool-cli"]
+run = [
+  "npx tsc",
+  "chmod +x dist/tool-cli/cli.js",
+  "ln -sf ../../dist/tool-cli/cli.js node_modules/.bin/tool-cli",
+  "mkdir -p ~/.local/bin",
+  "ln -sf $PWD/dist/tool-cli/cli.js ~/.local/bin/tool-cli",
+]
 
 [tasks.dev]
 description = "Watch mode"
