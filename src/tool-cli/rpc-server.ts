@@ -61,6 +61,8 @@ export class ToolCliRpcServer {
   async start(log?: (msg: string) => void): Promise<void> {
     if (this.server) return;
 
+    const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
+
     const server = http.createServer((req, res) => {
       if (req.method !== "POST") {
         res.writeHead(405, { "Content-Type": "application/json" });
@@ -69,21 +71,45 @@ export class ToolCliRpcServer {
       }
 
       let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
+      let aborted = false;
+
+      req.on("error", () => {
+        aborted = true;
       });
+
+      req.on("data", (chunk: Buffer) => {
+        if (aborted) return;
+        body += chunk.toString();
+        if (body.length > MAX_BODY_SIZE) {
+          aborted = true;
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(rpcError(null, -32600, "Request too large")));
+          req.destroy();
+        }
+      });
+
       req.on("end", () => {
-        void this.handleBody(body).then((response) => {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(response));
-        });
+        if (aborted) return;
+        void this.handleBody(body)
+          .then((response) => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
+          })
+          .catch(() => {
+            try {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(rpcError(null, -32603, "Internal error")));
+            } catch {
+              res.end();
+            }
+          });
       });
     });
 
     this.server = server;
 
     return new Promise<void>((resolve, reject) => {
-      server.on("error", reject);
+      server.once("error", reject);
       server.listen(this.port, "127.0.0.1", () => {
         log?.(`[tool-cli] RPC server listening on 127.0.0.1:${this.port}`);
         resolve();
