@@ -13,6 +13,7 @@ import {
   formatMcpSkillsForPrompt,
   registerMcpToolProxies,
 } from "./skills/index.js";
+import { ToolCliRpcServer, formatToolCliForPrompt } from "./tool-cli/index.js";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool(dockerE2ETool);
@@ -24,6 +25,7 @@ export default function (pi: ExtensionAPI) {
 
   const mcpManager = new McpClientManager();
   const skillRegistry = new SkillRegistry();
+  const rpcServer = new ToolCliRpcServer(mcpManager);
 
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
@@ -77,6 +79,13 @@ export default function (pi: ExtensionAPI) {
           pi.setActiveTools(activeTools);
           log(`MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.size} tool(s) gated`);
         }
+
+        // Start the tool-cli RPC server for progressive tool discovery
+        try {
+          await rpcServer.start(log);
+        } catch (err) {
+          log(`[tool-cli] Failed to start RPC server: ${(err as Error).message}`);
+        }
       }
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
@@ -88,15 +97,24 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Inject MCP skills into the system prompt before each agent loop
+  // Inject MCP skills and tool-cli advice into the system prompt before each agent loop
   pi.on("before_agent_start", async (event: BeforeAgentStartEvent) => {
+    let extra = "";
+
     const skills = skillRegistry.getAll();
-    if (skills.length === 0) return;
-    const skillsSection = formatMcpSkillsForPrompt(skills);
-    return { systemPrompt: event.systemPrompt + skillsSection };
+    if (skills.length > 0) {
+      extra += formatMcpSkillsForPrompt(skills);
+    }
+
+    const serverCount = mcpManager.getConnectedServers().length;
+    extra += formatToolCliForPrompt(serverCount);
+
+    if (extra.length === 0) return;
+    return { systemPrompt: event.systemPrompt + extra };
   });
 
   pi.on("session_shutdown", async () => {
+    await rpcServer.stop();
     await mcpManager.disconnectAll();
     skillRegistry.clear();
   });
