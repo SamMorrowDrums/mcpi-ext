@@ -16,8 +16,8 @@ interface McpToolProxyDetails {
  * Register MCP tools as Pi tool proxies.
  *
  * Each registered tool forwards calls to the MCP server via `client.callTool()`.
- * Uses a permissive TypeBox schema (Record<string, unknown>) since the real
- * validation happens on the MCP server side.
+ * Uses `Type.Unsafe()` to pass the MCP tool's original JSON Schema through
+ * to Pi, preserving property names and types for the model.
  */
 export function registerMcpToolProxies(
   toolNames: string[],
