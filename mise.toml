@@ -1,38 +1,37 @@
 [tools]
-aube = "latest"
 node = "22"
 
 [tasks.build]
 description = "Build TypeScript"
-run = "aube run build"
+run = "npx tsc"
 
 [tasks.dev]
 description = "Watch mode"
-run = "aube run dev"
+run = "npx tsc --watch"
 
 [tasks.test]
 description = "Run tests"
-run = "aube run test"
+run = "npx vitest --run"
 
 [tasks.check]
 description = "Type-check without emitting"
-run = "aube run check"
+run = "npx tsc --noEmit"
 
 [tasks.lint]
 description = "Lint TypeScript files"
-run = "aube run lint"
+run = "npx eslint ."
 
 [tasks.format]
 description = "Format code with Prettier"
-run = "aube run format"
+run = "npx prettier --write ."
 
 [tasks."format:check"]
 description = "Check code formatting"
-run = "aube run format:check"
+run = "npx prettier --check ."
 
 [tasks.start]
 description = "Run the built project"
-run = "aube run start"
+run = "node dist/index.js"
 
 [tasks.docker-build]
 description = "Build the Docker e2e image"
