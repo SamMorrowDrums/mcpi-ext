@@ -28,7 +28,7 @@ export function createCodeSearchTool(manager: CodeModeManager) {
     name: "code_search",
     label: "Code Search",
     description:
-      "Search the available read-only MCP tool catalog by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info.",
+      "Discover available read-only MCP tools by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info. Use this before code_execute to understand what data sources are available.",
     parameters: CodeInput,
 
     async execute(
@@ -73,7 +73,7 @@ export function createCodeExecuteTool(manager: CodeModeManager) {
     name: "code_execute",
     label: "Code Execute",
     description:
-      "Execute JavaScript that chains read-only MCP tool calls. Access tools via `codemode.toolName(args)`. Code runs in a sandbox — no filesystem, network, or Node.js API access.",
+      "Execute JavaScript that chains read-only MCP tool calls for computation over data. Use when you need to aggregate, filter, loop, or transform results across multiple tool calls. Access tools via `codemode.toolName(args)`. Runs in a sandbox — no filesystem, network, or Node.js API access.",
     parameters: CodeInput,
 
     async execute(
