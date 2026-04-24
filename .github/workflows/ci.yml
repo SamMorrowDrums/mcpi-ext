@@ -24,10 +24,10 @@ jobs:
       - uses: jdx/mise-action@v4
 
       - name: Install dependencies
-        run: aube install
+        run: npm install
 
       - name: Lint
-        run: aube run lint
+        run: mise run lint
 
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
@@ -35,16 +35,16 @@ jobs:
           dockerfile: Dockerfile
 
       - name: Check formatting
-        run: aube run format:check
+        run: mise run format:check
 
       - name: Type-check
-        run: aube run check
+        run: mise run check
 
       - name: Build
-        run: aube run build
+        run: mise run build
 
       - name: Test
-        run: aube run test
+        run: mise run test
 
       - name: MCP integration smoke test
         run: mise run test:integration
