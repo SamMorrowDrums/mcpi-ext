@@ -78,3 +78,17 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** The tool-cli RPC server listens on `127.0.0.1:7179` with no authentication. Any local process can discover and execute MCP tools through it.
 **Decision:** Accept this for now as a development convenience. The server is localhost-only, which limits the blast radius to local processes, but this is not a finished security posture. Before production use, add a shared secret (e.g. a one-time token passed via environment variable from the extension to the CLI) so only the intended agent process can make calls.
 **Rationale:** Adding auth now would complicate the initial implementation without changing the threat model much — the agent already has shell access and could call MCP tools through other means. But as the tool matures and especially once HITL gating is added for destructive tools, unauthenticated access would let other local processes bypass those safety checks. Auth is a prerequisite for trustworthy HITL.
+
+## 011 — Code mode uses `isolated-vm` for sandbox execution
+
+**Date:** 2026-04-24
+**Context:** Code mode (#4) lets the model write JavaScript to chain read-only MCP tool calls. The generated code runs in a sandbox. Options evaluated: Node `vm` module, `isolated-vm`, Deno subprocess, Cloudflare workerd, Pydantic/Python subprocess, WASM.
+**Decision:** Use `isolated-vm` (V8 isolates in Node.js). Provides memory limits (128MB default), CPU timeouts (30s default), and V8-level isolation. Tool dispatch via `Reference` async callbacks — actual MCP calls execute on the host, never in the sandbox.
+**Rationale:** Code mode has no HITL (human-in-the-loop) since all tools are read-only, making sandbox security important. Node's `vm` module is documented as "not a security mechanism" and is escapable via prototype pollution. `isolated-vm` provides genuine V8-level isolation with ~15ms overhead — negligible vs MCP network I/O. Deno subprocess (400ms/call) and workerd are too slow or complex for interactive use.
+
+## 012 — Code mode uses `ctx.eval` instead of `compileModule` for execution
+
+**Date:** 2026-04-24
+**Context:** Initial implementation used `isolate.compileModule()` + `module.evaluate()` for running sandboxed code with top-level await. Discovery: `module.evaluate()` resolves prematurely when multiple sequential `Reference.apply()` calls use `{ result: { promise: true } }` — the module evaluation promise resolves after the first async reference call, not after all code completes.
+**Decision:** Use `ctx.eval()` with `{ promise: true, copy: true }` instead. Wrap user code in an async IIFE that returns the final result.
+**Rationale:** `ctx.eval` with `promise: true` correctly awaits the full async IIFE, including all sequential tool dispatch calls. This is critical for code mode's chaining use case where the model writes for-loops calling multiple tools sequentially.

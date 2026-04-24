@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
   SessionStartEvent,
 } from "@mariozechner/pi-coding-agent";
+import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
 import {
@@ -26,6 +27,7 @@ export default function (pi: ExtensionAPI) {
   const mcpManager = new McpClientManager();
   const skillRegistry = new SkillRegistry();
   const rpcServer = new ToolCliRpcServer(mcpManager);
+  const codeModeManager = new CodeModeManager();
 
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
@@ -86,6 +88,17 @@ export default function (pi: ExtensionAPI) {
         } catch (err) {
           log(`[tool-cli] Failed to start RPC server: ${(err as Error).message}`);
         }
+
+        // Initialize code mode (Tier 3) for read-only tools with structured output
+        codeModeManager.initialize(mcpManager);
+        if (codeModeManager.isActive) {
+          const { codeSearch, codeExecute } = codeModeManager.createTools();
+          pi.registerTool(codeSearch);
+          pi.registerTool(codeExecute);
+          log(
+            `MCP: Code mode active (${codeModeManager.getEligibleTools().length} eligible tool(s))`,
+          );
+        }
       }
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
@@ -97,7 +110,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Inject MCP skills and tool-cli advice into the system prompt before each agent loop
+  // Inject MCP skills, tool-cli advice, and code mode type hints into the system prompt
   pi.on("before_agent_start", async (event: BeforeAgentStartEvent) => {
     let extra = "";
 
@@ -108,6 +121,10 @@ export default function (pi: ExtensionAPI) {
 
     const serverCount = mcpManager.getConnectedServers().length;
     extra += formatToolCliForPrompt(serverCount);
+
+    if (codeModeManager.isActive) {
+      extra += codeModeManager.formatSystemPromptSection();
+    }
 
     if (extra.length === 0) return;
     return { systemPrompt: event.systemPrompt + extra };
