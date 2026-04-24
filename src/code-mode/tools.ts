@@ -1,11 +1,12 @@
 import type { AgentToolResult, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import type { ExecuteResult } from "./executor.js";
 import type { CodeModeManager } from "./index.js";
 
 const CodeInput = Type.Object({
   code: Type.String({
     description:
-      "JavaScript code to execute. Use the `codemode` namespace to call tools (e.g. `codemode.search_docs({ query: 'test' })`). Code runs in a sandbox with no access to filesystem, network, or Node.js APIs.",
+      "JavaScript code to execute. Use the `codemode` namespace to call tools (e.g. `codemode.search_docs({ query: 'test' })`). Always `return` your final result. Code runs in a sandbox with no access to filesystem, network, or Node.js APIs.",
   }),
 });
 
@@ -15,6 +16,40 @@ export interface CodeModeToolDetails {
   executionMs: number;
   logs: string[];
   error?: string;
+}
+
+/** Format an ExecuteResult into a tool response. Falls back to logs if result is undefined. */
+function formatResult(
+  result: ExecuteResult,
+  executionMs: number,
+  errorPrefix: string,
+): AgentToolResult<CodeModeToolDetails> {
+  if (result.error) {
+    return {
+      content: [{ type: "text", text: `${errorPrefix}: ${result.error}` }],
+      details: { executionMs, logs: result.logs, error: result.error },
+    };
+  }
+
+  // If code didn't return a value, fall back to captured console output
+  const output =
+    result.result !== undefined && result.result !== null
+      ? typeof result.result === "string"
+        ? result.result
+        : JSON.stringify(result.result, null, 2)
+      : result.logs.length > 0
+        ? result.logs.join("\n")
+        : "(no return value)";
+
+  const logsSection =
+    result.result !== undefined && result.logs.length > 0
+      ? `\n\nLogs:\n${result.logs.join("\n")}`
+      : "";
+
+  return {
+    content: [{ type: "text", text: output + logsSection }],
+    details: { executionMs, logs: result.logs },
+  };
 }
 
 /**
@@ -40,23 +75,7 @@ export function createCodeSearchTool(manager: CodeModeManager) {
     ): Promise<AgentToolResult<CodeModeToolDetails>> {
       const start = performance.now();
       const result = await manager.searchTools(params.code);
-      const executionMs = Math.round(performance.now() - start);
-
-      if (result.error) {
-        return {
-          content: [{ type: "text", text: `Code search error: ${result.error}` }],
-          details: { executionMs, logs: result.logs, error: result.error },
-        };
-      }
-
-      const output =
-        typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2);
-      const logsSection = result.logs.length > 0 ? `\n\nLogs:\n${result.logs.join("\n")}` : "";
-
-      return {
-        content: [{ type: "text", text: output + logsSection }],
-        details: { executionMs, logs: result.logs },
-      };
+      return formatResult(result, Math.round(performance.now() - start), "Code search error");
     },
   };
 }
@@ -85,23 +104,7 @@ export function createCodeExecuteTool(manager: CodeModeManager) {
     ): Promise<AgentToolResult<CodeModeToolDetails>> {
       const start = performance.now();
       const result = await manager.executeCode(params.code);
-      const executionMs = Math.round(performance.now() - start);
-
-      if (result.error) {
-        return {
-          content: [{ type: "text", text: `Code execution error: ${result.error}` }],
-          details: { executionMs, logs: result.logs, error: result.error },
-        };
-      }
-
-      const output =
-        typeof result.result === "string" ? result.result : JSON.stringify(result.result, null, 2);
-      const logsSection = result.logs.length > 0 ? `\n\nLogs:\n${result.logs.join("\n")}` : "";
-
-      return {
-        content: [{ type: "text", text: output + logsSection }],
-        details: { executionMs, logs: result.logs },
-      };
+      return formatResult(result, Math.round(performance.now() - start), "Code execution error");
     },
   };
 }
