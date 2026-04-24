@@ -138,6 +138,24 @@ async function callTool(server: string, tool: string, argsJson: string): Promise
     structuredContent?: Record<string, unknown>;
   };
 
+  if (result.isError) {
+    // Error content goes to stderr so stdout stays clean for piping
+    if (result.structuredContent) {
+      console.error(JSON.stringify(result.structuredContent, null, 2));
+    } else if (result.content) {
+      for (const item of result.content) {
+        const entry = item as Record<string, unknown>;
+        if (entry.type === "text") {
+          console.error(entry.text);
+        } else {
+          console.error(JSON.stringify(entry, null, 2));
+        }
+      }
+    }
+    process.exit(1);
+    return;
+  }
+
   if (result.structuredContent) {
     console.log(JSON.stringify(result.structuredContent, null, 2));
   } else if (result.content) {
@@ -149,10 +167,6 @@ async function callTool(server: string, tool: string, argsJson: string): Promise
         console.log(JSON.stringify(entry, null, 2));
       }
     }
-  }
-
-  if (result.isError) {
-    process.exit(1);
   }
 }
 
