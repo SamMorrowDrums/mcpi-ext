@@ -2,8 +2,8 @@
 node = "22"
 
 [tasks.build]
-description = "Build TypeScript"
-run = "npx tsc"
+description = "Build TypeScript and link CLI binaries"
+run = ["npx tsc", "chmod +x dist/tool-cli/cli.js", "ln -sf ../../dist/tool-cli/cli.js node_modules/.bin/tool-cli"]
 
 [tasks.dev]
 description = "Watch mode"
@@ -41,6 +41,11 @@ run = "docker build -t pi-mcp-agent-e2e ."
 description = "Run MCP integration smoke test"
 depends = ["build"]
 run = "node scripts/test-mcp-integration.mjs"
+
+[tasks."test:tool-cli"]
+description = "Run tool-cli smoke test (requires build)"
+depends = ["build"]
+run = "node scripts/test-tool-cli-smoke.mjs"
 
 [tasks."test:skill-integration"]
 description = "Run skill discovery integration test (requires build)"
