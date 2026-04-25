@@ -25,6 +25,7 @@ interface ServerInfo {
 interface ToolSummary {
   name: string;
   description: string;
+  hasStructuredOutput: boolean;
 }
 
 interface ToolDetails {
@@ -196,6 +197,7 @@ export class ToolCliRpcServer {
       tools: tools.map((t) => ({
         name: t.name,
         description: t.description ?? "(no description)",
+        hasStructuredOutput: t.outputSchema != null,
       })),
     };
   }

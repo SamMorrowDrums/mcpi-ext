@@ -26,12 +26,17 @@ Discovery (progressive — only fetch what you need):
 
 Calling tools:
   tool-cli <server> <tool> '{"key":"value"}' # Call a tool with JSON arguments
+  tool-cli <server> <tool> '{}' --out /tmp/result.json  # Save large output to file
 
-tool-cli outputs plain text, so it composes naturally with standard shell tools.
+tool-cli outputs plain text or JSON. When a tool provides structured output (typed JSON),
+tool-cli returns it directly as JSON — use \`jq\` to query fields.
 Chain calls, filter, and transform results using pipes and bash idioms:
 
   # Search across tool results
   tool-cli myserver search_docs '{"query":"auth"}' | grep -i "token"
+
+  # Query structured JSON output with jq
+  tool-cli myserver list_issues '{"repo":"owner/repo"}' | jq '.[].title'
 
   # Chain tool calls — feed one result into another
   tool-cli myserver list_items '{}' | jq -r '.[0].id' | xargs -I{} tool-cli myserver get_item '{"id":"{}"}'
@@ -45,6 +50,7 @@ Chain calls, filter, and transform results using pipes and bash idioms:
   tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 
 Prefer piping and chaining over multiple separate tool calls when processing collections or filtering results.
+Errors go to stderr with exit code 1 — use \`&&\` or \`set -e\` for safe chaining.
 ${serverCount} MCP server(s) currently connected.
 </tool_cli>`;
 }

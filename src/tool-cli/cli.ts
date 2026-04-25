@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { writeFileSync } from "node:fs";
 import { rpcCall } from "./rpc-client.js";
 
 interface ServerInfo {
@@ -11,6 +12,7 @@ interface ServerInfo {
 interface ToolSummary {
   name: string;
   description: string;
+  hasStructuredOutput: boolean;
 }
 
 interface ToolDetails {
@@ -22,7 +24,18 @@ interface ToolDetails {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+
+  // Extract --out <file> flag (can appear anywhere)
+  let outFile: string | undefined;
+  const args: string[] = [];
+  for (let i = 0; i < rawArgs.length; i++) {
+    if (rawArgs[i] === "--out" && i + 1 < rawArgs.length) {
+      outFile = rawArgs[++i];
+    } else {
+      args.push(rawArgs[i]);
+    }
+  }
 
   try {
     // No args or --help → list servers
@@ -48,7 +61,7 @@ async function main(): Promise<void> {
     }
 
     // <server> <tool> <json-args> → call tool
-    await callTool(server, tool, args[2]);
+    await callTool(server, tool, args[2], outFile);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
@@ -91,7 +104,8 @@ async function listTools(server: string): Promise<void> {
 
   console.log(`${server} — ${result.tools.length} tool(s):`);
   for (const t of result.tools) {
-    console.log(`  ${t.name.padEnd(30)} ${t.description}`);
+    const badge = t.hasStructuredOutput ? " [json]" : "";
+    console.log(`  ${t.name.padEnd(30)} ${t.description}${badge}`);
   }
   console.log("");
   console.log("Use: tool-cli <server> <tool> for full schema");
@@ -107,7 +121,7 @@ async function describeTool(server: string, tool: string): Promise<void> {
 
   if (result.outputSchema) {
     console.log("");
-    console.log("Output schema:");
+    console.log("Output schema (structured JSON output):");
     console.log(formatSchema(result.outputSchema));
   }
 
@@ -123,7 +137,12 @@ async function describeTool(server: string, tool: string): Promise<void> {
   console.log(`Use: tool-cli ${server} ${tool} '{"key":"value"}' to call`);
 }
 
-async function callTool(server: string, tool: string, argsJson: string): Promise<void> {
+async function callTool(
+  server: string,
+  tool: string,
+  argsJson: string,
+  outFile?: string,
+): Promise<void> {
   let toolArgs: Record<string, unknown>;
   try {
     toolArgs = JSON.parse(argsJson) as Record<string, unknown>;
@@ -156,18 +175,35 @@ async function callTool(server: string, tool: string, argsJson: string): Promise
     return;
   }
 
-  if (result.structuredContent) {
-    console.log(JSON.stringify(result.structuredContent, null, 2));
-  } else if (result.content) {
-    for (const item of result.content) {
+  const output = formatOutput(result.structuredContent, result.content);
+  if (!output) return;
+
+  if (outFile) {
+    writeFileSync(outFile, output, "utf-8");
+    console.log(`Written to: ${outFile}`);
+  } else {
+    console.log(output);
+  }
+}
+
+/** Build the output string from structured or raw content. */
+function formatOutput(structuredContent?: Record<string, unknown>, content?: unknown[]): string {
+  if (structuredContent) {
+    return JSON.stringify(structuredContent, null, 2);
+  }
+  if (content) {
+    const parts: string[] = [];
+    for (const item of content) {
       const entry = item as Record<string, unknown>;
       if (entry.type === "text") {
-        console.log(entry.text);
+        parts.push(entry.text as string);
       } else {
-        console.log(JSON.stringify(entry, null, 2));
+        parts.push(JSON.stringify(entry, null, 2));
       }
     }
+    return parts.join("\n");
   }
+  return "";
 }
 
 /** Format a JSON Schema as a compact, readable summary. */
