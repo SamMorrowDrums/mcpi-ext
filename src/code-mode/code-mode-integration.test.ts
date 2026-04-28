@@ -92,7 +92,7 @@ describe("code mode integration (weather server)", () => {
   it("executes code that uses listTools", async () => {
     const result = await codeMode.executeCode(`
       const tools = await codemode.listTools();
-      return tools.map(t => t.name).sort();
+      return tools.sort();
     `);
 
     expect(result.error).toBeUndefined();

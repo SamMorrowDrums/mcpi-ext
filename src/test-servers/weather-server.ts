@@ -104,7 +104,12 @@ export function createWeatherServer(): McpServer {
         city,
       };
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+        content: [
+          {
+            type: "text" as const,
+            text: `Weather in ${city}: ${data.conditions}, ${data.temp}°C, humidity ${data.humidity}%`,
+          },
+        ],
         structuredContent,
       };
     },
@@ -136,7 +141,7 @@ export function createWeatherServer(): McpServer {
       }
       const structuredContent = { city, forecast };
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+        content: [{ type: "text" as const, text: `Forecast for ${city}: ${forecast}` }],
         structuredContent,
       };
     },
@@ -156,7 +161,7 @@ export function createWeatherServer(): McpServer {
     async ({ message }) => {
       const structuredContent = { echo: message };
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+        content: [{ type: "text" as const, text: `Echo: ${message}` }],
         structuredContent,
       };
     },

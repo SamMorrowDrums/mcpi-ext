@@ -91,13 +91,13 @@ async function runInIsolate(
   // sequential async Reference.apply calls.
   const wrappedCode = `
     (async () => {
-      const console = { log: (...args) => __log.apply(undefined, args, { arguments: { copy: true } }) };
+      const console = { log: (...args) => __log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) };
       const __callTool = async (name, args) => {
         const r = await __dispatch.apply(undefined, [name, JSON.stringify(args ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
         return JSON.parse(r);
       };
       const codemode = {
-        listTools: async () => ${JSON.stringify(toolNames.map((n) => ({ name: n })))},
+        listTools: async () => ${JSON.stringify(toolNames)},
         describeTools: async (names) => "Use the typed codemode.toolName(args) methods instead.",
 ${toolProxyEntries}
       };
@@ -129,7 +129,7 @@ ${toolProxyEntries}
  * Normalize model-generated code:
  * - Strip markdown code fences
  * - Handle arrow functions, function declarations, export default
- * - Wrap bare code in a return-value expression
+ * - Otherwise leave code as a statement block; callers must explicitly `return` a value
  */
 export function normalizeCode(code: string): string {
   let normalized = code.trim();

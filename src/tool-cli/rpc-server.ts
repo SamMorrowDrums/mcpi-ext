@@ -107,11 +107,13 @@ export class ToolCliRpcServer {
       });
     });
 
-    this.server = server;
-
     return new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
+      server.once("error", (err) => {
+        this.server = null;
+        reject(err);
+      });
       server.listen(this.port, "127.0.0.1", () => {
+        this.server = server;
         log?.(`[tool-cli] RPC server listening on 127.0.0.1:${this.port}`);
         resolve();
       });
@@ -152,7 +154,7 @@ export class ToolCliRpcServer {
 
     try {
       const result = await this.dispatch(parsed.method, parsed.params ?? {});
-      return { jsonrpc: "2.0", result, id: parsed.id };
+      return { jsonrpc: "2.0", result, id: parsed.id ?? null };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const code = err instanceof RpcMethodError ? err.code : -32603;

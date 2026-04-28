@@ -157,6 +157,9 @@ export class CodeModeManager {
       return { result: undefined, error: "Code mode not initialized", logs: [] };
     }
 
+    // Refresh eligible tools in case MCP servers changed since initialization
+    this.refresh();
+
     const toolNames = this.eligibleTools.map((t) => t.name);
 
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {

@@ -163,6 +163,6 @@ describe("executeInSandbox", () => {
     });
 
     expect(result.error).toBeUndefined();
-    expect(result.result).toEqual([{ name: "search" }, { name: "execute" }]);
+    expect(result.result).toEqual(["search", "execute"]);
   });
 });

@@ -192,16 +192,14 @@ export function generateTypeHints(tools: McpTool[]): string {
     methods.push(`${jsdoc}  ${safeName}: (input: ${inputType}) => Promise<${outputType}>;`);
   }
 
-  const toolListType = tools
-    .map((t) => `{ name: "${t.name}"; description: "${escapeStr(t.description ?? "")}" }`)
-    .join(" | ");
+  const toolListType = tools.map((t) => `"${escapeStr(t.name)}"`).join(" | ");
 
   return [
     "// Code mode type hints — auto-generated from MCP tool schemas",
     "// Available tools are accessed via the `codemode` namespace",
     "",
     `declare const codemode: {`,
-    `  /** List all available code mode tools. */`,
+    `  /** List all available code mode tool names. */`,
     `  listTools: () => Promise<(${toolListType})[]>;`,
     `  /** Get full type information for specific tools. */`,
     `  describeTools: (names: string[]) => Promise<string>;`,
@@ -211,7 +209,7 @@ export function generateTypeHints(tools: McpTool[]): string {
 }
 
 function generateInputType(
-  toolSafeName: string,
+  _toolSafeName: string,
   inputSchema: JsonSchema,
   definitions: Record<string, JsonSchema> | undefined,
 ): string {
@@ -220,14 +218,9 @@ function generateInputType(
     return "Record<string, never>";
   }
 
-  // For simple schemas, inline the type
+  // Always inline the type — avoids emitting unreferenced named type aliases
   const typeStr = jsonSchemaToTypeString(inputSchema, definitions);
-  if (typeStr.split("\n").length <= 5) {
-    return typeStr;
-  }
-
-  // For complex schemas, use a named type alias (defined inline)
-  return `${capitalize(toolSafeName)}Input`;
+  return typeStr;
 }
 
 function buildJsDoc(tool: McpTool, inputSchema: JsonSchema): string {
@@ -249,10 +242,6 @@ function buildJsDoc(tool: McpTool, inputSchema: JsonSchema): string {
 
   lines.push("   */");
   return lines.join("\n") + "\n";
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function escapeStr(s: string): string {
