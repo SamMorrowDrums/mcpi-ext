@@ -77,6 +77,12 @@ export function createWeatherServer(): McpServer {
     {
       description: "Get current weather conditions for a city",
       inputSchema: { city: z.string().describe("City name, e.g. 'London'") },
+      outputSchema: {
+        temperature: z.number().describe("Temperature in Celsius"),
+        conditions: z.string().describe("Weather conditions description"),
+        humidity: z.number().describe("Humidity percentage"),
+        city: z.string().describe("City name"),
+      },
       annotations: { readOnlyHint: true },
     },
     async ({ city }) => {
@@ -91,13 +97,20 @@ export function createWeatherServer(): McpServer {
           ],
         };
       }
+      const structuredContent = {
+        temperature: data.temp,
+        conditions: data.conditions,
+        humidity: data.humidity,
+        city,
+      };
       return {
         content: [
           {
             type: "text" as const,
-            text: `Current weather in ${city}: ${data.temp}°C, ${data.conditions}, Humidity: ${data.humidity}%`,
+            text: `Weather in ${city}: ${data.conditions}, ${data.temp}°C, humidity ${data.humidity}%`,
           },
         ],
+        structuredContent,
       };
     },
   );
@@ -108,6 +121,10 @@ export function createWeatherServer(): McpServer {
     {
       description: "Get a 7-day weather forecast for a city",
       inputSchema: { city: z.string().describe("City name, e.g. 'Tokyo'") },
+      outputSchema: {
+        city: z.string().describe("City name"),
+        forecast: z.string().describe("7-day forecast summary"),
+      },
       annotations: { readOnlyHint: true },
     },
     async ({ city }) => {
@@ -122,13 +139,10 @@ export function createWeatherServer(): McpServer {
           ],
         };
       }
+      const structuredContent = { city, forecast };
       return {
-        content: [
-          {
-            type: "text" as const,
-            text: `7-day forecast for ${city}:\n${forecast}`,
-          },
-        ],
+        content: [{ type: "text" as const, text: `Forecast for ${city}: ${forecast}` }],
+        structuredContent,
       };
     },
   );
@@ -139,11 +153,18 @@ export function createWeatherServer(): McpServer {
     {
       description: "Echoes back the input message",
       inputSchema: { message: z.string() },
+      outputSchema: {
+        echo: z.string().describe("The echoed message"),
+      },
       annotations: { readOnlyHint: true },
     },
-    async ({ message }) => ({
-      content: [{ type: "text" as const, text: message }],
-    }),
+    async ({ message }) => {
+      const structuredContent = { echo: message };
+      return {
+        content: [{ type: "text" as const, text: `Echo: ${message}` }],
+        structuredContent,
+      };
+    },
   );
 
   return server;

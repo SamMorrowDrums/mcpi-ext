@@ -37,12 +37,57 @@ mise run format:check # check formatting (CI mode)
 ## Project Structure
 
 ```
-src/           TypeScript source
-dist/          Compiled output (gitignored)
-mise.toml      Tool versions and tasks
-package.json   Dependencies and npm scripts
-tsconfig.json  TypeScript configuration
+src/
+  index.ts             Extension entry point (lifecycle hooks, wiring)
+  mcp/                 MCP client management (connections, tool discovery)
+  skills/              Skill registry, discovery, gating, tool proxies
+  tool-cli/            tool-cli RPC server, client, CLI binary, prompt
+  test-servers/        Test MCP servers (weather, echo)
+dist/                  Compiled output (gitignored)
+scripts/               Integration and smoke test scripts
+mise.toml              Tool versions and tasks
+package.json           Dependencies and npm scripts
+tsconfig.json          TypeScript configuration
 ```
+
+## Architecture
+
+### Tiered MCP Tool Access
+
+The extension provides three tiers for exposing MCP tools to the agent:
+
+| Tier          | Mechanism                                            | When Used                                        |
+| ------------- | ---------------------------------------------------- | ------------------------------------------------ |
+| 1 — Skills    | Skill loaded → `allowed-tools` gated → tools visible | MCP server ships skills                          |
+| 2 — tool-cli  | CLI progressive discovery via shell                  | Ad-hoc exploration, no skills                    |
+| 3 — Code Mode | search+execute, no HITL                              | Read-only tools with structured output (planned) |
+
+### tool-cli Architecture
+
+tool-cli is a thin CLI binary that communicates with the extension via JSON-RPC 2.0 over HTTP. The agent uses it as a standard shell command, composable with pipes, grep, jq, loops, etc.
+
+```
+Agent (pi)
+  │
+  │  shell exec
+  ▼
+tool-cli <server> <tool> '{"args"}'
+  │
+  │  HTTP JSON-RPC (localhost:7179)
+  ▼
+ToolCliRpcServer (in extension process)
+  │
+  │  MCP protocol (stdio/HTTP)
+  ▼
+MCP Server(s)
+```
+
+**Key design points:**
+
+- **No auth (temporary)** — the RPC server binds to `127.0.0.1` only, limiting access to the local machine. This is acceptable for development but not a finished security posture — any local process can call the server and execute MCP tools. Future work should add a shared secret or token (e.g. passed via environment variable to the CLI) so only the intended agent process can make calls.
+- **Interception point for HITL** — the RPC server's `callTool` method is the single choke point for all tool execution. Future work can check tool annotations (`readOnlyHint`, `destructiveHint`) here and gate non-read-only calls through user confirmation before forwarding to the MCP server.
+- **Progressive discovery** — the agent discovers servers → tools → schemas incrementally, paying only the tokens it needs.
+- **Shell-native** — plain text output composes with grep, jq, xargs, pipes, loops. The agent can chain tool calls using standard bash idioms.
 
 ## Code Quality
 

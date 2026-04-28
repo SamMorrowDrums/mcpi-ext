@@ -64,3 +64,31 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** When `load_skill` calls `setActiveTools()` to reveal new tools, the tool list sent to the model changes. This invalidates the prompt cache for subsequent turns because the system prompt + tool definitions are part of the cache key. With 38 tools on a server like GitHub MCP, hiding and revealing tools mid-conversation changes the cache signature.
 **Decision:** Accept the cache invalidation. Progressive disclosure is worth it. The alternative — sending all tools from the start — stuffs the model's context with tool definitions it doesn't need yet, which is worse than a cache miss.
 **Rationale:** The token cost of sending all tools upfront (38 tools × ~80 tokens each ≈ 3k tokens per turn) exceeds the one-time cache miss cost when tools are revealed. Skills also provide workflow instructions that make tool usage more reliable, which wouldn't happen if tools were just dumped into the context. For servers with many tools, a tool search/discovery flow (Football #2) can further reduce the impact by letting the model search for tools without revealing all of them.
+
+## 009 — tool-cli uses JSON-RPC 2.0 over HTTP on a predefined port
+
+**Date:** 2026-04-24
+**Context:** The Football CLI (issue #2) needs a communication protocol between the thin CLI binary and the extension that manages MCP connections.
+**Decision:** JSON-RPC 2.0 over HTTP on `localhost:7179` (overridable via `TOOL_CLI_PORT` env var). The RPC server lives in the extension, started on `session_start` and stopped on `session_shutdown`. The CLI binary (`tool-cli`) is a thin client that uses `fetch` to call the server. No new dependencies — uses Node's `http` module for the server and global `fetch` for the client.
+**Rationale:** JSON-RPC 2.0 is a standard, simple protocol that maps cleanly to the four operations needed (listServers, listTools, describeTool, callTool). HTTP is the simplest transport for request/response. A predefined port avoids coordination complexity for now. The architecture supports future HITL confirmation for non-read-only tools — the RPC server's `callTool` method is the single choke point where tool annotations can be checked and destructive calls gated through user approval.
+
+## 010 — tool-cli has no auth (known limitation)
+
+**Date:** 2026-04-24
+**Context:** The tool-cli RPC server listens on `127.0.0.1:7179` with no authentication. Any local process can discover and execute MCP tools through it.
+**Decision:** Accept this for now as a development convenience. The server is localhost-only, which limits the blast radius to local processes, but this is not a finished security posture. Before production use, add a shared secret (e.g. a one-time token passed via environment variable from the extension to the CLI) so only the intended agent process can make calls.
+**Rationale:** Adding auth now would complicate the initial implementation without changing the threat model much — the agent already has shell access and could call MCP tools through other means. But as the tool matures and especially once HITL gating is added for destructive tools, unauthenticated access would let other local processes bypass those safety checks. Auth is a prerequisite for trustworthy HITL.
+
+## 011 — Code mode uses `isolated-vm` for sandbox execution
+
+**Date:** 2026-04-24
+**Context:** Code mode (#4) lets the model write JavaScript to chain read-only MCP tool calls. The generated code runs in a sandbox. Options evaluated: Node `vm` module, `isolated-vm`, Deno subprocess, Cloudflare workerd, Pydantic/Python subprocess, WASM.
+**Decision:** Use `isolated-vm` (V8 isolates in Node.js). Provides memory limits (128MB default), CPU timeouts (30s default), and V8-level isolation. Tool dispatch via `Reference` async callbacks — actual MCP calls execute on the host, never in the sandbox.
+**Rationale:** Code mode has no HITL (human-in-the-loop) since all tools are read-only, making sandbox security important. Node's `vm` module is documented as "not a security mechanism" and is escapable via prototype pollution. `isolated-vm` provides genuine V8-level isolation with ~15ms overhead — negligible vs MCP network I/O. Deno subprocess (400ms/call) and workerd are too slow or complex for interactive use.
+
+## 012 — Code mode uses `ctx.eval` instead of `compileModule` for execution
+
+**Date:** 2026-04-24
+**Context:** Initial implementation used `isolate.compileModule()` + `module.evaluate()` for running sandboxed code with top-level await. Discovery: `module.evaluate()` resolves prematurely when multiple sequential `Reference.apply()` calls use `{ result: { promise: true } }` — the module evaluation promise resolves after the first async reference call, not after all code completes.
+**Decision:** Use `ctx.eval()` with `{ promise: true, copy: true }` instead. Wrap user code in an async IIFE that returns the final result.
+**Rationale:** `ctx.eval` with `promise: true` correctly awaits the full async IIFE, including all sequential tool dispatch calls. This is critical for code mode's chaining use case where the model writes for-loops calling multiple tools sequentially.

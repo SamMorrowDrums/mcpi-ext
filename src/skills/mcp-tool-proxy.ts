@@ -3,8 +3,14 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "typebox";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
+
+/** Threshold in chars above which tool output is written to a tmp file. */
+const LARGE_OUTPUT_THRESHOLD = 10_000;
 
 interface McpToolProxyDetails {
   serverName: string;
@@ -92,17 +98,32 @@ function createMcpToolProxy(mcpTool: McpTool, mcpManager: McpClientManager) {
           arguments: params,
         });
 
-        const content = Array.isArray(result.content)
-          ? result.content.map((c) => {
-              if (typeof c === "object" && c !== null && "type" in c && "text" in c) {
-                return { type: "text" as const, text: String(c.text) };
+        // Prefer structuredContent when available
+        let text: string;
+        if (result.structuredContent) {
+          text = JSON.stringify(result.structuredContent, null, 2);
+        } else if (Array.isArray(result.content)) {
+          text = result.content
+            .map((c) => {
+              if (typeof c === "object" && c !== null && "text" in c) {
+                return String((c as { text: unknown }).text);
               }
-              return { type: "text" as const, text: JSON.stringify(c) };
+              return JSON.stringify(c);
             })
-          : [{ type: "text" as const, text: JSON.stringify(result) }];
+            .join("\n");
+        } else {
+          text = JSON.stringify(result);
+        }
+
+        // Write large outputs to tmp file to avoid bloating context
+        if (text.length > LARGE_OUTPUT_THRESHOLD) {
+          const tmpPath = join(tmpdir(), `mcp-${mcpTool.name}-${Date.now()}.json`);
+          writeFileSync(tmpPath, text, "utf-8");
+          text = `Output too large (${text.length} chars). Written to: ${tmpPath}`;
+        }
 
         return {
-          content,
+          content: [{ type: "text" as const, text }],
           details: { serverName: mcpTool.serverName, toolName: mcpTool.name },
         };
       } catch (err) {
