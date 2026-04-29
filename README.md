@@ -36,12 +36,20 @@ When the model invokes `load_skill`, three things happen:
 2. The skill's `allowed-tools` are added to the model's active tool set
 3. The model can now see and call exactly the tools the skill intended
 
-```
-Model calls load_skill("github-pr")
-  → SkillRegistry looks up the skill
-  → Reads skill://github-pr from the MCP server
-  → setActiveTools([...current, "create_pull_request", "list_files", ...])
-  → Returns the SKILL.md body with workflow instructions
+```mermaid
+sequenceDiagram
+    participant Model
+    participant load_skill
+    participant SkillRegistry
+    participant MCP Server
+
+    Model->>load_skill: load_skill("github-pr")
+    load_skill->>SkillRegistry: Look up skill
+    SkillRegistry-->>load_skill: skill metadata + allowed-tools
+    load_skill->>MCP Server: Read skill://github-pr
+    MCP Server-->>load_skill: SKILL.md body
+    load_skill->>Model: setActiveTools([...current, "create_pull_request", ...])
+    load_skill-->>Model: Return workflow instructions
 ```
 
 This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools. The skill decides which ones the model can see. The model gets instructions *and* tools in one atomic operation, paying only the tokens for the skills it actually loads.
@@ -60,20 +68,11 @@ The context window stays clean. The tools appear exactly when the model has the 
 
 `tool-cli` is a thin CLI binary that speaks JSON-RPC 2.0 to the extension over HTTP. The agent uses it like any shell command — composable with pipes, grep, jq, loops, and all the bash idioms it already knows.
 
-```
-Agent (pi)
-  │
-  │  shell exec
-  ▼
-tool-cli <server> <tool> '{"args"}'
-  │
-  │  HTTP JSON-RPC (localhost:7179)
-  ▼
-ToolCliRpcServer (in extension process)
-  │
-  │  MCP protocol (stdio/HTTP)
-  ▼
-MCP Server(s)
+```mermaid
+flowchart TD
+    A["Agent (pi)"] -->|shell exec| B["tool-cli &lt;server&gt; &lt;tool&gt; '{args}'"]
+    B -->|"HTTP JSON-RPC (localhost:7179)"| C["ToolCliRpcServer (in extension)"]
+    C -->|"MCP protocol (stdio/HTTP)"| D["MCP Server(s)"]
 ```
 
 Discovery is **progressive** — the agent pays only the tokens it needs:
@@ -150,26 +149,20 @@ Two tools expose this to the model:
 
 The three tiers are complementary. Skills give curated access with workflow knowledge. The Football gives interactive access with safety. Code Mode gives autonomous access to safe operations at scale.
 
-```
-┌──────────────────────────────────────────────────┐
-│                   pi (agent)                     │
-│                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
-│  │load_skill│  │ tool-cli │  │  code_search  │  │
-│  │(Tier 1)  │  │ (Tier 2) │  │ code_execute  │  │
-│  │          │  │          │  │   (Tier 3)    │  │
-│  └────┬─────┘  └────┬─────┘  └──────┬────────┘  │
-│       │              │               │           │
-│       ▼              ▼               ▼           │
-│  ┌─────────────────────────────────────────────┐ │
-│  │            McpClientManager                 │ │
-│  │  (MCP SDK — stdio & Streamable HTTP)        │ │
-│  └──────────────────┬──────────────────────────┘ │
-└─────────────────────┼────────────────────────────┘
-                      │
-          ┌───────────┼───────────┐
-          ▼           ▼           ▼
-      MCP Server  MCP Server  MCP Server
+```mermaid
+flowchart TD
+    subgraph pi["pi (agent)"]
+        T1["load_skill\n(Tier 1 — Skills)"]
+        T2["tool-cli\n(Tier 2 — Football)"]
+        T3["code_search / code_execute\n(Tier 3 — Code Mode)"]
+        MCM["McpClientManager\n(MCP SDK — stdio & Streamable HTTP)"]
+        T1 --> MCM
+        T2 --> MCM
+        T3 --> MCM
+    end
+    MCM --> S1["MCP Server"]
+    MCM --> S2["MCP Server"]
+    MCM --> S3["MCP Server"]
 ```
 
 The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides *when* and *how* to reveal them.
