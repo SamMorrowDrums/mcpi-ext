@@ -56,6 +56,8 @@ This is self-referential enablement: **the MCP server itself declares how its to
 
 The context window stays clean. The tools appear exactly when the model has the context to use them well.
 
+Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model *pull* tools on demand, skill invocation *pushes* them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
+
 > *"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."*
 
 ---
