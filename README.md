@@ -169,9 +169,39 @@ Two tools expose this to the model:
 
 ---
 
-## The Architecture
+## When to Use Each Tier
 
-The three tiers are complementary. Skills give curated access with workflow knowledge. The Football gives interactive access with safety. Code Mode gives autonomous access to safe operations at scale.
+> _They asked the three: "Why are there three of you? Isn't one enough?"_
+>
+> _The Skill Dealer laid down a card. "When you know the ritual — the steps, the order, the tools that belong together — you come to me. I give you the ceremony whole."_
+>
+> _The Football's briefcase clicked open. "When you need one answer, quickly, and you know what you're looking for — you reach for me. I'm a shell command. I compose."_
+>
+> _Codey smiled, cross-legged in the isolate. "And when the answer is buried in nine pages of data, when you need loops and math and joins across a thousand records — you write the code, and I run it. Safely."_
+>
+> _"Three is not redundancy," said the Skill Dealer. "Three is completeness."_
+
+**The Skill Dealer** — when there's a curated workflow for the domain task. "Triage these 20 issues" means loading the triage skill, which gives you the right tools _plus_ the workflow instructions (dedup checks, labeling conventions, close criteria). Re-deriving that from raw tool calls is wasteful and error-prone.
+
+**The Nuclear Football** — one-shot or exploratory calls, especially when piping through Unix tools. `tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done. Also perfect for discovering what's on a server you haven't used before.
+
+**Codey C. Maude** — when you need real computation across many calls: pagination loops, aggregation, joining results, math. 876 issues across 9 pages, counting labels per issue, summing into a histogram — that's a loop with state. Doing it via tool-cli would mean 9 separate calls plus shell-side aggregation. Fragile. Codey does it in one sandbox execution.
+
+### A single task using all three
+
+> _"Triage the backlog of github/github-mcp-server: find stale bugs older than 90 days with no recent activity, summarize patterns, and close obvious duplicates."_
+
+1. **Codey** paginated all open bug issues, filtered by `updated < 90d ago`, grouped by label and keyword to find clusters. Computation across many pages — this is what sandboxes are for.
+
+2. **The Football** spot-checked suspect issues. `tool-cli github get_issue '{"number":42}'` piped through `jq` to eyeball specific fields. Quick, ad-hoc, composable.
+
+3. **The Skill Dealer** loaded `triage-issues` to actually close the duplicates — following the project's triage workflow with correct labels, comment templates, and close reasons. The ceremony, performed correctly.
+
+> _The rule of thumb is simple: skill for workflows, tool-cli for one-shots, code_execute for computation. The three are not competing. They are collaborating._
+
+---
+
+## The Architecture
 
 ```mermaid
 flowchart TD
