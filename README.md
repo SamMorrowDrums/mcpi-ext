@@ -216,7 +216,11 @@ Create `~/.config/mcpi-ext/mcp.json`:
 }
 ```
 
-Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
+Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens).
+
+> **Note:** Skill-based progressive discovery (Tier 1) requires an MCP server that ships `skill://` resources. The standard `@modelcontextprotocol/server-github` doesn't include skills yet — tool-cli (Tier 2) and Code Mode (Tier 3) still work with any MCP server.
+
+You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
 
 ```json
 {
