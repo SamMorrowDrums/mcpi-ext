@@ -68,7 +68,7 @@ describe("skill integration (weather server)", () => {
     expect(prompt).toContain("load_skill");
   });
 
-  it("load_skill returns body and tool schemas", async () => {
+  it("load_skill returns skill body and reports activated tools", async () => {
     const tool = createLoadSkillTool({
       registry,
       mcpManager: manager,
@@ -92,11 +92,6 @@ describe("skill integration (weather server)", () => {
     expect(text.type).toBe("text");
     // Skill body should mention the tools
     expect("text" in text && text.text).toContain("check_weather_for_city");
-    // Tool schemas section should be appended
-    expect("text" in text && text.text).toContain("## Available Tools");
-    expect("text" in text && text.text).toContain("### check_weather_for_city");
-    expect("text" in text && text.text).toContain("### check_weekly_forecast_for_city");
-    expect("text" in text && text.text).toContain("Parameters:");
   });
 
   it("calls gated tools via MCP client", async () => {

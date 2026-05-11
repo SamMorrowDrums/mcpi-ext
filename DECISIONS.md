@@ -62,7 +62,7 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 
 **Date:** 2026-05-11
 **Context:** When `load_skill` called `setActiveTools()` to reveal new tools, the tools array sent to the model changed, invalidating prompt cache. Decision 008 previously accepted this trade-off.
-**Decision:** Use `deferred: true` on MCP tool proxies. Deferred tools stay in the tools array (for provider dispatch and grammar) but are excluded from the system prompt. `load_skill` returns tool schemas as text alongside skill instructions, so the model discovers tools from conversation content.
+**Decision:** Use `deferred: true` on MCP tool proxies. Deferred tools stay in the tools array (for provider dispatch and grammar) but are excluded from the system prompt. The skill body names its allowed tools — the model matches those names to schemas it already has from the deferred tools array.
 **Rationale:** The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. Testing with Claude Opus 4.7 confirmed the model generates valid `tool_use` blocks for tools discovered from conversation text (all 4 test scenarios passed: direct call, user-message-only description, progressive disclosure via tool_result, and tools not in array at all). This is experimental — ideally model providers would explicitly support this pattern (e.g. a `defer_loading` annotation in the API spec).
 
 ## 009 — tool-cli uses JSON-RPC 2.0 over HTTP on a predefined port
