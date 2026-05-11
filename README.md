@@ -191,48 +191,15 @@ The harness controls what the model sees. MCP servers just expose their tools an
 
 ## Quick Start
 
-### Install from npm
+### 1. Install
 
 ```sh
-npm install @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
+npm install -g @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
 ```
 
-Run mcpi with the extension:
+### 2. Configure MCP servers
 
-```sh
-npx @sammorrowdrums/mcpi --extension node_modules/@sammorrowdrums/mcpi-ext/dist/index.js \
-  --mcp-config ~/.config/mcpi-ext/mcp.json
-```
-
-### Local development
-
-```sh
-curl https://mise.run | sh                       # install mise
-eval "$(~/.local/bin/mise activate bash)"         # activate
-mise install                                      # install node
-npm install                                       # install dependencies
-mise run build                                    # build
-mise run test                                     # test
-```
-
-For local dev, override the `@sammorrowdrums/mcpi` dependency to point at your local mcpi clone:
-
-```json
-// package.json overrides (not committed)
-"devDependencies": {
-  "@sammorrowdrums/mcpi": "file:../path/to/mcpi/packages/coding-agent"
-}
-```
-
-Then load the extension from the built output:
-
-```sh
-mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
-```
-
-### MCP server configuration
-
-Create `~/.config/mcpi-ext/mcp.json` (or pass `--mcp-config /path/to/config.json`):
+Create `~/.config/mcpi-ext/mcp.json`:
 
 ```json
 {
@@ -244,7 +211,17 @@ Create `~/.config/mcpi-ext/mcp.json` (or pass `--mcp-config /path/to/config.json
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "xxx"
       }
-    },
+    }
+  }
+}
+```
+
+Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
+
+```json
+{
+  "mcpServers": {
+    "github": { "...": "..." },
     "my-remote-server": {
       "type": "remote",
       "url": "https://my-mcp-server.example.com/mcp",
@@ -256,7 +233,34 @@ Create `~/.config/mcpi-ext/mcp.json` (or pass `--mcp-config /path/to/config.json
 }
 ```
 
-Each server can be `stdio` (spawns a child process) or `remote` (Streamable HTTP). The extension connects to all configured servers on startup, discovers their tools, and gates them via skills.
+### 3. Run
+
+```sh
+mcpi --extension mcpi-ext --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+If `--extension mcpi-ext` doesn't resolve, use the full path:
+
+```sh
+mcpi --extension $(node -e "console.log(require.resolve('@sammorrowdrums/mcpi-ext'))") \
+  --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+### Local development
+
+```sh
+git clone https://github.com/SamMorrowDrums/mcpi-ext.git
+cd mcpi-ext
+npm install
+npm run build
+npm test
+```
+
+Then run with your local build:
+
+```sh
+mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
+```
 
 See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture details.
 
