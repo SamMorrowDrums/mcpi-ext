@@ -78,6 +78,8 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 
 > _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
 
+![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](images/skills-enabling-mcp-tools.png)
+
 ---
 
 ## II. The Nuclear Football
@@ -125,6 +127,8 @@ The RPC server is the single choke point for all tool execution — the natural 
 
 > _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself._
 
+![tool-cli in action — progressive discovery piped through grep](images/tool-cli-grep.png)
+
 ---
 
 ## III. Codey C. Maude
@@ -160,6 +164,8 @@ Two tools expose this to the model:
 | `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)`                   |
 
 > _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
+
+![Code Mode in action — chaining MCP tools in a V8 sandbox to build a histogram](images/code-mode-histogram.png)
 
 ---
 
