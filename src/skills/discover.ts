@@ -1,5 +1,5 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { parseFrontmatter } from "@mariozechner/pi-coding-agent";
+import { parseFrontmatter } from "@sammorrowdrums/mcpi";
 import type { McpSkillMetadata } from "./skill-registry.js";
 
 /**

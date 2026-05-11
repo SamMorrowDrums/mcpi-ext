@@ -1,4 +1,4 @@
-import type { AgentToolResult, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 import type { ExecuteResult } from "./executor.js";
 import type { CodeModeManager } from "./index.js";

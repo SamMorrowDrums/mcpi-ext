@@ -191,6 +191,21 @@ The harness controls what the model sees. MCP servers just expose their tools an
 
 ## Quick Start
 
+### Install from npm
+
+```sh
+npm install @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
+```
+
+Run mcpi with the extension:
+
+```sh
+npx mcpi --extension node_modules/@sammorrowdrums/mcpi-ext/dist/index.js \
+  --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+### Local development
+
 ```sh
 curl https://mise.run | sh                       # install mise
 eval "$(~/.local/bin/mise activate bash)"         # activate
@@ -200,11 +215,48 @@ mise run build                                    # build
 mise run test                                     # test
 ```
 
-Load the extension with mcpi:
+For local dev, override the `@sammorrowdrums/mcpi` dependency to point at your local mcpi clone:
+
+```json
+// package.json overrides (not committed)
+"devDependencies": {
+  "@sammorrowdrums/mcpi": "file:../path/to/mcpi/packages/coding-agent"
+}
+```
+
+Then load the extension from the built output:
 
 ```sh
-mcpi --extension ./dist/index.js
+mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
+
+### MCP server configuration
+
+Create `~/.config/mcpi-ext/mcp.json` (or pass `--mcp-config /path/to/config.json`):
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "xxx"
+      }
+    },
+    "my-remote-server": {
+      "type": "remote",
+      "url": "https://my-mcp-server.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer xxx"
+      }
+    }
+  }
+}
+```
+
+Each server can be `stdio` (spawns a child process) or `remote` (Streamable HTTP). The extension connects to all configured servers on startup, discovers their tools, and gates them via skills.
 
 See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture details.
 

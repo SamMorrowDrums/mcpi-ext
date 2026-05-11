@@ -1,5 +1,5 @@
-import type { AgentToolResult, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { stripFrontmatter } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
+import { stripFrontmatter } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 import type { McpClientManager } from "../mcp/index.js";
 import type { SkillRegistry } from "./skill-registry.js";

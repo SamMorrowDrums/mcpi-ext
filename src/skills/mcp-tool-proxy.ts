@@ -1,8 +1,4 @@
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

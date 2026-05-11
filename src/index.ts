@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
   SessionStartEvent,
   ToolCallEvent,
-} from "@mariozechner/pi-coding-agent";
+} from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";

@@ -3,7 +3,7 @@ import type {
   AgentToolResult,
   AgentToolUpdateCallback,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 
 const DOCKER_IMAGE = "mcpi-ext-e2e";
