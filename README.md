@@ -28,16 +28,25 @@ Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://
 
 > _The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more._
 
-MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools as **deferred** — present in the tools array for dispatch but excluded from the system prompt.
+MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools with `deferred: true` — present in pi's tool registry but excluded from both the tools array sent to the model and the system prompt.
 
-This approach is **cache-preserving**: the tools array and system prompt stay constant throughout the conversation. The model discovers deferred tools through conversation content when `load_skill` returns their schemas.
+This approach is **cache-preserving**: the tools array and system prompt stay constant throughout the conversation, so prompt cache is never invalidated by skill activation.
 
-> **Note:** This is experimental. Models have been verified to call tools discovered from conversation content (tested with Claude Opus 4.7, all 4 disclosure scenarios passed). Ideally, model providers would explicitly support this pattern (e.g. a `defer_loading` annotation).
+### How deferred tool gating works
 
-When the model invokes `load_skill`, two things happen:
+Three mechanisms work together:
+
+1. **`deferred: true`** — MCP tool proxies are registered with this flag. Pi's runtime keeps them in the internal registry for execution dispatch (via `resolveTool`) but excludes them from the tools array and system prompt sent to the model.
+
+2. **Anthropic `defer_loading`** — Pi's Anthropic provider maps `deferred: true` to Anthropic's native `defer_loading: true` API parameter. The tool stays in the provider's grammar (so the model _can_ generate `tool_use` blocks for it) but is hidden from the model's view until enabled. Anthropic supports `tool_reference` content blocks in `tool_result` to explicitly enable deferred tools — future work will have `load_skill` include these blocks so the provider knows which tools to reveal.
+
+3. **`tool_call` hook gating** — The extension registers a `tool_call` event handler that blocks premature calls to skill-gated tools. If the model tries to call a gated tool before loading its skill, the handler returns an error: _"Tool X requires loading a skill first. Call load_skill with: Y"_. This creates a natural feedback loop and serves as the provider-agnostic enforcement layer.
+
+When the model invokes `load_skill`:
 
 1. The skill's SKILL.md is read from the MCP server and returned as workflow instructions
-2. The skill's tool schemas are appended to the result, so the model knows how to call them
+2. The skill's `allowedTools` are added to the `enabledTools` set, unblocking the `tool_call` gate
+3. The model can now call the tools — it discovers them from the skill body (which names them) and the provider's grammar
 
 ```mermaid
 sequenceDiagram
@@ -45,21 +54,25 @@ sequenceDiagram
     participant load_skill
     participant SkillRegistry
     participant MCP Server
+    participant tool_call gate
 
     Model->>load_skill: load_skill("github-pr")
     load_skill->>SkillRegistry: Look up skill
     SkillRegistry-->>load_skill: skill metadata + allowed-tools
     load_skill->>MCP Server: Read skill://github-pr
     MCP Server-->>load_skill: SKILL.md body
-    load_skill-->>Model: Return instructions + tool schemas
-    Note over Model: Model discovers deferred tools<br/>from conversation content
+    load_skill->>tool_call gate: Enable allowed-tools
+    load_skill-->>Model: Return workflow instructions
+    Note over Model: Skill body names the tools.<br/>Model calls them via tool_use.
+    Model->>tool_call gate: create_pull_request(...)
+    tool_call gate-->>Model: ✓ Allowed (skill loaded)
 ```
 
-This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools as deferred. The skill decides which ones the model learns about. The model gets instructions _and_ tool definitions in one atomic operation, paying only the tokens for the skills it actually loads — and the prompt cache stays intact.
+This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools as deferred. The skill decides which ones the model can access. The model gets instructions in one atomic operation, paying only the tokens for the skills it actually loads — and the prompt cache stays intact.
 
 The context window stays clean. The tools appear exactly when the model has the context to use them well. And prompt cache is preserved because neither the tools array nor the system prompt changes.
 
-Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, tool schemas arrive in the conversation alongside skill instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
+Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. Our approach uses Anthropic's native `defer_loading` parameter (when available) combined with extension-level `tool_call` gating for provider-agnostic safety. Where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, the skill's tools are unblocked and the model gets workflow instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
 
 > _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
 

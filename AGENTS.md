@@ -56,11 +56,11 @@ tsconfig.json          TypeScript configuration
 
 The extension provides three tiers for exposing MCP tools to the agent:
 
-| Tier          | Mechanism                                            | When Used                                        |
-| ------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| 1 — Skills    | Skill loaded → `allowed-tools` gated → tools visible | MCP server ships skills                          |
-| 2 — tool-cli  | CLI progressive discovery via shell                  | Ad-hoc exploration, no skills                    |
-| 3 — Code Mode | search+execute, no HITL                              | Read-only tools with structured output (planned) |
+| Tier          | Mechanism                                                          | When Used                                        |
+| ------------- | ------------------------------------------------------------------ | ------------------------------------------------ |
+| 1 — Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                          |
+| 2 — tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills                    |
+| 3 — Code Mode | search+execute, no HITL                                            | Read-only tools with structured output (planned) |
 
 ### tool-cli Architecture
 
