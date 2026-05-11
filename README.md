@@ -200,7 +200,7 @@ npm install @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
 Run mcpi with the extension:
 
 ```sh
-npx mcpi --extension node_modules/@sammorrowdrums/mcpi-ext/dist/index.js \
+npx @sammorrowdrums/mcpi --extension node_modules/@sammorrowdrums/mcpi-ext/dist/index.js \
   --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
 
