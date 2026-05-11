@@ -126,6 +126,13 @@ flowchart TD
 
 The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides _when_ and _how_ to reveal them.
 
+### Every call flows through the harness
+
+All three tiers route MCP tool calls back through the extension process. This is a subtle but important property: even when the model writes sandboxed JavaScript (Code Mode) or shells out to `tool-cli`, the actual MCP call happens in the harness. This means:
+
+- **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and Code Mode sandbox calls alike. Full observability without instrumentation.
+- **Human-in-the-loop can be added at one point** — the `McpClientManager` is the single choke point. Future work can check tool annotations (`readOnlyHint`, `destructiveHint`) and gate destructive calls through user confirmation, regardless of which tier initiated them.
+
 > _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._
 
 ---
