@@ -11,7 +11,7 @@
     "@sammorrowdrums/mcpi": ">=0.70.0"
   },
   "devDependencies": {
-    "@sammorrowdrums/mcpi": "file:../../../repos/pi-mono/packages/coding-agent",
+    "@sammorrowdrums/mcpi": "^0.70.8",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",
     "eslint": "^10.2.1",

@@ -213,7 +213,7 @@ Create `~/.config/mcpi-ext/mcp.json`:
         "-i",
         "-e",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server",
+        "ghcr.io/github/github-mcp-server:skill-discovery",
         "stdio"
       ],
       "env": {
@@ -224,9 +224,9 @@ Create `~/.config/mcpi-ext/mcp.json`:
 }
 ```
 
-Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). See [github/github-mcp-server](https://github.com/github/github-mcp-server) for installation options (Docker, Go binary, etc.).
+Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). See [github/github-mcp-server](https://github.com/github/github-mcp-server) for the standard server.
 
-> **Note:** Skill-based progressive discovery (Tier 1) requires an MCP server that ships `skill://` resources. The standard `@modelcontextprotocol/server-github` doesn't include skills yet — tool-cli (Tier 2) and Code Mode (Tier 3) still work with any MCP server.
+> **Note:** The `skill-discovery` tag includes experimental `skill://` resources that enable Tier 1 progressive discovery. The standard `ghcr.io/github/github-mcp-server` image works too — tool-cli (Tier 2) and Code Mode (Tier 3) function with any MCP server, but skill-gated tool activation requires `skill://` resources.
 
 You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
 
