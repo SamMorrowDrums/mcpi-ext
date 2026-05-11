@@ -13,6 +13,7 @@ import { createLoadSkillTool } from "./load-skill-tool.js";
 describe("skill integration (weather server)", () => {
   const manager = new McpClientManager();
   const registry = new SkillRegistry();
+  const enabledTools = new Set<string>();
   let client: Client;
 
   beforeAll(async () => {
@@ -72,6 +73,7 @@ describe("skill integration (weather server)", () => {
     const tool = createLoadSkillTool({
       registry,
       mcpManager: manager,
+      enabledTools,
     });
 
     const result = await tool.execute(
@@ -92,6 +94,9 @@ describe("skill integration (weather server)", () => {
     expect(text.type).toBe("text");
     // Skill body should mention the tools
     expect("text" in text && text.text).toContain("check_weather_for_city");
+    // Tools should now be in enabledTools set
+    expect(enabledTools.has("check_weather_for_city")).toBe(true);
+    expect(enabledTools.has("check_weekly_forecast_for_city")).toBe(true);
   });
 
   it("calls gated tools via MCP client", async () => {
@@ -122,6 +127,7 @@ describe("skill integration (weather server)", () => {
     const tool = createLoadSkillTool({
       registry,
       mcpManager: manager,
+      enabledTools,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

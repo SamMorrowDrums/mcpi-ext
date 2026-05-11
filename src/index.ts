@@ -3,6 +3,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   SessionStartEvent,
+  ToolCallEvent,
 } from "@mariozechner/pi-coding-agent";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
@@ -28,9 +29,11 @@ export default function (pi: ExtensionAPI) {
   const skillRegistry = new SkillRegistry();
   const rpcServer = new ToolCliRpcServer(mcpManager);
   const codeModeManager = new CodeModeManager();
+  const enabledTools = new Set<string>();
+  const gatedToolNames = new Set<string>();
 
   // Register the load_skill tool so the model can activate MCP skills
-  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager }));
+  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     if (ctx.hasUI) {
@@ -75,9 +78,13 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (skillRegistry.size > 0) {
-          const gatedTools = skillRegistry.getAll().flatMap((s) => s.allowedTools);
+          for (const skill of skillRegistry.getAll()) {
+            for (const t of skill.allowedTools) {
+              gatedToolNames.add(t);
+            }
+          }
           log(
-            `MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.length} tool(s) deferred`,
+            `MCP: ${skillRegistry.size} skill(s) discovered, ${gatedToolNames.size} tool(s) deferred`,
           );
         }
 
@@ -127,6 +134,20 @@ export default function (pi: ExtensionAPI) {
 
     if (extra.length === 0) return;
     return { systemPrompt: event.systemPrompt + extra };
+  });
+
+  // Block deferred MCP tools until their skill is loaded
+  pi.on("tool_call", async (event: ToolCallEvent) => {
+    const name = "toolName" in event ? event.toolName : undefined;
+    if (!name || !gatedToolNames.has(name) || enabledTools.has(name)) return;
+    const relevantSkills = skillRegistry
+      .getAll()
+      .filter((s) => s.allowedTools.includes(name))
+      .map((s) => s.name);
+    return {
+      block: true,
+      reason: `Tool "${name}" requires loading a skill first. Call load_skill with one of: ${relevantSkills.join(", ")}`,
+    };
   });
 
   pi.on("session_shutdown", async () => {

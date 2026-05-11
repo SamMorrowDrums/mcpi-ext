@@ -13,6 +13,7 @@ type LoadSkillInput = Static<typeof LoadSkillParams>;
 export interface LoadSkillDeps {
   registry: SkillRegistry;
   mcpManager: McpClientManager;
+  enabledTools: Set<string>;
 }
 
 export interface LoadSkillDetails {
@@ -32,7 +33,7 @@ export interface LoadSkillDetails {
  *    already has their schemas from the deferred tools array)
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
-  const { registry, mcpManager } = deps;
+  const { registry, mcpManager, enabledTools } = deps;
 
   return {
     name: "load_skill",
@@ -110,6 +111,11 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
             error: (err as Error).message,
           },
         };
+      }
+
+      // Enable the skill's tools so the tool_call gate allows them
+      for (const t of skill.allowedTools) {
+        enabledTools.add(t);
       }
 
       return {
