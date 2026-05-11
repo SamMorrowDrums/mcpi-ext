@@ -112,17 +112,11 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Append allowed-tools so the model knows which deferred tools are now relevant
-      let resultText = body;
-      if (skill.allowedTools.length > 0) {
-        resultText += `\n\nAllowed tools: ${skill.allowedTools.join(", ")}`;
-      }
-
       return {
         content: [
           {
             type: "text",
-            text: resultText,
+            text: body,
           },
         ],
         details: {
