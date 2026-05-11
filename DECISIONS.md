@@ -64,8 +64,8 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** When `load_skill` called `setActiveTools()` to reveal new tools, the tools array sent to the model changed, invalidating prompt cache. Decision 008 previously accepted this trade-off.
 **Decision:** Use `deferred: true` on MCP tool proxies with provider-native support and extension-level gating:
 
-1. **Anthropic:** pi-mono maps `deferred: true` to `defer_loading: true` in the API payload. Deferred tools stay in the tools array but are hidden from the model's view. The `tool_reference` content block can explicitly enable them on demand.
-2. **OpenAI Responses:** pi-mono maps `deferred: true` to `defer_loading: true` and auto-injects `{"type": "tool_search"}` into the tools array. The model searches and loads deferred tools server-side (`tool_search_call` → `tool_search_output` → `function_call`).
+1. **Anthropic:** pi-mono maps `deferred: true` to `defer_loading: true` in the API payload. Deferred tools stay in the tools array but are hidden from the model's view. Optional `tool_reference` content blocks can explicitly enable them on demand.
+2. **OpenAI Responses:** pi-mono maps `deferred: true` to `defer_loading: true` and auto-injects `{"type": "tool_search"}` into the tools array. The model discovers deferred tools automatically via hosted server-side search — no explicit activation needed. (OpenAI's client-executed `tool_search_output` is the equivalent of Anthropic's `tool_reference`, but hosted search is sufficient for our use case.)
 3. **All providers (fallback):** The extension's `tool_call` hook blocks premature calls to gated tools and returns an error message naming the relevant skill. After `load_skill` fires, tools are marked as enabled and calls go through.
 
 **Rationale:** Both Anthropic and OpenAI natively support `defer_loading` (tested with Claude Opus 4.7 and GPT-5.4). The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. The `tool_call` hook provides a provider-agnostic enforcement layer for providers without native `defer_loading` support.
