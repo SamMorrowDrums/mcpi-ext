@@ -1,6 +1,6 @@
 # mcpi-ext
 
-> **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/pi-mono) (an experimental pi fork). Please only use this to try out the experiment on skills over MCP. See [progressive tool discovery docs](https://github.com/SamMorrowDrums/pi-mono/blob/main/docs/progressive-tool-discovery.md) for details.
+> **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/mcpi) (an experimental pi fork). Please only use this to try out the experiment on skills over MCP. See [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for details.
 
 ![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
 
@@ -14,7 +14,7 @@
 
 ---
 
-Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/pi-mono) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
+Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/mcpi) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
 
 | Tier          | Aspect                   | Mechanism                                             |
 | ------------- | ------------------------ | ----------------------------------------------------- |
