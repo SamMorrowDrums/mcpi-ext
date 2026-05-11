@@ -16,7 +16,7 @@ This project uses **mise** for tool version management and **npm** for package m
 
 ### mcpi (coding agent)
 
-- **What:** [mcpi](https://github.com/SamMorrowDrums/mcpi) is an extensible terminal coding agent (fork of pi). This project builds extensions for it.
+- **What:** [mcpi](https://github.com/SamMorrowDrums/pi-mono) is an extensible terminal coding agent (fork of pi). This project builds extensions for it.
 - **Extension pattern:** Export a default function receiving `ExtensionAPI`, register tools/commands/hooks.
 - **Load extension:** `mcpi --extension ./dist/index.js`
 
