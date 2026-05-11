@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Value } from "typebox/value";
 import { McpConfig } from "./config.js";
 
-const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "pi-mcp-agent", "mcp.json");
+const DEFAULT_CONFIG_PATH = join(homedir(), ".config", "mcpi-ext", "mcp.json");
 
 /**
  * Load and validate an MCP config file.

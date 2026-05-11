@@ -37,7 +37,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     if (ctx.hasUI) {
-      ctx.ui.notify("pi-mcp-agent loaded", "info");
+      ctx.ui.notify("mcpi-ext loaded", "info");
     }
 
     const configPath = pi.getFlag("mcp-config") as string | undefined;

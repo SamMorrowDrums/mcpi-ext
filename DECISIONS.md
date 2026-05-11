@@ -41,7 +41,7 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 
 **Date:** 2026-04-23
 **Context:** How should the extension connect to MCP servers?
-**Decision:** Use `@modelcontextprotocol/sdk` (TypeScript MCP SDK) with a JSON config file at `~/.config/pi-mcp-agent/mcp.json` (overridable via `--mcp-config` flag). The config supports two transport types: `stdio` (spawns a child process) and `remote` (Streamable HTTP). A `McpClientManager` class connects to all configured servers on `session_start`, discovers tools via `tools/list`, handles `notifications/tools/list_changed`, and disconnects on `session_shutdown`.
+**Decision:** Use `@modelcontextprotocol/sdk` (TypeScript MCP SDK) with a JSON config file at `~/.config/mcpi-ext/mcp.json` (overridable via `--mcp-config` flag). The config supports two transport types: `stdio` (spawns a child process) and `remote` (Streamable HTTP). A `McpClientManager` class connects to all configured servers on `session_start`, discovers tools via `tools/list`, handles `notifications/tools/list_changed`, and disconnects on `session_shutdown`.
 **Rationale:** The official MCP SDK is the canonical way to implement MCP clients. JSON config aligns with VS Code and Claude Code conventions for MCP server configuration. Supporting both stdio and remote covers local dev servers and cloud-hosted MCP endpoints. Tools are discovered and stored internally but NOT registered with pi — the access tiers (Skills #1, Football #2, Code Mode #4) decide when to expose tools to the model.
 
 ## 006 — CI model access via GITHUB_TOKEN

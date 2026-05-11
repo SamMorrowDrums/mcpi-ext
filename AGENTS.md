@@ -14,11 +14,11 @@ This project uses **mise** for tool version management and **npm** for package m
   - `mise run <task>` — run a project task (build, test, dev, check, start)
   - `mise use <tool>@<version>` — add/update a tool version
 
-### pi (coding agent)
+### mcpi (coding agent)
 
-- **What:** [pi](https://pi.dev/) is an extensible terminal coding agent. This project builds extensions for it.
+- **What:** [mcpi](https://github.com/SamMorrowDrums/mcpi) is an extensible terminal coding agent (fork of pi). This project builds extensions for it.
 - **Extension pattern:** Export a default function receiving `ExtensionAPI`, register tools/commands/hooks.
-- **Load extension:** `pi --extension ./dist/index.js`
+- **Load extension:** `mcpi --extension ./dist/index.js`
 
 ## Dev Loop
 
@@ -67,7 +67,7 @@ The extension provides three tiers for exposing MCP tools to the agent:
 tool-cli is a thin CLI binary that communicates with the extension via JSON-RPC 2.0 over HTTP. The agent uses it as a standard shell command, composable with pipes, grep, jq, loops, etc.
 
 ```
-Agent (pi)
+Agent (mcpi)
   │
   │  shell exec
   ▼

@@ -47,7 +47,7 @@ run = "node dist/index.js"
 
 [tasks.docker-build]
 description = "Build the Docker e2e image"
-run = "docker build -t pi-mcp-agent-e2e ."
+run = "docker build -t mcpi-ext-e2e ."
 
 [tasks."test:integration"]
 description = "Run MCP integration smoke test"

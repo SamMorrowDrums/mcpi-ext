@@ -1,5 +1,5 @@
 {
-  "name": "pi-mcp-agent",
+  "name": "mcpi-ext",
   "version": "0.1.0",
   "dependencies": {
     "@mariozechner/pi-coding-agent": "file:../../../repos/pi-mono/packages/coding-agent",
@@ -32,7 +32,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "MCP focused pi agent",
+  "description": "MCP extension for mcpi — tiered progressive tool discovery",
   "license": "MIT",
   "main": "./dist/index.js",
   "type": "module",

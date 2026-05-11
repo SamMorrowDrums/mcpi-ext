@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
-      console.error("Error: tool-cli server not running. Is pi-mcp-agent loaded?");
+      console.error("Error: tool-cli server not running. Is mcpi-ext loaded?");
     } else {
       console.error(`Error: ${message}`);
     }

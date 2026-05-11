@@ -66,7 +66,7 @@ export class McpClientManager {
     const transport = createTransport(serverConfig);
 
     const client = new Client(
-      { name: "pi-mcp-agent", version: "0.1.0" },
+      { name: "mcpi-ext", version: "0.1.0" },
       {
         capabilities: {},
         listChanged: {

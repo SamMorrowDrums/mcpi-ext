@@ -1,4 +1,4 @@
-# pi-mcp-agent
+# mcpi-ext
 
 ![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
 
@@ -12,7 +12,7 @@
 
 ---
 
-Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://pi.dev/) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
+Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/mcpi) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
 
 | Tier          | Aspect                   | Mechanism                                             |
 | ------------- | ------------------------ | ----------------------------------------------------- |
@@ -88,7 +88,7 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 
 ```mermaid
 flowchart TD
-    A["Agent (pi)"] -->|shell exec| B["tool-cli &lt;server&gt; &lt;tool&gt; '{args}'"]
+    A["Agent (mcpi)"] -->|shell exec| B["tool-cli &lt;server&gt; &lt;tool&gt; '{args}'"]
     B -->|"HTTP JSON-RPC (localhost:7179)"| C["ToolCliRpcServer (in extension)"]
     C -->|"MCP protocol (stdio/HTTP)"| D["MCP Server(s)"]
 ```
@@ -167,7 +167,7 @@ The three tiers are complementary. Skills give curated access with workflow know
 
 ```mermaid
 flowchart TD
-    subgraph pi["pi (agent)"]
+    subgraph mcpi["mcpi (agent)"]
         T1["load_skill\n(Tier 1 — Skills)"]
         T2["tool-cli\n(Tier 2 — Football)"]
         T3["code_search / code_execute\n(Tier 3 — Code Mode)"]
@@ -198,10 +198,10 @@ mise run build                                    # build
 mise run test                                     # test
 ```
 
-Load the extension with pi:
+Load the extension with mcpi:
 
 ```sh
-pi --extension ./dist/index.js
+mcpi --extension ./dist/index.js
 ```
 
 See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture details.
