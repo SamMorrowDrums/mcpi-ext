@@ -58,12 +58,12 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Decision:** Custom `SkillRegistry` + `load_skill` tool + `formatMcpSkillsForPrompt`, styled after Pi's native skill system but fully self-contained in the extension. Skills are discovered from MCP `skill://` resources and injected into the system prompt via the `before_agent_start` hook.
 **Rationale:** MCP skills live on remote servers, not on disk. Writing them to temp files would be fragile and unnecessary. The custom approach keeps MCP skills self-contained, gives us full control over the activation → tool gating flow, and avoids coupling to Pi's internal skill loader. The XML format matches Pi's `<available_skills>` pattern so models already know how to interact with it.
 
-## 008 — Skill-gated tools accept prompt cache invalidation as a trade-off
+## 008 — Cache-safe progressive tool disclosure via `deferred` flag
 
-**Date:** 2026-04-24
-**Context:** When `load_skill` calls `setActiveTools()` to reveal new tools, the tool list sent to the model changes. This invalidates the prompt cache for subsequent turns because the system prompt + tool definitions are part of the cache key. With 38 tools on a server like GitHub MCP, hiding and revealing tools mid-conversation changes the cache signature.
-**Decision:** Accept the cache invalidation. Progressive disclosure is worth it. The alternative — sending all tools from the start — stuffs the model's context with tool definitions it doesn't need yet, which is worse than a cache miss.
-**Rationale:** The token cost of sending all tools upfront (38 tools × ~80 tokens each ≈ 3k tokens per turn) exceeds the one-time cache miss cost when tools are revealed. Skills also provide workflow instructions that make tool usage more reliable, which wouldn't happen if tools were just dumped into the context. For servers with many tools, a tool search/discovery flow (Football #2) can further reduce the impact by letting the model search for tools without revealing all of them.
+**Date:** 2026-05-11
+**Context:** When `load_skill` called `setActiveTools()` to reveal new tools, the tools array sent to the model changed, invalidating prompt cache. Decision 008 previously accepted this trade-off.
+**Decision:** Use `deferred: true` on MCP tool proxies. Deferred tools stay in the tools array (for provider dispatch and grammar) but are excluded from the system prompt. `load_skill` returns tool schemas as text alongside skill instructions, so the model discovers tools from conversation content.
+**Rationale:** The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. Testing with Claude Opus 4.7 confirmed the model generates valid `tool_use` blocks for tools discovered from conversation text (all 4 test scenarios passed: direct call, user-message-only description, progressive disclosure via tool_result, and tools not in array at all). This is experimental — ideally model providers would explicitly support this pattern (e.g. a `defer_loading` annotation in the API spec).
 
 ## 009 — tool-cli uses JSON-RPC 2.0 over HTTP on a predefined port
 

@@ -1,11 +1,7 @@
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { stripFrontmatter } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { McpClientManager } from "../mcp/index.js";
+import type { McpClientManager, McpTool } from "../mcp/index.js";
 import type { SkillRegistry } from "./skill-registry.js";
 
 const LoadSkillParams = Type.Object({
@@ -17,7 +13,6 @@ type LoadSkillInput = Static<typeof LoadSkillParams>;
 export interface LoadSkillDeps {
   registry: SkillRegistry;
   mcpManager: McpClientManager;
-  pi: ExtensionAPI;
 }
 
 export interface LoadSkillDetails {
@@ -33,11 +28,10 @@ export interface LoadSkillDetails {
  * When the model calls this tool, it:
  * 1. Looks up the skill in the registry
  * 2. Reads the full SKILL.md content from the MCP server
- * 3. Adds the skill's allowed-tools to the active tool set
- * 4. Returns the SKILL.md body (instructions) to the model
+ * 3. Returns the SKILL.md body + tool schemas so the model learns about deferred tools
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
-  const { registry, mcpManager, pi } = deps;
+  const { registry, mcpManager } = deps;
 
   return {
     name: "load_skill",
@@ -117,13 +111,14 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Activate allowed-tools (already pre-registered as proxies at session_start)
-      let activatedTools: string[] = [];
+      // Build result: skill body + tool schemas for deferred tools
+      let resultText = body;
+
       if (skill.allowedTools.length > 0) {
-        const currentTools = pi.getActiveTools();
-        activatedTools = skill.allowedTools.filter((t) => !currentTools.includes(t));
-        if (activatedTools.length > 0) {
-          pi.setActiveTools([...currentTools, ...activatedTools]);
+        const allTools = mcpManager.getTools();
+        const toolSchemas = formatToolSchemas(skill.allowedTools, allTools);
+        if (toolSchemas) {
+          resultText += "\n\n" + toolSchemas;
         }
       }
 
@@ -131,15 +126,45 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         content: [
           {
             type: "text",
-            text: body,
+            text: resultText,
           },
         ],
         details: {
           skillName: params.name,
           serverName: skill.serverName,
-          activatedTools,
+          activatedTools: skill.allowedTools,
         },
       };
     },
   };
+}
+
+/**
+ * Format tool schemas for inclusion in the load_skill result.
+ *
+ * Returns a text block describing each tool's name, description, and parameter
+ * schema so the model knows how to call the deferred tools it just discovered.
+ */
+export function formatToolSchemas(toolNames: string[], allTools: McpTool[]): string | undefined {
+  const tools = toolNames
+    .map((name) => allTools.find((t) => t.name === name))
+    .filter((t): t is McpTool => t !== undefined);
+
+  if (tools.length === 0) return undefined;
+
+  const lines = ["## Available Tools", ""];
+  for (const tool of tools) {
+    lines.push(`### ${tool.name}`);
+    if (tool.description) {
+      lines.push(tool.description);
+    }
+    lines.push("");
+    lines.push("Parameters:");
+    lines.push("```json");
+    lines.push(JSON.stringify(tool.inputSchema, null, 2));
+    lines.push("```");
+    lines.push("");
+  }
+
+  return lines.join("\n");
 }

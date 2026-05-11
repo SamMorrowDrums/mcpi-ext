@@ -22,9 +22,10 @@ export function formatMcpSkillsForPrompt(skills: McpSkillMetadata[]): string {
   const lines = [
     "",
     "",
-    "The following MCP skills provide specialized instructions for specific tasks.",
-    "You MUST call load_skill before using any MCP tool. MCP tools are hidden until their skill is loaded.",
-    "On activation, the skill's instructions load into context and its tools become usable.",
+    "The following MCP skills provide specialized instructions and tools for specific tasks.",
+    "MCP tools are deferred — they are available but not described in this prompt.",
+    "You MUST call load_skill to discover tool definitions and get usage instructions.",
+    "The load_skill result will include tool schemas so you know how to call them.",
     "",
     "<available_mcp_skills>",
   ];

@@ -2,23 +2,23 @@
 
 ![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
 
-> *They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well.*
+> _They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well._
 >
-> *They are wrong.*
+> _They are wrong._
 >
-> *MCP doesn't have a context problem. It has an imagination problem. The protocol already contains everything you need — `skill://` resources, tool annotations, `outputSchema`, progressive discovery. The pieces are all there, lying in the open like runes on a hillside. You just have to read them.*
+> _MCP doesn't have a context problem. It has an imagination problem. The protocol already contains everything you need — `skill://` resources, tool annotations, `outputSchema`, progressive discovery. The pieces are all there, lying in the open like runes on a hillside. You just have to read them._
 >
-> *What follows is the story of three who did.*
+> _What follows is the story of three who did._
 
 ---
 
 Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://pi.dev/) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
 
-| Tier | Aspect | Mechanism |
-|------|--------|-----------|
-| 1 — Skills | **The Skill Dealer** | `skill://` resources gate tools via `allowed-tools` |
-| 2 — tool-cli | **The Nuclear Football** | CLI progressive discovery via shell |
-| 3 — Code Mode | **Codey C. Maude** | Sandboxed JS over read-only tools with `outputSchema` |
+| Tier          | Aspect                   | Mechanism                                             |
+| ------------- | ------------------------ | ----------------------------------------------------- |
+| 1 — Skills    | **The Skill Dealer**     | `skill://` resources gate tools via `allowed-tools`   |
+| 2 — tool-cli  | **The Nuclear Football** | CLI progressive discovery via shell                   |
+| 3 — Code Mode | **Codey C. Maude**       | Sandboxed JS over read-only tools with `outputSchema` |
 
 ---
 
@@ -26,15 +26,18 @@ Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://
 
 ![A shadowy figure behind a table of glowing cards, each card inscribed with the name of an MCP tool](images/the-skill-dealer.webp)
 
-> *The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more.*
+> _The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more._
 
-MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and **hides** their tools from the model. The tools exist — registered as proxies, waiting — but they are invisible.
+MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools as **deferred** — present in the tools array for dispatch but excluded from the system prompt.
 
-When the model invokes `load_skill`, three things happen:
+This approach is **cache-preserving**: the tools array and system prompt stay constant throughout the conversation. The model discovers deferred tools through conversation content when `load_skill` returns their schemas.
+
+> **Note:** This is experimental. Models have been verified to call tools discovered from conversation content (tested with Claude Opus 4.7, all 4 disclosure scenarios passed). Ideally, model providers would explicitly support this pattern (e.g. a `defer_loading` annotation).
+
+When the model invokes `load_skill`, two things happen:
 
 1. The skill's SKILL.md is read from the MCP server and returned as workflow instructions
-2. The skill's `allowed-tools` are added to the model's active tool set
-3. The model can now see and call exactly the tools the skill intended
+2. The skill's tool schemas are appended to the result, so the model knows how to call them
 
 ```mermaid
 sequenceDiagram
@@ -48,17 +51,17 @@ sequenceDiagram
     SkillRegistry-->>load_skill: skill metadata + allowed-tools
     load_skill->>MCP Server: Read skill://github-pr
     MCP Server-->>load_skill: SKILL.md body
-    load_skill->>Model: setActiveTools([...current, "create_pull_request", ...])
-    load_skill-->>Model: Return workflow instructions
+    load_skill-->>Model: Return instructions + tool schemas
+    Note over Model: Model discovers deferred tools<br/>from conversation content
 ```
 
-This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools. The skill decides which ones the model can see. The model gets instructions *and* tools in one atomic operation, paying only the tokens for the skills it actually loads.
+This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools as deferred. The skill decides which ones the model learns about. The model gets instructions _and_ tool definitions in one atomic operation, paying only the tokens for the skills it actually loads — and the prompt cache stays intact.
 
-The context window stays clean. The tools appear exactly when the model has the context to use them well.
+The context window stays clean. The tools appear exactly when the model has the context to use them well. And prompt cache is preserved because neither the tools array nor the system prompt changes.
 
-Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model *pull* tools on demand, skill invocation *pushes* them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
+Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, tool schemas arrive in the conversation alongside skill instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
 
-> *"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."*
+> _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
 
 ---
 
@@ -66,7 +69,7 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 
 ![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](images/nuclear-mcp-football.webp)
 
-> *The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time.*
+> _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
 
 `tool-cli` is a thin CLI binary that speaks JSON-RPC 2.0 to the extension over HTTP. The agent uses it like any shell command — composable with pipes, grep, jq, loops, and all the bash idioms it already knows.
 
@@ -105,7 +108,7 @@ tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 
 The RPC server is the single choke point for all tool execution — the natural interception point for human-in-the-loop confirmation on destructive operations.
 
-> *They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself.*
+> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself._
 
 ---
 
@@ -113,7 +116,7 @@ The RPC server is the single choke point for all tool execution — the natural 
 
 ![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](images/code-c-maude.webp)
 
-> *Codey does not ask permission. Codey does not need to. Everything Codey touches is read-only, every result is typed, and the sandbox cannot be escaped. Codey is safe by construction.*
+> _Codey does not ask permission. Codey does not need to. Everything Codey touches is read-only, every result is typed, and the sandbox cannot be escaped. Codey is safe by construction._
 
 Code Mode is for the tools that are **read-only** (`annotations.readOnlyHint === true`) and return **structured output** (`outputSchema` defined). These two properties together make a tool safe for autonomous use — it can't modify anything, and its results are machine-parseable.
 
@@ -122,11 +125,9 @@ The model writes JavaScript that chains these tools:
 ```javascript
 // Executed in a V8 isolate via isolated-vm
 const issues = await codemode.list_issues({ repo: "owner/repo", state: "open" });
-const critical = issues.filter(i => i.labels.includes("critical"));
-const details = await Promise.all(
-  critical.map(i => codemode.get_issue({ number: i.number }))
-);
-return details.map(d => ({ title: d.title, assignee: d.assignee }));
+const critical = issues.filter((i) => i.labels.includes("critical"));
+const details = await Promise.all(critical.map((i) => codemode.get_issue({ number: i.number })));
+return details.map((d) => ({ title: d.title, assignee: d.assignee }));
 ```
 
 The sandbox runs in `isolated-vm` — genuine V8-level isolation:
@@ -138,12 +139,12 @@ The sandbox runs in `isolated-vm` — genuine V8-level isolation:
 
 Two tools expose this to the model:
 
-| Tool | Purpose |
-|------|---------|
-| `code_search` | Discover available tools — `codemode.listTools()`, `codemode.describeTools(names)` |
-| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)` |
+| Tool           | Purpose                                                                            |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `code_search`  | Discover available tools — `codemode.listTools()`, `codemode.describeTools(names)` |
+| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)`                   |
 
-> *"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."*
+> _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
 
 ---
 
@@ -167,9 +168,9 @@ flowchart TD
     MCM --> S3["MCP Server"]
 ```
 
-The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides *when* and *how* to reveal them.
+The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides _when_ and _how_ to reveal them.
 
-> *MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes.*
+> _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._
 
 ---
 

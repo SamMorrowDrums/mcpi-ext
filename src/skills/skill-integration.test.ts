@@ -8,30 +8,14 @@ import { createLoadSkillTool } from "./load-skill-tool.js";
 
 /**
  * Integration test: connect to the test weather server via stdio,
- * discover skills, load a skill, verify tool gating, call a gated tool.
+ * discover skills, load a skill, verify tool schemas in result, call a gated tool.
  */
 describe("skill integration (weather server)", () => {
   const manager = new McpClientManager();
   const registry = new SkillRegistry();
-  let activeTools: string[];
   let client: Client;
-  const registeredTools = new Map<string, unknown>();
-
-  const mockPi = {
-    getActiveTools: () => [...activeTools],
-    setActiveTools: (tools: string[]) => {
-      activeTools = tools;
-    },
-    getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    registerTool: (tool: any) => {
-      registeredTools.set(tool.name, tool);
-    },
-  };
 
   beforeAll(async () => {
-    activeTools = ["read", "bash", "edit", "write"];
-
     await manager.connectAll({
       mcpServers: {
         "test-weather": {
@@ -84,15 +68,11 @@ describe("skill integration (weather server)", () => {
     expect(prompt).toContain("load_skill");
   });
 
-  it("load_skill activates tools and returns body", async () => {
+  it("load_skill returns body and tool schemas", async () => {
     const tool = createLoadSkillTool({
       registry,
       mcpManager: manager,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pi: mockPi as any,
     });
-
-    expect(activeTools).not.toContain("check_weather_for_city");
 
     const result = await tool.execute(
       "call-1",
@@ -104,11 +84,19 @@ describe("skill integration (weather server)", () => {
     );
 
     expect(result.details.error).toBeUndefined();
+    expect(result.details.activatedTools).toEqual([
+      "check_weather_for_city",
+      "check_weekly_forecast_for_city",
+    ]);
     const text = result.content[0];
     expect(text.type).toBe("text");
+    // Skill body should mention the tools
     expect("text" in text && text.text).toContain("check_weather_for_city");
-    expect(activeTools).toContain("check_weather_for_city");
-    expect(activeTools).toContain("check_weekly_forecast_for_city");
+    // Tool schemas section should be appended
+    expect("text" in text && text.text).toContain("## Available Tools");
+    expect("text" in text && text.text).toContain("### check_weather_for_city");
+    expect("text" in text && text.text).toContain("### check_weekly_forecast_for_city");
+    expect("text" in text && text.text).toContain("Parameters:");
   });
 
   it("calls gated tools via MCP client", async () => {
@@ -139,8 +127,6 @@ describe("skill integration (weather server)", () => {
     const tool = createLoadSkillTool({
       registry,
       mcpManager: manager,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      pi: mockPi as any,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -66,6 +66,7 @@ function createMcpToolProxy(mcpTool: McpTool, mcpManager: McpClientManager) {
     name: mcpTool.name,
     label: mcpTool.name,
     description: mcpTool.description ?? `MCP tool from ${mcpTool.serverName}`,
+    deferred: true,
     parameters,
 
     async execute(
