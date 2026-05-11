@@ -3,7 +3,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   SessionStartEvent,
-} from "@mariozechner/pi-coding-agent";
+  ToolCallEvent,
+} from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
@@ -28,13 +29,15 @@ export default function (pi: ExtensionAPI) {
   const skillRegistry = new SkillRegistry();
   const rpcServer = new ToolCliRpcServer(mcpManager);
   const codeModeManager = new CodeModeManager();
+  const enabledTools = new Set<string>();
+  const gatedToolNames = new Set<string>();
 
   // Register the load_skill tool so the model can activate MCP skills
-  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, pi }));
+  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     if (ctx.hasUI) {
-      ctx.ui.notify("pi-mcp-agent loaded", "info");
+      ctx.ui.notify("mcpi-ext loaded", "info");
     }
 
     const configPath = pi.getFlag("mcp-config") as string | undefined;
@@ -55,7 +58,8 @@ export default function (pi: ExtensionAPI) {
           `MCP: ${mcpManager.getConnectedServers().length} server(s), ${tools.length} tool(s) discovered`,
         );
 
-        // Pre-register all MCP tools as Pi tool proxies (hidden until skill activation)
+        // Pre-register all MCP tools as deferred Pi tool proxies
+        // (in tools array for dispatch but excluded from system prompt)
         const allToolNames = tools.map((t) => t.name);
         registerMcpToolProxies(allToolNames, mcpManager, pi);
 
@@ -73,13 +77,15 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // Hide skill-gated MCP tools until load_skill activates them.
-        // Requires pi >= 0.70.0 (dynamic tool refresh in agent loop).
         if (skillRegistry.size > 0) {
-          const gatedTools = new Set(skillRegistry.getAll().flatMap((s) => s.allowedTools));
-          const activeTools = pi.getActiveTools().filter((t: string) => !gatedTools.has(t));
-          pi.setActiveTools(activeTools);
-          log(`MCP: ${skillRegistry.size} skill(s) discovered, ${gatedTools.size} tool(s) gated`);
+          for (const skill of skillRegistry.getAll()) {
+            for (const t of skill.allowedTools) {
+              gatedToolNames.add(t);
+            }
+          }
+          log(
+            `MCP: ${skillRegistry.size} skill(s) discovered, ${gatedToolNames.size} tool(s) deferred`,
+          );
         }
 
         // Start the tool-cli RPC server for progressive tool discovery
@@ -128,6 +134,20 @@ export default function (pi: ExtensionAPI) {
 
     if (extra.length === 0) return;
     return { systemPrompt: event.systemPrompt + extra };
+  });
+
+  // Block deferred MCP tools until their skill is loaded
+  pi.on("tool_call", async (event: ToolCallEvent) => {
+    const name = "toolName" in event ? event.toolName : undefined;
+    if (!name || !gatedToolNames.has(name) || enabledTools.has(name)) return;
+    const relevantSkills = skillRegistry
+      .getAll()
+      .filter((s) => s.allowedTools.includes(name))
+      .map((s) => s.name);
+    return {
+      block: true,
+      reason: `Tool "${name}" requires loading a skill first. Call load_skill with one of: ${relevantSkills.join(", ")}`,
+    };
   });
 
   pi.on("session_shutdown", async () => {

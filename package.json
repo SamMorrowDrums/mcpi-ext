@@ -1,14 +1,17 @@
 {
-  "name": "pi-mcp-agent",
+  "name": "@sammorrowdrums/mcpi-ext",
   "version": "0.1.0",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "file:../../../repos/pi-mono/packages/coding-agent",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "isolated-vm": "^6.1.2",
     "typebox": "^1.1.31",
     "zod": "^4.3.6"
   },
+  "peerDependencies": {
+    "@sammorrowdrums/mcpi": ">=0.70.0"
+  },
   "devDependencies": {
+    "@sammorrowdrums/mcpi": "file:../../../repos/pi-mono/packages/coding-agent",
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",
     "eslint": "^10.2.1",
@@ -32,7 +35,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "MCP focused pi agent",
+  "description": "MCP extension for mcpi — tiered progressive tool discovery",
   "license": "MIT",
   "main": "./dist/index.js",
   "type": "module",

@@ -25,6 +25,7 @@ describe("formatMcpSkillsForPrompt", () => {
     expect(result).toContain("<description>Check weather forecasts</description>");
     expect(result).toContain("<server>weather-srv</server>");
     expect(result).toContain("load_skill");
+    expect(result).toContain("deferred");
   });
 
   it("formats multiple skills", () => {

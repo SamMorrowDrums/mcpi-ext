@@ -1,8 +1,4 @@
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,6 +62,7 @@ function createMcpToolProxy(mcpTool: McpTool, mcpManager: McpClientManager) {
     name: mcpTool.name,
     label: mcpTool.name,
     description: mcpTool.description ?? `MCP tool from ${mcpTool.serverName}`,
+    deferred: true,
     parameters,
 
     async execute(

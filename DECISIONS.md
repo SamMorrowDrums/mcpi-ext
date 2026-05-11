@@ -41,7 +41,7 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 
 **Date:** 2026-04-23
 **Context:** How should the extension connect to MCP servers?
-**Decision:** Use `@modelcontextprotocol/sdk` (TypeScript MCP SDK) with a JSON config file at `~/.config/pi-mcp-agent/mcp.json` (overridable via `--mcp-config` flag). The config supports two transport types: `stdio` (spawns a child process) and `remote` (Streamable HTTP). A `McpClientManager` class connects to all configured servers on `session_start`, discovers tools via `tools/list`, handles `notifications/tools/list_changed`, and disconnects on `session_shutdown`.
+**Decision:** Use `@modelcontextprotocol/sdk` (TypeScript MCP SDK) with a JSON config file at `~/.config/mcpi-ext/mcp.json` (overridable via `--mcp-config` flag). The config supports two transport types: `stdio` (spawns a child process) and `remote` (Streamable HTTP). A `McpClientManager` class connects to all configured servers on `session_start`, discovers tools via `tools/list`, handles `notifications/tools/list_changed`, and disconnects on `session_shutdown`.
 **Rationale:** The official MCP SDK is the canonical way to implement MCP clients. JSON config aligns with VS Code and Claude Code conventions for MCP server configuration. Supporting both stdio and remote covers local dev servers and cloud-hosted MCP endpoints. Tools are discovered and stored internally but NOT registered with pi — the access tiers (Skills #1, Football #2, Code Mode #4) decide when to expose tools to the model.
 
 ## 006 — CI model access via GITHUB_TOKEN
@@ -58,12 +58,17 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Decision:** Custom `SkillRegistry` + `load_skill` tool + `formatMcpSkillsForPrompt`, styled after Pi's native skill system but fully self-contained in the extension. Skills are discovered from MCP `skill://` resources and injected into the system prompt via the `before_agent_start` hook.
 **Rationale:** MCP skills live on remote servers, not on disk. Writing them to temp files would be fragile and unnecessary. The custom approach keeps MCP skills self-contained, gives us full control over the activation → tool gating flow, and avoids coupling to Pi's internal skill loader. The XML format matches Pi's `<available_skills>` pattern so models already know how to interact with it.
 
-## 008 — Skill-gated tools accept prompt cache invalidation as a trade-off
+## 008 — Cache-safe progressive tool disclosure via `deferred` flag
 
-**Date:** 2026-04-24
-**Context:** When `load_skill` calls `setActiveTools()` to reveal new tools, the tool list sent to the model changes. This invalidates the prompt cache for subsequent turns because the system prompt + tool definitions are part of the cache key. With 38 tools on a server like GitHub MCP, hiding and revealing tools mid-conversation changes the cache signature.
-**Decision:** Accept the cache invalidation. Progressive disclosure is worth it. The alternative — sending all tools from the start — stuffs the model's context with tool definitions it doesn't need yet, which is worse than a cache miss.
-**Rationale:** The token cost of sending all tools upfront (38 tools × ~80 tokens each ≈ 3k tokens per turn) exceeds the one-time cache miss cost when tools are revealed. Skills also provide workflow instructions that make tool usage more reliable, which wouldn't happen if tools were just dumped into the context. For servers with many tools, a tool search/discovery flow (Football #2) can further reduce the impact by letting the model search for tools without revealing all of them.
+**Date:** 2026-05-11
+**Context:** When `load_skill` called `setActiveTools()` to reveal new tools, the tools array sent to the model changed, invalidating prompt cache. Decision 008 previously accepted this trade-off.
+**Decision:** Use `deferred: true` on MCP tool proxies with provider-native support and extension-level gating:
+
+1. **Anthropic:** pi-mono maps `deferred: true` to `defer_loading: true` in the API payload. Deferred tools stay in the tools array but are hidden from the model's view. Optional `tool_reference` content blocks can explicitly enable them on demand.
+2. **OpenAI Responses:** pi-mono maps `deferred: true` to `defer_loading: true` and auto-injects `{"type": "tool_search"}` into the tools array. The model discovers deferred tools automatically via hosted server-side search — no explicit activation needed. (OpenAI's client-executed `tool_search_output` is the equivalent of Anthropic's `tool_reference`, but hosted search is sufficient for our use case.)
+3. **All providers (fallback):** The extension's `tool_call` hook blocks premature calls to gated tools and returns an error message naming the relevant skill. After `load_skill` fires, tools are marked as enabled and calls go through.
+
+**Rationale:** Both Anthropic and OpenAI natively support `defer_loading` (tested with Claude Opus 4.7 and GPT-5.4). The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. The `tool_call` hook provides a provider-agnostic enforcement layer for providers without native `defer_loading` support.
 
 ## 009 — tool-cli uses JSON-RPC 2.0 over HTTP on a predefined port
 
