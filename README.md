@@ -3,7 +3,7 @@
 > **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/mcpi) (an experimental pi fork). See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed MCP spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for implementation details.
 
 ```sh
-npm install -g @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
+npm install -g @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext @sammorrowdrums/tool-cli
 mcpi --extension $(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js \
   --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
@@ -152,7 +152,7 @@ All three tiers route MCP tool calls back through the extension process. This is
 ### 1. Install
 
 ```sh
-npm install -g @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext
+npm install -g @sammorrowdrums/mcpi @sammorrowdrums/mcpi-ext @sammorrowdrums/tool-cli
 ```
 
 ### 2. Configure MCP servers
