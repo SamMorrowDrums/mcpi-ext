@@ -38,7 +38,7 @@ Three mechanisms work together:
 
 1. **`deferred: true`** — MCP tool proxies are registered with this flag. Pi's runtime keeps them in the internal registry for execution dispatch (via `resolveTool`) but excludes them from the tools array and system prompt sent to the model.
 
-2. **Anthropic `defer_loading`** — Pi's Anthropic provider maps `deferred: true` to Anthropic's native `defer_loading: true` API parameter. The tool stays in the provider's grammar (so the model _can_ generate `tool_use` blocks for it) but is hidden from the model's view until enabled. Anthropic supports `tool_reference` content blocks in `tool_result` to explicitly enable deferred tools — future work will have `load_skill` include these blocks so the provider knows which tools to reveal.
+2. **Provider-native `defer_loading`** — Pi's providers map `deferred: true` to the native API parameter. Both Anthropic and OpenAI support this (tested with Claude Opus 4.7 and GPT-5.4). On Anthropic, the tool is hidden until enabled via a `tool_reference` content block. On OpenAI Responses, pi-mono auto-injects `{"type": "tool_search"}` and the model searches/loads deferred tools server-side.
 
 3. **`tool_call` hook gating** — The extension registers a `tool_call` event handler that blocks premature calls to skill-gated tools. If the model tries to call a gated tool before loading its skill, the handler returns an error: _"Tool X requires loading a skill first. Call load_skill with: Y"_. This creates a natural feedback loop and serves as the provider-agnostic enforcement layer.
 

@@ -62,12 +62,13 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 
 **Date:** 2026-05-11
 **Context:** When `load_skill` called `setActiveTools()` to reveal new tools, the tools array sent to the model changed, invalidating prompt cache. Decision 008 previously accepted this trade-off.
-**Decision:** Use `deferred: true` on MCP tool proxies with two complementary gating mechanisms:
+**Decision:** Use `deferred: true` on MCP tool proxies with provider-native support and extension-level gating:
 
-1. **Anthropic (primary):** pi-mono maps `deferred: true` to `defer_loading: true` in the API payload. Deferred tools stay in the tools array (for grammar/dispatch) but are genuinely hidden from the model's view by the provider. The `tool_reference` content block can explicitly enable them on demand.
-2. **Other providers (fallback):** The extension's `tool_call` hook blocks premature calls to gated tools and returns an error message naming the relevant skill. After `load_skill` fires, tools are marked as enabled and calls go through.
+1. **Anthropic:** pi-mono maps `deferred: true` to `defer_loading: true` in the API payload. Deferred tools stay in the tools array but are hidden from the model's view. The `tool_reference` content block can explicitly enable them on demand.
+2. **OpenAI Responses:** pi-mono maps `deferred: true` to `defer_loading: true` and auto-injects `{"type": "tool_search"}` into the tools array. The model searches and loads deferred tools server-side (`tool_search_call` → `tool_search_output` → `function_call`).
+3. **All providers (fallback):** The extension's `tool_call` hook blocks premature calls to gated tools and returns an error message naming the relevant skill. After `load_skill` fires, tools are marked as enabled and calls go through.
 
-**Rationale:** The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. Testing confirmed: `defer_loading: true` genuinely hides tools from the model (verified); `tool_reference` blocks in `tool_result` enable deferred tools on demand (verified); tools NOT in the array are unreliable (model sometimes refuses). The `tool_call` hook provides a provider-agnostic fallback.
+**Rationale:** Both Anthropic and OpenAI natively support `defer_loading` (tested with Claude Opus 4.7 and GPT-5.4). The tools array and system prompt stay constant throughout the conversation — prompt cache is fully preserved. The `tool_call` hook provides a provider-agnostic enforcement layer for providers without native `defer_loading` support.
 
 ## 009 — tool-cli uses JSON-RPC 2.0 over HTTP on a predefined port
 
