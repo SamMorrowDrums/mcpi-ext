@@ -7,9 +7,11 @@ import { McpClientManager } from "../dist/mcp/client-manager.js";
 import { ToolCliRpcServer } from "../dist/tool-cli/rpc-server.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createRequire } from "node:module";
 
 const execFileAsync = promisify(execFile);
-const CLI = "dist/tool-cli/cli.js";
+const require = createRequire(import.meta.url);
+const CLI = require.resolve("@sammorrowdrums/tool-cli/dist/cli.js");
 const manager = new McpClientManager();
 let rpc;
 
