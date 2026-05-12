@@ -15,7 +15,8 @@ import {
   formatMcpSkillsForPrompt,
   registerMcpToolProxies,
 } from "./skills/index.js";
-import { ToolCliRpcServer, formatToolCliForPrompt } from "./tool-cli/index.js";
+import { ToolCliServer, formatToolCliForPrompt } from "./tool-cli/index.js";
+import type { ToolProvider } from "./tool-cli/index.js";
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool(dockerE2ETool);
@@ -27,10 +28,26 @@ export default function (pi: ExtensionAPI) {
 
   const mcpManager = new McpClientManager();
   const skillRegistry = new SkillRegistry();
-  const rpcServer = new ToolCliRpcServer(mcpManager);
   const codeModeManager = new CodeModeManager();
   const enabledTools = new Set<string>();
   const gatedToolNames = new Set<string>();
+
+  // Bridge McpClientManager to the ToolProvider interface
+  const toolProvider: ToolProvider = {
+    getServerNames: () => mcpManager.getConnectedServers(),
+    getTools: (server) => mcpManager.getToolsForServer(server),
+    async callTool(server, tool, args) {
+      const client = mcpManager.getClient(server);
+      if (!client) throw new Error(`No client for server "${server}"`);
+      const result = await client.callTool({ name: tool, arguments: args });
+      return {
+        content: result.content as unknown[],
+        isError: result.isError === true ? true : undefined,
+        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
+      };
+    },
+  };
+  const rpcServer = new ToolCliServer(toolProvider);
 
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
@@ -90,7 +107,9 @@ export default function (pi: ExtensionAPI) {
 
         // Start the tool-cli RPC server for progressive tool discovery
         try {
-          await rpcServer.start(log);
+          const { port, token } = await rpcServer.start(log);
+          pi.setEnv("TOOL_CLI_PORT", String(port));
+          pi.setEnv("TOOL_CLI_TOKEN", token);
         } catch (err) {
           log(`[tool-cli] Failed to start RPC server: ${(err as Error).message}`);
         }
@@ -151,6 +170,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    pi.unsetEnv("TOOL_CLI_PORT");
+    pi.unsetEnv("TOOL_CLI_TOKEN");
     await rpcServer.stop();
     await mcpManager.disconnectAll();
     skillRegistry.clear();

@@ -7,7 +7,7 @@
 ```mermaid
 flowchart TD
     A["Agent (mcpi)"] -->|shell exec| B["tool-cli &lt;server&gt; &lt;tool&gt; '{args}'"]
-    B -->|"HTTP JSON-RPC (localhost:7179)"| C["ToolCliRpcServer (in extension)"]
+    B -->|"HTTP JSON-RPC (random port, token auth)"| C["ToolCliServer (from @sammorrowdrums/tool-cli)"]
     C -->|"MCP protocol (stdio/HTTP)"| D["MCP Server(s)"]
 ```
 
@@ -43,6 +43,12 @@ tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 
 ## Security
 
-The RPC server binds to `127.0.0.1` only. Currently no authentication — any local process can call it. Future work: shared secret token passed via environment variable. See [DECISIONS.md #010](../DECISIONS.md).
+The server uses token-based auth and dynamic port allocation (provided by [`@sammorrowdrums/tool-cli`](https://github.com/SamMorrowDrums/tool-cli)):
 
-The RPC server is the single choke point for all tool execution — the natural interception point for future human-in-the-loop confirmation on destructive operations.
+1. `start()` binds to a random port and generates a 32-byte session token
+2. Returns `{ port, token }` — the extension sets these as env vars via `pi.setEnv()`
+3. Every request must include `Authorization: Bearer <token>` — rejected with 401 otherwise
+
+This enables concurrent sessions and prevents random processes from calling MCP tools. The RPC server is the single choke point for all tool execution — the natural interception point for future human-in-the-loop confirmation on destructive operations.
+
+See [tool-cli security docs](https://github.com/SamMorrowDrums/tool-cli#security) and [DECISIONS.md #010](../DECISIONS.md).
