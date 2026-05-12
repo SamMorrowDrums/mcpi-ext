@@ -58,9 +58,10 @@ When the model calls `load_skill`, the skill's instructions arrive and its tools
 
 > _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
 
-`tool-cli` is a thin CLI binary that speaks JSON-RPC to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. Each step pays only the tokens it needs.
+[`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks JSON-RPC to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. Each step pays only the tokens it needs.
 
 📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
+📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
 
 > _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself._
 
