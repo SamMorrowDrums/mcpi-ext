@@ -108,10 +108,8 @@ export default function (pi: ExtensionAPI) {
         // Start the tool-cli RPC server for progressive tool discovery
         try {
           const { port, token } = await rpcServer.start(log);
-          // TODO: Once mcpi exposes pi.setEnv(), use it instead of process.env.
-          // For now, set process-wide env so agent-spawned bash/tool-cli can authenticate.
-          process.env.TOOL_CLI_PORT = String(port);
-          process.env.TOOL_CLI_TOKEN = token;
+          pi.setEnv("TOOL_CLI_PORT", String(port));
+          pi.setEnv("TOOL_CLI_TOKEN", token);
         } catch (err) {
           log(`[tool-cli] Failed to start RPC server: ${(err as Error).message}`);
         }
@@ -172,6 +170,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    pi.unsetEnv("TOOL_CLI_PORT");
+    pi.unsetEnv("TOOL_CLI_TOKEN");
     await rpcServer.stop();
     await mcpManager.disconnectAll();
     skillRegistry.clear();
