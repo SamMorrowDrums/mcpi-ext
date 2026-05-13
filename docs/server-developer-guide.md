@@ -1,14 +1,16 @@
 # MCP Server Developer Guide
 
-How to make your MCP server work with pi-mcp-agent's progressive discovery system. This guide covers skill resources, tool annotations, and output schemas -- the three things that determine how your tools surface to the agent.
+How to make your MCP server work with mcpi-ext's progressive discovery system. This guide covers skill resources, tool annotations, and output schemas -- the three things that determine how your tools surface to the agent.
+
+> **Context:** This implementation is part of an active proposal to add skills-as-groups to the MCP spec. See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for how mcpi implements deferred tool loading across providers.
 
 ## Overview
 
-pi-mcp-agent discovers your server's capabilities automatically on connection. What it finds determines which of the three tiers your tools land in:
+mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which of the three tiers your tools land in:
 
 | What you provide | Tier | What happens |
 |------------------|------|--------------|
-| `skill://` resources with `allowed-tools` | **Tier 1 -- Skills** | Tools hidden until the model loads the skill |
+| `skill://` resources with tool declarations | **Tier 1 -- Skills** | Tools deferred until the model loads the skill |
 | Nothing special | **Tier 2 -- tool-cli** | Tools discoverable via CLI progressive exploration |
 | `readOnlyHint: true` + `outputSchema` | **Tier 3 -- Code Mode** | Tools callable from sandboxed JavaScript |
 
@@ -25,12 +27,16 @@ Skills are the primary way to give the agent curated, workflow-aware access to y
 1. On connection, the harness calls `resources/list` on your server
 2. It filters for resources with URIs matching `skill://<name>/SKILL.md`
 3. It reads each skill resource and parses the YAML frontmatter
-4. Tools listed in `allowed-tools` are hidden from the model until `load_skill` is called
-5. When the model calls `load_skill("your-skill")`, the tools appear and the SKILL.md body is returned as instructions
+4. Tools declared in the frontmatter are registered as deferred -- present for dispatch but hidden from the model
+5. When the model calls `load_skill("your-skill")`, the tools are unblocked and the SKILL.md body is returned as instructions
 
 ### SKILL.md format
 
 A skill resource is a markdown file with YAML frontmatter. The URI must follow the pattern `skill://<skill-name>/SKILL.md`.
+
+> **Frontmatter is evolving.** The [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) defines a new frontmatter schema using `metadata.io.modelcontextprotocol/tools` (space-separated tool names) that also supports prompts and resources. The current mcpi-ext implementation uses the `allowed-tools` YAML array format shown below. Both formats will be supported during the transition -- adopt the proposed format for new servers.
+
+**Current format** (mcpi-ext implementation):
 
 ```markdown
 ---
@@ -51,13 +57,50 @@ Use the weather tools to look up conditions for any city.
 Always confirm the city name with the user before calling.
 ```
 
+**Proposed spec format** ([skills-as-groups](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13)):
+
+```markdown
+---
+name: weather
+description: Check current weather and weekly forecasts for any city
+metadata:
+  io.modelcontextprotocol/tools: "check_weather_for_city check_weekly_forecast_for_city"
+---
+
+# Weather Forecasting Skill
+
+Use the weather tools to look up conditions for any city.
+...
+```
+
+The proposed format is richer -- it can also declare prompts and resources as dependencies:
+
+```yaml
+metadata:
+  io.modelcontextprotocol/tools: "get_pr list_comments post_comment approve_pr"
+  io.modelcontextprotocol/prompts: "pr-review-template"
+  io.modelcontextprotocol/resources: "github://pr/{number} github://pr/{number}/diff"
+```
+
 ### Frontmatter fields
+
+**Current (`allowed-tools`) format:**
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Skill identifier. The model uses this with `load_skill("name")`. Keep it short and descriptive. |
 | `description` | Yes | One-line summary shown in the skill catalog. Helps the model decide which skill to load. |
-| `allowed-tools` | Yes | Array of tool names this skill gates. These tools are hidden until the skill is loaded. |
+| `allowed-tools` | Yes | Array of tool names this skill gates. These tools are deferred until the skill is loaded. |
+
+**Proposed (`metadata`) format:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Skill identifier. |
+| `description` | Yes | One-line summary shown in the skill catalog. |
+| `metadata.io.modelcontextprotocol/tools` | Yes | Space-separated tool names this skill gates. |
+| `metadata.io.modelcontextprotocol/prompts` | No | Space-separated prompt names. |
+| `metadata.io.modelcontextprotocol/resources` | No | Space-separated resource URIs or URI templates. |
 
 ### Body
 
@@ -397,14 +440,25 @@ In this example:
 
 ## Checklist
 
-Before shipping your MCP server with pi-mcp-agent support:
+Before shipping your MCP server with progressive discovery support:
 
 - [ ] Server declares `resources` capability if exposing skills
 - [ ] Skill URIs follow `skill://<name>/SKILL.md` pattern
-- [ ] SKILL.md frontmatter includes `name`, `description`, and `allowed-tools`
+- [ ] SKILL.md frontmatter includes `name`, `description`, and tool declarations (`allowed-tools` or `metadata.io.modelcontextprotocol/tools`)
 - [ ] SKILL.md body provides actionable workflow instructions, not just tool descriptions
 - [ ] Read-only tools set `annotations: { readOnlyHint: true }`
 - [ ] Tools with typed output define `outputSchema` and return `structuredContent`
 - [ ] Schema properties have `.describe()` annotations for type hint generation
 - [ ] Write/destructive tools set `readOnlyHint: false` and optionally `destructiveHint: true`
 - [ ] Tools are grouped into skills by user workflow, not API structure
+
+---
+
+## Further Reading
+
+- [skills-as-groups MCP spec proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) — the proposed spec addition for skill frontmatter with `metadata.io.modelcontextprotocol/*` keys
+- [Progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) — how mcpi implements deferred tool loading across Anthropic and OpenAI providers
+- [Skills mechanism (Tier 1)](docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement
+- [tool-cli (Tier 2)](docs/tool-cli.md) — architecture, progressive discovery, shell composability
+- [Code Mode (Tier 3)](docs/code-mode.md) — sandbox isolation, eligibility, tool dispatch
+- [Anthropic tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) — model-side deferred tool loading (pull model vs skill invocation's push model)
