@@ -1,28 +1,40 @@
-# pi-mcp-agent
+# mcpi-ext
 
 [![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi)](https://www.npmjs.com/package/@sammorrowdrums/mcpi)
 [![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi-ext)](https://www.npmjs.com/package/@sammorrowdrums/mcpi-ext)
 [![npm](https://img.shields.io/npm/v/@sammorrowdrums/tool-cli)](https://www.npmjs.com/package/@sammorrowdrums/tool-cli)
 
-![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
+> **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/mcpi) (an experimental pi fork). See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed MCP spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for implementation details.
 
-> *They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well.*
->
-> *They are wrong.*
->
-> *MCP doesn't have a context problem. It has an imagination problem. The protocol already contains everything you need — `skill://` resources, tool annotations, `outputSchema`, progressive discovery. The pieces are all there, lying in the open like runes on a hillside. You just have to read them.*
->
-> *What follows is the story of three who did.*
+```sh
+npm install -g @sammorrowdrums/mcpi@latest @sammorrowdrums/mcpi-ext@latest @sammorrowdrums/tool-cli@latest
+mcpi --extension $(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js \
+  --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+See [Quick Start](#quick-start) for MCP server configuration.
 
 ---
 
-Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://pi.dev/) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
+![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
 
-| Tier | Aspect | Mechanism |
-|------|--------|-----------|
-| 1 — Skills | **The Skill Dealer** | `skill://` resources gate tools via `allowed-tools` |
-| 2 — tool-cli | **The Nuclear Football** | CLI progressive discovery via shell |
-| 3 — Code Mode | **Codey C. Maude** | Sandboxed JS over read-only tools with `outputSchema` |
+> _They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well._
+>
+> _They are wrong._
+>
+> _MCP doesn't have a context problem. It has an imagination problem. The protocol already contains everything you need — `skill://` resources, tool annotations, `outputSchema`, progressive discovery. The pieces are all there, lying in the open like runes on a hillside. You just have to read them._
+>
+> _What follows is the story of three who did._
+
+---
+
+Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/mcpi) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
+
+| Tier          | Aspect                   | Mechanism                                             |
+| ------------- | ------------------------ | ----------------------------------------------------- |
+| 1 — Skills    | **The Skill Dealer**     | `skill://` resources gate tools via `allowed-tools`   |
+| 2 — tool-cli  | **The Nuclear Football** | CLI progressive discovery via shell                   |
+| 3 — Code Mode | **Codey C. Maude**       | Sandboxed JS over read-only tools with `outputSchema` |
 
 ---
 
@@ -30,39 +42,19 @@ Building custom [MCP](https://modelcontextprotocol.io/) support as [pi](https://
 
 ![A shadowy figure behind a table of glowing cards, each card inscribed with the name of an MCP tool](images/the-skill-dealer.webp)
 
-> *The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more.*
+> _The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more._
 
-MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and **hides** their tools from the model. The tools exist — registered as proxies, waiting — but they are invisible.
+MCP servers ship `skill://` resources — SKILL.md files declaring which tools a skill gates. The extension discovers skills on connection and registers their tools with `deferred: true`: present in the registry for dispatch but hidden from the model and the prompt. **Cache is preserved** — neither the tools array nor the system prompt ever changes.
 
-When the model invokes `load_skill`, three things happen:
+When the model calls `load_skill`, the skill's instructions arrive and its tools are unblocked. The model discovers tools from the skill body and can call them immediately. The MCP server itself declares how its tools should be discovered.
 
-1. The skill's SKILL.md is read from the MCP server and returned as workflow instructions
-2. The skill's `allowed-tools` are added to the model's active tool set
-3. The model can now see and call exactly the tools the skill intended
+Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side -- deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools -- the right tools arrive because the skill declared them.
 
-```mermaid
-sequenceDiagram
-    participant Model
-    participant load_skill
-    participant SkillRegistry
-    participant MCP Server
+📖 [**How it works →**](docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement.
 
-    Model->>load_skill: load_skill("github-pr")
-    load_skill->>SkillRegistry: Look up skill
-    SkillRegistry-->>load_skill: skill metadata + allowed-tools
-    load_skill->>MCP Server: Read skill://github-pr
-    MCP Server-->>load_skill: SKILL.md body
-    load_skill->>Model: setActiveTools([...current, "create_pull_request", ...])
-    load_skill-->>Model: Return workflow instructions
-```
+> _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
 
-This is self-referential enablement: **the MCP server itself declares how its tools should be discovered**. The harness holds all the tools. The skill decides which ones the model can see. The model gets instructions *and* tools in one atomic operation, paying only the tokens for the skills it actually loads.
-
-The context window stays clean. The tools appear exactly when the model has the context to use them well.
-
-Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side — deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model *pull* tools on demand, skill invocation *pushes* them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools — the right tools arrive because the skill declared them.
-
-> *"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."*
+![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](images/skills-enabling-mcp-tools.png)
 
 ---
 
@@ -70,46 +62,18 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 
 ![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](images/nuclear-mcp-football.webp)
 
-> *The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time.*
+> _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
 
-`tool-cli` is a thin CLI binary that speaks JSON-RPC 2.0 to the extension over HTTP. The agent uses it like any shell command — composable with pipes, grep, jq, loops, and all the bash idioms it already knows.
+[`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks JSON-RPC to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. Each step pays only the tokens it needs.
 
-```mermaid
-flowchart TD
-    A["Agent (pi)"] -->|shell exec| B["tool-cli &lt;server&gt; &lt;tool&gt; '{args}'"]
-    B -->|"HTTP JSON-RPC (localhost:7179)"| C["ToolCliRpcServer (in extension)"]
-    C -->|"MCP protocol (stdio/HTTP)"| D["MCP Server(s)"]
-```
+📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
+📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
 
-Discovery is **progressive** — the agent pays only the tokens it needs:
+This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through the harness, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
 
-```sh
-tool-cli --help                              # What servers exist?
-tool-cli github                              # What tools does this server have?
-tool-cli github search_code                  # What's the schema for this tool?
-tool-cli github search_code '{"query":"auth"}' # Call it
-```
+> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching._
 
-And because it's shell-native, the agent gets bash superpowers for free:
-
-```sh
-# Chain tool calls
-tool-cli myserver list_items '{}' | jq -r '.[0].id' | \
-  xargs -I{} tool-cli myserver get_item '{"id":"{}"}'
-
-# Process collections
-for city in London Tokyo Paris; do
-  echo "=== $city ==="
-  tool-cli weather check_weather '{"city":"'"$city"'"}'
-done
-
-# Combine with the Unix toolbox
-tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
-```
-
-This is the dual-lock design: the agent holds the briefcase — reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through the harness, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
-
-> *They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching.*
+![tool-cli in action — progressive discovery piped through grep](images/tool-cli-grep.png)
 
 ---
 
@@ -117,47 +81,55 @@ This is the dual-lock design: the agent holds the briefcase — reach to every s
 
 ![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](images/code-c-maude.webp)
 
-> *Codey does not ask permission. Codey does not need to. Everything Codey touches is read-only, every result is typed, and the sandbox cannot be escaped. Codey is safe by construction.*
+> _Codey does not ask permission. Codey does not need to. Everything Codey touches is read-only, every result is typed, and the sandbox cannot be escaped. Codey is safe by construction._
 
-Code Mode is for the tools that are **read-only** (`annotations.readOnlyHint === true`) and return **structured output** (`outputSchema` defined). These two properties together make a tool safe for autonomous use — it can't modify anything, and its results are machine-parseable.
+Code Mode targets **read-only** tools with **structured output**. The model writes JavaScript that chains MCP tool calls inside a V8 isolate — memory-limited, time-limited, no filesystem or network access. Perfect for pagination loops, aggregation, and joins across many calls.
 
-The model writes JavaScript that chains these tools:
+📖 [**How it works →**](docs/code-mode.md) — sandbox isolation, eligibility, tool dispatch.
 
-```javascript
-// Executed in a V8 isolate via isolated-vm
-const issues = await codemode.list_issues({ repo: "owner/repo", state: "open" });
-const critical = issues.filter(i => i.labels.includes("critical"));
-const details = await Promise.all(
-  critical.map(i => codemode.get_issue({ number: i.number }))
-);
-return details.map(d => ({ title: d.title, assignee: d.assignee }));
-```
+> _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
 
-The sandbox runs in `isolated-vm` — genuine V8-level isolation:
+![Code Mode in action — chaining MCP tools in a V8 sandbox to build a histogram](images/code-mode-histogram.png)
 
-- **128MB memory limit**, 30-second timeout
-- **No access** to filesystem, network, or Node.js APIs
-- Tool calls dispatch to the host via `Reference` callbacks — MCP execution happens outside the sandbox
-- ~15ms overhead, negligible vs network I/O
+---
 
-Two tools expose this to the model:
+## When to Use Each Tier
 
-| Tool | Purpose |
-|------|---------|
-| `code_search` | Discover available tools — `codemode.listTools()`, `codemode.describeTools(names)` |
-| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)` |
+> _They asked the three: "Why are there three of you? Isn't one enough?"_
+>
+> _The Skill Dealer laid down a card. "When you know the ritual — the steps, the order, the tools that belong together — you come to me. I give you the ceremony whole."_
+>
+> _The Football's briefcase clicked open. "When you need one answer, quickly, and you know what you're looking for — you reach for me. I'm a shell command. I compose."_
+>
+> _Codey smiled, cross-legged in the isolate. "And when the answer is buried in nine pages of data, when you need loops and math and joins across a thousand records — you write the code, and I run it. Safely."_
+>
+> _"Three is not redundancy," said the Skill Dealer. "Three is completeness."_
 
-> *"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."*
+**The Skill Dealer** — when there's a curated workflow for the domain task. "Triage these 20 issues" means loading the triage skill, which gives you the right tools _plus_ the workflow instructions (dedup checks, labeling conventions, close criteria). Re-deriving that from raw tool calls is wasteful and error-prone.
+
+**The Nuclear Football** — one-shot or exploratory calls, especially when piping through Unix tools. `tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done. Also perfect for discovering what's on a server you haven't used before.
+
+**Codey C. Maude** — when you need real computation across many calls: pagination loops, aggregation, joining results, math. 876 issues across 9 pages, counting labels per issue, summing into a histogram — that's a loop with state. Doing it via tool-cli would mean 9 separate calls plus shell-side aggregation. Fragile. Codey does it in one sandbox execution.
+
+### A single task using all three
+
+> _"Triage the backlog of github/github-mcp-server: find stale bugs older than 90 days with no recent activity, summarize patterns, and close obvious duplicates."_
+
+1. **Codey** paginated all open bug issues, filtered by `updated < 90d ago`, grouped by label and keyword to find clusters. Computation across many pages — this is what sandboxes are for.
+
+2. **The Football** spot-checked suspect issues. `tool-cli github get_issue '{"number":42}'` piped through `jq` to eyeball specific fields. Quick, ad-hoc, composable.
+
+3. **The Skill Dealer** loaded `triage-issues` to actually close the duplicates — following the project's triage workflow with correct labels, comment templates, and close reasons. The ceremony, performed correctly.
+
+> _The rule of thumb is simple: skill for workflows, tool-cli for one-shots, code_execute for computation. The three are not competing. They are collaborating._
 
 ---
 
 ## The Architecture
 
-The three tiers are complementary. Skills give curated access with workflow knowledge. The Football gives interactive access with safety. Code Mode gives autonomous access to safe operations at scale.
-
 ```mermaid
 flowchart TD
-    subgraph pi["pi (agent)"]
+    subgraph mcpi["mcpi (agent)"]
         T1["load_skill\n(Tier 1 — Skills)"]
         T2["tool-cli\n(Tier 2 — Football)"]
         T3["code_search / code_execute\n(Tier 3 — Code Mode)"]
@@ -171,27 +143,96 @@ flowchart TD
     MCM --> S3["MCP Server"]
 ```
 
-The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides *when* and *how* to reveal them.
+The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides _when_ and _how_ to reveal them.
 
-> *MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes.*
+### Every call flows through the harness
+
+All three tiers route MCP tool calls back through the extension process. This is a subtle but important property: even when the model writes sandboxed JavaScript (Code Mode) or shells out to `tool-cli`, the actual MCP call happens in the harness. This means:
+
+- **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and Code Mode sandbox calls alike. Full observability without instrumentation.
+- **Human-in-the-loop can be added at one point** — the `McpClientManager` is the single choke point. Future work can check tool annotations (`readOnlyHint`, `destructiveHint`) and gate destructive calls through user confirmation, regardless of which tier initiated them.
+
+> _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._
 
 ---
 
 ## Quick Start
 
+### 1. Install
+
 ```sh
-curl https://mise.run | sh                       # install mise
-eval "$(~/.local/bin/mise activate bash)"         # activate
-mise install                                      # install node
-npm install                                       # install dependencies
-mise run build                                    # build
-mise run test                                     # test
+npm install -g @sammorrowdrums/mcpi@latest @sammorrowdrums/mcpi-ext@latest @sammorrowdrums/tool-cli@latest
 ```
 
-Load the extension with pi:
+### 2. Configure MCP servers
+
+Create `~/.config/mcpi-ext/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server:skill-discovery",
+        "stdio"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "xxx"
+      }
+    }
+  }
+}
+```
+
+Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). See [github/github-mcp-server](https://github.com/github/github-mcp-server) for the standard server.
+
+> **Note:** The `skill-discovery` tag includes experimental `skill://` resources that enable Tier 1 progressive discovery. The standard `ghcr.io/github/github-mcp-server` image works too — tool-cli (Tier 2) and Code Mode (Tier 3) function with any MCP server, but skill-gated tool activation requires `skill://` resources.
+
+You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
+
+```json
+{
+  "mcpServers": {
+    "github": { "...": "..." },
+    "my-remote-server": {
+      "type": "remote",
+      "url": "https://my-mcp-server.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer xxx"
+      }
+    }
+  }
+}
+```
+
+### 3. Run
 
 ```sh
-pi --extension ./dist/index.js
+mcpi --extension $(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js \
+  --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+### Local development
+
+```sh
+git clone https://github.com/SamMorrowDrums/mcpi-ext.git
+cd mcpi-ext
+npm install
+npm run build
+npm test
+```
+
+Then run with your local build:
+
+```sh
+mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
 
 See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture details.
@@ -206,7 +247,8 @@ src/
   tool-cli/            tool-cli RPC server, client, CLI binary, prompt
   code-mode/           V8 sandbox executor, eligibility, type hints
   test-servers/        Test MCP servers (weather, echo)
-images/                Banner and character art
+docs/                  Detailed mechanism documentation
+images/                Banner, character art, and screenshots
 ```
 
 ## License

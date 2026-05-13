@@ -14,11 +14,11 @@ This project uses **mise** for tool version management and **npm** for package m
   - `mise run <task>` — run a project task (build, test, dev, check, start)
   - `mise use <tool>@<version>` — add/update a tool version
 
-### pi (coding agent)
+### mcpi (coding agent)
 
-- **What:** [pi](https://pi.dev/) is an extensible terminal coding agent. This project builds extensions for it.
+- **What:** [mcpi](https://github.com/SamMorrowDrums/mcpi) is an extensible terminal coding agent (fork of pi). This project builds extensions for it.
 - **Extension pattern:** Export a default function receiving `ExtensionAPI`, register tools/commands/hooks.
-- **Load extension:** `pi --extension ./dist/index.js`
+- **Load extension:** `mcpi --extension ./dist/index.js`
 
 ## Dev Loop
 
@@ -56,18 +56,18 @@ tsconfig.json          TypeScript configuration
 
 The extension provides three tiers for exposing MCP tools to the agent:
 
-| Tier          | Mechanism                                            | When Used                                        |
-| ------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| 1 — Skills    | Skill loaded → `allowed-tools` gated → tools visible | MCP server ships skills                          |
-| 2 — tool-cli  | CLI progressive discovery via shell                  | Ad-hoc exploration, no skills                    |
-| 3 — Code Mode | search+execute, no HITL                              | Read-only tools with structured output (planned) |
+| Tier          | Mechanism                                                          | When Used                                        |
+| ------------- | ------------------------------------------------------------------ | ------------------------------------------------ |
+| 1 — Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                          |
+| 2 — tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills                    |
+| 3 — Code Mode | search+execute, no HITL                                            | Read-only tools with structured output (planned) |
 
 ### tool-cli Architecture
 
 tool-cli is a thin CLI binary that communicates with the extension via JSON-RPC 2.0 over HTTP. The agent uses it as a standard shell command, composable with pipes, grep, jq, loops, etc.
 
 ```
-Agent (pi)
+Agent (mcpi)
   │
   │  shell exec
   ▼

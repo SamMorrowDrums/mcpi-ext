@@ -3,19 +3,7 @@ node = "22"
 
 [tasks.build]
 description = "Build TypeScript"
-run = [
-  "npx tsc",
-  "chmod +x dist/tool-cli/cli.js",
-]
-
-[tasks."install:tool-cli"]
-description = "Symlink tool-cli binary for local use"
-depends = ["build"]
-run = [
-  "ln -sf ../../dist/tool-cli/cli.js node_modules/.bin/tool-cli",
-  "mkdir -p ~/.local/bin",
-  "ln -sf $PWD/dist/tool-cli/cli.js ~/.local/bin/tool-cli",
-]
+run = "npx tsc"
 
 [tasks.dev]
 description = "Watch mode"
@@ -47,7 +35,7 @@ run = "node dist/index.js"
 
 [tasks.docker-build]
 description = "Build the Docker e2e image"
-run = "docker build -t pi-mcp-agent-e2e ."
+run = "docker build -t mcpi-ext-e2e ."
 
 [tasks."test:integration"]
 description = "Run MCP integration smoke test"

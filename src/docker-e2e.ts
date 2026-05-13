@@ -3,10 +3,10 @@ import type {
   AgentToolResult,
   AgentToolUpdateCallback,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 
-const DOCKER_IMAGE = "pi-mcp-agent-e2e";
+const DOCKER_IMAGE = "mcpi-ext-e2e";
 
 const DockerE2EParams = Type.Object({
   task: Type.String({ description: "The task/prompt to run inside the sandbox" }),

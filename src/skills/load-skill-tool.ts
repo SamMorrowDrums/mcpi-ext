@@ -1,9 +1,5 @@
-import type {
-  AgentToolResult,
-  ExtensionAPI,
-  ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
-import { stripFrontmatter } from "@mariozechner/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
+import { stripFrontmatter } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 import type { McpClientManager } from "../mcp/index.js";
 import type { SkillRegistry } from "./skill-registry.js";
@@ -17,7 +13,7 @@ type LoadSkillInput = Static<typeof LoadSkillParams>;
 export interface LoadSkillDeps {
   registry: SkillRegistry;
   mcpManager: McpClientManager;
-  pi: ExtensionAPI;
+  enabledTools: Set<string>;
 }
 
 export interface LoadSkillDetails {
@@ -33,11 +29,11 @@ export interface LoadSkillDetails {
  * When the model calls this tool, it:
  * 1. Looks up the skill in the registry
  * 2. Reads the full SKILL.md content from the MCP server
- * 3. Adds the skill's allowed-tools to the active tool set
- * 4. Returns the SKILL.md body (instructions) to the model
+ * 3. Returns the SKILL.md body (the skill names its tools, and the model
+ *    already has their schemas from the deferred tools array)
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
-  const { registry, mcpManager, pi } = deps;
+  const { registry, mcpManager, enabledTools } = deps;
 
   return {
     name: "load_skill",
@@ -117,14 +113,9 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Activate allowed-tools (already pre-registered as proxies at session_start)
-      let activatedTools: string[] = [];
-      if (skill.allowedTools.length > 0) {
-        const currentTools = pi.getActiveTools();
-        activatedTools = skill.allowedTools.filter((t) => !currentTools.includes(t));
-        if (activatedTools.length > 0) {
-          pi.setActiveTools([...currentTools, ...activatedTools]);
-        }
+      // Enable the skill's tools so the tool_call gate allows them
+      for (const t of skill.allowedTools) {
+        enabledTools.add(t);
       }
 
       return {
@@ -137,7 +128,7 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         details: {
           skillName: params.name,
           serverName: skill.serverName,
-          activatedTools,
+          activatedTools: skill.allowedTools,
         },
       };
     },
