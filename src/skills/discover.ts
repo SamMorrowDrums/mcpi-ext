@@ -47,7 +47,7 @@ export async function discoverSkillsFromServer(
       const fm = parsed.frontmatter as Record<string, unknown>;
       const name = (fm.name as string | undefined) ?? resource.name;
       const description = (fm.description as string | undefined) ?? "";
-      const allowedTools = parseAllowedTools(fm["allowed-tools"]);
+      const allowedTools = parseAllowedTools(fm);
 
       if (!name) {
         log(`[skills] Skill at ${resource.uri} has no name, skipping`);
@@ -73,9 +73,28 @@ export async function discoverSkillsFromServer(
   return skills;
 }
 
-function parseAllowedTools(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((v): v is string => typeof v === "string");
+/**
+ * Parse tool names from frontmatter, supporting both formats:
+ * - Current: `allowed-tools: [tool_a, tool_b]` (YAML array)
+ * - Proposed spec: `metadata.io.modelcontextprotocol/tools: "tool_a tool_b"` (space-separated)
+ *
+ * Prefers the proposed spec format when both are present.
+ */
+function parseAllowedTools(fm: Record<string, unknown>): string[] {
+  // Proposed spec format: metadata.io.modelcontextprotocol/tools (space-separated string)
+  const metadata = fm.metadata as Record<string, unknown> | undefined;
+  if (metadata) {
+    const specTools = metadata["io.modelcontextprotocol/tools"];
+    if (typeof specTools === "string" && specTools.trim().length > 0) {
+      return specTools.trim().split(/\s+/);
+    }
   }
+
+  // Current format: allowed-tools (YAML array)
+  const legacy = fm["allowed-tools"];
+  if (Array.isArray(legacy)) {
+    return legacy.filter((v): v is string => typeof v === "string");
+  }
+
   return [];
 }
