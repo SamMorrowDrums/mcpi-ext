@@ -8,19 +8,19 @@ How to make your MCP server work with mcpi-ext's progressive discovery system. T
 
 mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which of the three tiers your tools land in:
 
-| What you provide | Tier | What happens |
-|------------------|------|--------------|
-| `skill://` resources with tool declarations | **Tier 1 -- Skills** | Tools deferred until the model loads the skill |
-| Nothing special | **Tier 2 -- tool-cli** | Tools discoverable via CLI progressive exploration |
-| `readOnlyHint: true` + `outputSchema` | **Tier 3 -- Code Mode** | Tools callable from sandboxed JavaScript |
+| What you provide                            | Tier                    | What happens                                       |
+| ------------------------------------------- | ----------------------- | -------------------------------------------------- |
+| `skill://` resources with tool declarations | **Tier 1 -- Skills**    | Tools deferred until the model loads the skill     |
+| Nothing special                             | **Tier 2 -- tool-cli**  | Tools discoverable via CLI progressive exploration |
+| `readOnlyHint: true` + `outputSchema`       | **Tier 3 -- Code Mode** | Tools callable from sandboxed JavaScript           |
 
-These tiers are complementary. A single tool can participate in multiple tiers -- for example, a read-only tool with an output schema gated behind a skill will be available via Skills *and* Code Mode.
+These tiers are complementary. A single tool can participate in multiple tiers -- for example, a read-only tool with an output schema gated behind a skill will be available via Skills _and_ Code Mode.
 
 ---
 
 ## Skill Resources
 
-Skills are the primary way to give the agent curated, workflow-aware access to your tools. When a skill is loaded, the model receives both the instructions for *how* to use the tools and the tools themselves, in one atomic operation.
+Skills are the primary way to give the agent curated, workflow-aware access to your tools. When a skill is loaded, the model receives both the instructions for _how_ to use the tools and the tools themselves, in one atomic operation.
 
 ### How it works
 
@@ -86,21 +86,21 @@ metadata:
 
 **Current (`allowed-tools`) format:**
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Skill identifier. The model uses this with `load_skill("name")`. Keep it short and descriptive. |
-| `description` | Yes | One-line summary shown in the skill catalog. Helps the model decide which skill to load. |
-| `allowed-tools` | Yes | Array of tool names this skill gates. These tools are deferred until the skill is loaded. |
+| Field           | Required | Description                                                                                     |
+| --------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `name`          | Yes      | Skill identifier. The model uses this with `load_skill("name")`. Keep it short and descriptive. |
+| `description`   | Yes      | One-line summary shown in the skill catalog. Helps the model decide which skill to load.        |
+| `allowed-tools` | Yes      | Array of tool names this skill gates. These tools are deferred until the skill is loaded.       |
 
 **Proposed (`metadata`) format:**
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Skill identifier. |
-| `description` | Yes | One-line summary shown in the skill catalog. |
-| `metadata.io.modelcontextprotocol/tools` | Yes | Space-separated tool names this skill gates. |
-| `metadata.io.modelcontextprotocol/prompts` | No | Space-separated prompt names. |
-| `metadata.io.modelcontextprotocol/resources` | No | Space-separated resource URIs or URI templates. |
+| Field                                        | Required | Description                                     |
+| -------------------------------------------- | -------- | ----------------------------------------------- |
+| `name`                                       | Yes      | Skill identifier.                               |
+| `description`                                | Yes      | One-line summary shown in the skill catalog.    |
+| `metadata.io.modelcontextprotocol/tools`     | Yes      | Space-separated tool names this skill gates.    |
+| `metadata.io.modelcontextprotocol/prompts`   | No       | Space-separated prompt names.                   |
+| `metadata.io.modelcontextprotocol/resources` | No       | Space-separated resource URIs or URI templates. |
 
 ### Body
 
@@ -121,7 +121,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 const server = new McpServer(
   { name: "my-server", version: "1.0.0" },
-  { capabilities: { resources: {} } }  // enable resources capability
+  { capabilities: { resources: {} } }, // enable resources capability
 );
 
 const SKILL_CONTENT = `---
@@ -138,8 +138,8 @@ Instructions for the model...
 `;
 
 server.registerResource(
-  "my-skill",                    // resource name (internal)
-  "skill://my-skill/SKILL.md",  // URI (must match skill://<name>/SKILL.md)
+  "my-skill", // resource name (internal)
+  "skill://my-skill/SKILL.md", // URI (must match skill://<name>/SKILL.md)
   {
     description: "My skill instructions",
     mimeType: "text/markdown",
@@ -152,7 +152,7 @@ server.registerResource(
         mimeType: "text/markdown",
       },
     ],
-  })
+  }),
 );
 ```
 
@@ -200,7 +200,7 @@ Server: github-mcp-server
   echo (ungated)                    always available via tool-cli
 ```
 
-A tool can appear in multiple skills' `allowed-tools` lists -- it will be revealed when *any* of those skills is loaded.
+A tool can appear in multiple skills' `allowed-tools` lists -- it will be revealed when _any_ of those skills is loaded.
 
 ---
 
@@ -239,7 +239,7 @@ server.registerTool(
         city,
       },
     };
-  }
+  },
 );
 ```
 
@@ -277,9 +277,7 @@ declare const codemode: {
    * Get current weather conditions for a city
    * @param input.city - City name, e.g. 'London'
    */
-  check_weather_for_city: (input: {
-    city: string;
-  }) => Promise<{
+  check_weather_for_city: (input: { city: string }) => Promise<{
     /** Temperature in Celsius */
     temperature: number;
     /** Weather conditions description */
@@ -305,7 +303,7 @@ These hints are injected into the model's system prompt. Write good `description
 
 ## Combining Skills and Code Mode
 
-A tool can be gated behind a skill *and* eligible for Code Mode. These are independent mechanisms:
+A tool can be gated behind a skill _and_ eligible for Code Mode. These are independent mechanisms:
 
 - The skill controls **when** the tool appears in the model's tool list (Tier 1)
 - Code Mode eligibility controls **whether** the tool is callable from sandboxed JavaScript (Tier 3)
@@ -324,7 +322,7 @@ import { z } from "zod";
 
 const server = new McpServer(
   { name: "inventory-server", version: "1.0.0" },
-  { capabilities: { resources: {} } }
+  { capabilities: { resources: {} } },
 );
 
 // Skill resource
@@ -333,9 +331,10 @@ server.registerResource(
   "skill://inventory/SKILL.md",
   { description: "Inventory management skill", mimeType: "text/markdown" },
   async () => ({
-    contents: [{
-      uri: "skill://inventory/SKILL.md",
-      text: `---
+    contents: [
+      {
+        uri: "skill://inventory/SKILL.md",
+        text: `---
 name: inventory
 description: Search and manage product inventory
 allowed-tools:
@@ -354,9 +353,10 @@ Use these tools to work with the product catalog.
 
 Always search before updating to confirm the correct product.
 `,
-      mimeType: "text/markdown",
-    }],
-  })
+        mimeType: "text/markdown",
+      },
+    ],
+  }),
 );
 
 // Read-only + outputSchema = Code Mode eligible + skill gated
@@ -369,13 +369,15 @@ server.registerTool(
       category: z.string().optional().describe("Filter by category"),
     },
     outputSchema: {
-      products: z.array(z.object({
-        id: z.string(),
-        name: z.string(),
-        category: z.string(),
-        price: z.number(),
-        stock: z.number(),
-      })),
+      products: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          category: z.string(),
+          price: z.number(),
+          stock: z.number(),
+        }),
+      ),
       total: z.number().describe("Total matching products"),
     },
     annotations: { readOnlyHint: true },
@@ -386,7 +388,7 @@ server.registerTool(
       content: [{ type: "text", text: `Found ${results.length} products` }],
       structuredContent: { products: results, total: results.length },
     };
-  }
+  },
 );
 
 // Write tool -- skill gated, NOT Code Mode eligible
@@ -408,7 +410,7 @@ server.registerTool(
     return {
       content: [{ type: "text", text: `Updated stock for ${productId} to ${quantity}` }],
     };
-  }
+  },
 );
 
 // Ungated utility -- always available via tool-cli
@@ -426,7 +428,7 @@ server.registerTool(
   async () => ({
     content: [{ type: "text", text: "Server is healthy" }],
     structuredContent: { status: "healthy", uptime: 86400 },
-  })
+  }),
 );
 ```
 
