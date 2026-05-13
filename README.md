@@ -1,5 +1,9 @@
 # mcpi-ext
 
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi)](https://www.npmjs.com/package/@sammorrowdrums/mcpi)
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi-ext)](https://www.npmjs.com/package/@sammorrowdrums/mcpi-ext)
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/tool-cli)](https://www.npmjs.com/package/@sammorrowdrums/tool-cli)
+
 > **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/mcpi) (an experimental pi fork). See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed MCP spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for implementation details.
 
 ```sh
@@ -44,6 +48,8 @@ MCP servers ship `skill://` resources — SKILL.md files declaring which tools a
 
 When the model calls `load_skill`, the skill's instructions arrive and its tools are unblocked. The model discovers tools from the skill body and can call them immediately. The MCP server itself declares how its tools should be discovered.
 
+Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side -- deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools -- the right tools arrive because the skill declared them.
+
 📖 [**How it works →**](docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement.
 
 > _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
@@ -63,7 +69,9 @@ When the model calls `load_skill`, the skill's instructions arrive and its tools
 📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
 📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
 
-> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself._
+This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through the harness, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
+
+> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching._
 
 ![tool-cli in action — progressive discovery piped through grep](images/tool-cli-grep.png)
 
