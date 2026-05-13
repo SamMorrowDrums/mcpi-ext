@@ -1,5 +1,9 @@
 # pi-mcp-agent
 
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi)](https://www.npmjs.com/package/@sammorrowdrums/mcpi)
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi-ext)](https://www.npmjs.com/package/@sammorrowdrums/mcpi-ext)
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/tool-cli)](https://www.npmjs.com/package/@sammorrowdrums/tool-cli)
+
 ![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
 
 > *They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well.*
@@ -103,9 +107,9 @@ done
 tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 ```
 
-The RPC server is the single choke point for all tool execution — the natural interception point for human-in-the-loop confirmation on destructive operations.
+This is the dual-lock design: the agent holds the briefcase — reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through the harness, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
 
-> *They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself.*
+> *They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching.*
 
 ---
 
