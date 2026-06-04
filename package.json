@@ -4,7 +4,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sammorrowdrums/tool-cli": "^0.3.0",
-    "isolated-vm": "^6.1.2",
+    "isolated-vm": "^7.0.0",
     "typebox": "^1.1.31",
     "zod": "^4.3.6"
   },
