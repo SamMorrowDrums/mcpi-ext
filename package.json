@@ -3,7 +3,7 @@
   "version": "0.2.1",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@sammorrowdrums/tool-cli": "^0.3.0",
+    "@sammorrowdrums/tool-cli": "^0.6.1",
     "isolated-vm": "^6.1.2",
     "typebox": "^1.1.31",
     "zod": "^4.3.6"
