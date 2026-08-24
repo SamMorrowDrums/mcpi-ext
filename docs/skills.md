@@ -2,6 +2,8 @@
 
 MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools with `deferred: true`.
 
+Use a skill when the task matches a documented domain workflow the server has authored — the skill supplies the sequencing and conventions alongside the tools. Loading one **enables its declared tools only after the grant is approved**; the declaration alone confers nothing. For choosing between skills and the other execution facilities, see the `<execution_routing>` section described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting) — it compares facilities by task shape, and there is no rule that skills should be tried first.
+
 ## How deferred tool gating works
 
 Three mechanisms work together to keep tools hidden until the right moment — while preserving prompt cache:

@@ -15,6 +15,10 @@ function escapeXml(str: string): string {
  * Produces XML matching Pi's native `formatSkillsForPrompt` structure,
  * but references the `load_skill` tool instead of `read` and uses
  * `mcp:<serverName>` as the location.
+ *
+ * This is the catalogue of what exists. Which kind of task suits a skill at all
+ * is decided by the `<execution_routing>` section, which reports skill
+ * availability whether or not any were discovered.
  */
 export function formatMcpSkillsForPrompt(skills: McpSkillMetadata[]): string {
   if (skills.length === 0) return "";
@@ -22,9 +26,10 @@ export function formatMcpSkillsForPrompt(skills: McpSkillMetadata[]): string {
   const lines = [
     "",
     "",
-    "The following MCP skills provide specialized instructions and tools for specific tasks.",
-    "MCP tools are deferred — they are available but not described in this prompt.",
-    "You MUST call load_skill to get usage instructions before using a skill's tools.",
+    "Use when a task matches one of the domain workflows these MCP skills document.",
+    "Call load_skill with the skill's name to read its instructions before working through it.",
+    "MCP tools are deferred — registered for dispatch but not described in this prompt. A skill's",
+    "declared tools are enabled only after you approve its grant; declining leaves them locked.",
     "",
     "<available_mcp_skills>",
   ];

@@ -1,23 +1,35 @@
 /**
- * Format system prompt section advising the agent when and how to use tool-cli.
+ * Usage documentation for tool-cli.
  *
- * Only included when MCP servers are connected. Tells the agent about
- * progressive discovery via tool-cli as an alternative to skill-based access.
+ * This is the "how", not the "when" — the `<execution_routing>` section decides
+ * which facility suits a task, and this section explains how to drive tool-cli
+ * once it has been chosen.
+ *
+ * Only emitted once the local RPC server has actually started. Advertising the
+ * commands before that would teach an agent an invocation it cannot perform.
+ * The routing section still reports tool-cli's availability either way, so
+ * nothing is silently omitted.
  */
-export function formatToolCliForPrompt(serverCount: number): string {
-  if (serverCount === 0) return "";
+export interface ToolCliPromptState {
+  /** True only after the local tool-cli RPC server started successfully. */
+  available: boolean;
+  /** Connected MCP servers, reported to the agent verbatim. */
+  serverCount: number;
+}
+
+export function formatToolCliForPrompt(state: ToolCliPromptState): string {
+  if (!state.available) return "";
 
   return `
 
-<tool_cli>
-You have access to \`tool-cli\`, a CLI for discovering and calling MCP server tools progressively.
+<tool_cli_usage_docs>
+Use when you need to reach a specific MCP tool from the shell, or to discover which servers and
+tools exist before committing to an approach.
 
-Use tool-cli when:
-- No skill covers the task you need to do
-- You want to explore what tools are available on a server
-- You need ad-hoc access to an MCP tool without loading a full skill
-
-If a skill exists for the task, prefer the skill — it provides workflow instructions and curated tool access.
+\`tool-cli\` is a program, not a tool you can call. Invoke the bash tool with a command of the form
+\`tool-cli ...\`. Never emit \`<tool_cli...>\` markup, a pseudo-call, or any other text that imitates a
+tool invocation, and never write out what you expect a command would have printed — run it with the
+bash tool and use the real output.
 
 Discovery (progressive — only fetch what you need):
   tool-cli --help                            # List MCP servers with tool counts
@@ -49,8 +61,10 @@ Chain calls, filter, and transform results using pipes and bash idioms:
   # Combine with standard tools
   tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 
-Prefer piping and chaining over multiple separate tool calls when processing collections or filtering results.
+Because tool-cli runs inside a bash command, filtering, joining, or writing results to disk with
+ordinary programs is part of the same invocation — prefer one piped command over many separate
+calls when processing collections.
 Errors go to stderr with exit code 1 — use \`&&\` or \`set -e\` for safe chaining.
-${serverCount} MCP server(s) currently connected.
-</tool_cli>`;
+${state.serverCount} MCP server(s) currently connected.
+</tool_cli_usage_docs>`;
 }

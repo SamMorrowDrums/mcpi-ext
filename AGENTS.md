@@ -40,6 +40,7 @@ mise run format:check # check formatting (CI mode)
 src/
   index.ts             Extension entry point (lifecycle hooks, wiring)
   mcp/                 MCP client management (connections, discovery) + McpPolicy authorization boundary
+  routing/             Execution-facility descriptors, prompt section, host registration seam
   skills/              Skill registry, discovery, gating, tool proxies
   tool-cli/            tool-cli RPC server, client, CLI binary, prompt
   test-servers/        Test MCP servers (weather, echo)
@@ -91,6 +92,32 @@ The extension provides three tiers for exposing MCP tools to the agent:
 | 3 — Code Mode | search+execute, read-only tools only (refused, not prompted)       | Read-only tools with structured output |
 
 Tier 1 has two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills` and the gate is on.
+
+The tier numbers name _exposure mechanisms_, not a routing order. Nothing tells the agent to try tier 1 before tier 2. Which surface an agent should use for a given task is decided by the execution-routing section below.
+
+### Execution routing (`src/routing/`)
+
+The extension emits exactly one `<execution_routing>` prompt section every time it loads, **including with zero MCP servers connected**. It describes four facilities by task shape — never by precedence:
+
+| Facility                 | Task shape                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| Skills                   | domain workflow guidance authored by a server                                |
+| Code mode                | sandboxed exact computation and control flow — no fs, no network, no process |
+| tool-cli                 | authenticated MCP-to-shell on-ramp, invoked **through the host bash tool**   |
+| bash + external programs | the filesystem / artifact / data-pipeline substrate                          |
+
+Two invariants hold across the module:
+
+- **Task shape, not precedence.** `FACILITY_ORDER` is alphabetical by id specifically so the order cannot be read as a ranking, and so the rendered bytes are stable turn to turn.
+- **Availability is always stated, never silently omitted.** Each facility reports `available` / `unavailable` / `unknown` with a non-empty reason. `unknown` means the host tool registry could not be read — it is not a synonym for absent.
+
+Availability sources: code mode is available whenever the extension loads (pure computation needs no server); skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised as available only after its local RPC server actually starts, and a startup failure is surfaced with a next step rather than swallowed; bash comes from host tool registration via `getAllTools()` when that is discoverable.
+
+`src/routing/seam.ts` is a narrow feature-detection seam for a future mcpi core `registerExecutionFacility` API. It probes with `"registerExecutionFacility" in host` plus a `typeof` check — no type assertions — and falls back to emitting the complete section from `before_agent_start`. The two paths are mutually exclusive, so the section is never duplicated. The core API is **not** implemented here.
+
+`src/routing/tripwire.ts` ships `detectToolCliTripwires`, a regression guard for the failure mode where assistant text contains `<tool_cli…` markup or narrates a `tool-cli` transcript without a real bash tool call having run it. It is a test-facing detector; wiring it into the runtime is future work.
+
+Section split: `<execution_routing>` answers _when_; `<tool_cli_usage_docs>` answers _how_, and is emitted only once the RPC server has started.
 
 ### tool-cli Architecture
 

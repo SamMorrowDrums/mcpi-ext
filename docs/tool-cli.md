@@ -2,6 +2,16 @@
 
 `tool-cli` is a thin CLI binary that speaks JSON-RPC 2.0 to the extension over HTTP. The agent uses it like any shell command — composable with pipes, grep, jq, loops.
 
+## How the agent invokes it
+
+`tool-cli` is a **program, not a tool**. There is no `tool-cli` entry in the agent's tool registry. To run it the agent invokes the host **bash tool** with a command line such as `tool-cli github search_code '{"query":"auth"}'`. Emitting `<tool_cli>…</tool_cli>` markup, or writing a plausible-looking transcript of a command and its output, does not run anything — that text is a hallucination, not an invocation.
+
+The extension states this directly in the prompt. The usage documentation is emitted under the tag `<tool_cli_usage_docs>`, deliberately named so it does not read like an action the model can perform: it is reference material describing a program, not a call site. (It was previously `<tool_cli>`, which invited exactly the pseudo-call failure above.) `src/routing/tripwire.ts` ships `detectToolCliTripwires` as a regression guard for both shapes of that mistake.
+
+`<tool_cli_usage_docs>` is emitted **only after the local RPC server has actually started**. If startup fails, the section is withheld and the failure is reported in the `<execution_routing>` availability line with a next step, rather than being swallowed — an agent that is told how to use a facility that is not running will waste turns on commands that cannot succeed.
+
+For choosing _between_ tool-cli and the other execution facilities, see the `<execution_routing>` section described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting).
+
 ## Architecture
 
 ```mermaid

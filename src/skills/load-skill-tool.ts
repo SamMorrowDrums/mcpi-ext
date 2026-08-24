@@ -57,8 +57,10 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
   return {
     name: "load_skill",
     label: "Load Skill",
-    description: "Load an MCP skill by name. Activates the skill's instructions and tools.",
-    promptSnippet: "Load an MCP skill to get specialized instructions and activate its tools.",
+    description:
+      "Use when a task matches an MCP skill's documented workflow and you need its instructions. Returns the skill body and requests approval to enable the tools it declares; the tools stay locked unless that grant is approved.",
+    promptSnippet:
+      "Use when a task matches an MCP skill's workflow: returns its instructions and, once you approve the grant, enables the tools it declares.",
     parameters: LoadSkillParams,
 
     async execute(

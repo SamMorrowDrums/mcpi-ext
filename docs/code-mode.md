@@ -48,4 +48,8 @@ Code Mode shines when you need real computation across many calls: pagination lo
 - For each open PR, fetch reviews and compute average time-to-first-review
 - Paginate all items, filter, group, and summarize
 
-See [DECISIONS.md #011–012 and #014](../DECISIONS.md) for implementation decisions.
+The sandbox is exact but sealed: no filesystem, no network, no process access. Work that has to produce a file, run a program, or touch the machine needs bash, not Code Mode.
+
+Cross-facility choice is not described here or in `CodeModeManager`'s own prompt appendix — that appendix covers Code Mode only. The `<execution_routing>` section is the single place that compares facilities, and it does so by task shape rather than precedence. See [AGENTS.md](../AGENTS.md#execution-routing-srcrouting).
+
+See [DECISIONS.md #011–012, #014, and #017](../DECISIONS.md) for implementation decisions.

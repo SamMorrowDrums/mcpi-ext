@@ -93,35 +93,62 @@ Code Mode is always available for arithmetic, parsing, and deterministic transfo
 
 ---
 
-## When to Use Each Tier
+## Choosing an Execution Facility
 
-> _They asked the three: "Why are there three of you? Isn't one enough?"_
->
-> _The Skill Dealer laid down a card. "When you know the ritual — the steps, the order, the tools that belong together — you come to me. I give you the ceremony whole."_
->
-> _The Football's briefcase clicked open. "When you need one answer, quickly, and you know what you're looking for — you reach for me. I'm a shell command. I compose."_
->
-> _Codey smiled, cross-legged in the isolate. "And when the answer is buried in nine pages of data, when you need loops and math and joins across a thousand records — you write the code, and I run it. Safely."_
->
-> _"Three is not redundancy," said the Skill Dealer. "Three is completeness."_
+Whenever the extension loads it emits a single `<execution_routing>` prompt section describing the
+facilities available to the agent — **including when zero MCP servers are connected**. The section
+sorts facilities by task shape, not by rank: none is a default, none outranks another, and there is
+no sequence to try them in. Every facility states its own availability, so an unavailable one is
+listed with the reason rather than silently omitted.
 
-**The Skill Dealer** — when there's a curated workflow for the domain task. "Triage these 20 issues" means loading the triage skill, which gives you the right tools _plus_ the workflow instructions (dedup checks, labeling conventions, close criteria). Re-deriving that from raw tool calls is wasteful and error-prone.
+Three of the four facilities come from this extension; the fourth is the host's own shell, described
+alongside them because most real tasks need it.
 
-**The Nuclear Football** — one-shot or exploratory calls, especially when piping through Unix tools. `tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done. Also perfect for discovering what's on a server you haven't used before.
+| Facility                             | Suits work that is…                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| [Skills](#i-the-skill-dealer)        | a documented domain workflow — sequencing, conventions, and a curated tool set              |
+| [Code mode](#iii-codey-c-maude)      | exact computation or control flow, sandboxed with no filesystem, network, or process access |
+| [tool-cli](#ii-the-nuclear-football) | reaching a specific MCP tool, or discovering what exists — run through the host bash tool   |
+| bash + external programs             | touching the real machine: files, git, build tools, data pipelines, artifacts that persist  |
 
-**Codey C. Maude** — when you need real computation across many calls: pagination loops, aggregation, joining results, math. 876 issues across 9 pages, counting labels per issue, summing into a histogram — that's a loop with state. Doing it via tool-cli would mean 9 separate calls plus shell-side aggregation. Fragile. Codey does it in one sandbox execution.
+**Skills** — when a curated workflow exists for the domain task. "Triage these 20 issues" means
+loading the triage skill, which supplies the right tools _plus_ the workflow instructions (dedup
+checks, labeling conventions, close criteria). Re-deriving that from raw tool calls is wasteful and
+error-prone. A skill enables the tools it declares only after the grant is approved.
 
-### A single task using all three
+**Code mode** — when you need real computation across many calls: pagination loops, aggregation,
+joining results, math. 876 issues across 9 pages, counting labels per issue, summing into a
+histogram — that's a loop with state, and one sandbox execution does it. Available even with zero
+MCP servers connected, because pure computation needs no server.
+
+**tool-cli** — one-shot or exploratory MCP calls, especially when piping through Unix tools.
+`tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done.
+Also the way to discover what's on a server you haven't used before. It is a program, not a tool:
+the agent invokes the bash tool with a `tool-cli ...` command. It is advertised as available only
+after its local RPC server has actually started.
+
+**bash + external programs** — the substrate the other three lack. It is the only facility that can
+create, modify, or inspect files and artifacts, and the only one that runs the host's real programs.
+
+### Facilities compose
+
+tool-cli and bash compose especially closely: because tool-cli _is_ a program run with the bash
+tool, fetching MCP data and then filtering, joining, or writing it to disk with ordinary programs is
+a single bash command rather than two rival approaches.
 
 > _"Triage the backlog of github/github-mcp-server: find stale bugs older than 90 days with no recent activity, summarize patterns, and close obvious duplicates."_
 
-1. **Codey** paginated all open bug issues, filtered by `updated < 90d ago`, grouped by label and keyword to find clusters. Computation across many pages — this is what sandboxes are for.
+1. **Code mode** paginated all open bug issues, filtered by `updated < 90d ago`, grouped by label
+   and keyword to find clusters. Computation across many pages — this is what sandboxes are for.
 
-2. **The Football** spot-checked suspect issues. `tool-cli github get_issue '{"number":42}'` piped through `jq` to eyeball specific fields. Quick, ad-hoc, composable.
+2. **tool-cli** spot-checked suspect issues. `tool-cli github get_issue '{"number":42}'` piped
+   through `jq` to eyeball specific fields. Quick, ad-hoc, composable.
 
-3. **The Skill Dealer** loaded `triage-issues` to actually close the duplicates — following the project's triage workflow with correct labels, comment templates, and close reasons. The ceremony, performed correctly.
+3. **A skill** (`triage-issues`) drove the actual closures — following the project's triage
+   workflow with correct labels, comment templates, and close reasons.
 
-> _The rule of thumb is simple: skill for workflows, tool-cli for one-shots, code_execute for computation. The three are not competing. They are collaborating._
+4. **bash** wrote the resulting summary to a file in the repo, because none of the other three can
+   touch the filesystem.
 
 ---
 
@@ -266,6 +293,7 @@ See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture det
 src/
   index.ts             Extension entry point (lifecycle hooks, wiring)
   mcp/                 MCP client management (connections, tool discovery)
+  routing/             Execution-facility descriptors, prompt section, host seam
   skills/              Skill registry, discovery, gating, tool proxies
   tool-cli/            tool-cli RPC server, client, CLI binary, prompt
   code-mode/           V8 sandbox executor, eligibility, type hints
