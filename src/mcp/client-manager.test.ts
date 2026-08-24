@@ -1,5 +1,6 @@
 import type { CallToolResult, Client, Tool, Transport } from "@modelcontextprotocol/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SKILLS_EXTENSION_REVISION } from "../skills/sep2640/spec.js";
 import type { CreateMcpClientOptions } from "./client-factory.js";
 import { McpClientManager } from "./client-manager.js";
 
@@ -70,6 +71,15 @@ describe("McpClientManager", () => {
       discoverResult: {
         supportedVersions: ["2026-07-28"],
         capabilities: { tools: {} },
+      },
+      // The draft skills extension is opt-in, so an ordinary connection
+      // reports it as neither requested nor declared.
+      skillsExtension: {
+        requested: false,
+        revision: SKILLS_EXTENSION_REVISION,
+        status: "draft",
+        serverDeclared: false,
+        serverCapability: undefined,
       },
     });
   });

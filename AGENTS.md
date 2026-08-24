@@ -56,13 +56,14 @@ tsconfig.json          TypeScript configuration
 
 Every path that reaches an MCP server crosses `McpPolicy` (`src/mcp/policy.ts`) exactly once. It is the only place that decides whether a tool call or resource read is allowed, and the only place that prompts the user.
 
-| Path             | Entry point                   | `source` tag      |
-| ---------------- | ----------------------------- | ----------------- |
-| Proxy tools      | `skills/mcp-tool-proxy.ts`    | `proxy`           |
-| Code Mode        | `code-mode/index.ts` dispatch | `code-mode`       |
-| tool-cli RPC     | `tool-cli/provider.ts`        | `tool-cli`        |
-| Skill discovery  | `skills/discover.ts`          | `skill-discovery` |
-| Skill activation | `skills/load-skill-tool.ts`   | `skill-load`      |
+| Path             | Entry point                   | `source` tag       |
+| ---------------- | ----------------------------- | ------------------ |
+| Proxy tools      | `skills/mcp-tool-proxy.ts`    | `proxy`            |
+| Code Mode        | `code-mode/index.ts` dispatch | `code-mode`        |
+| tool-cli RPC     | `tool-cli/provider.ts`        | `tool-cli`         |
+| Skill discovery  | `skills/discover.ts`          | `skill-discovery`  |
+| Skill activation | `skills/load-skill-tool.ts`   | `skill-load`       |
+| SEP-2640 skills  | `skills/sep2640/*`            | `skills-extension` |
 
 The ordered pipeline for a tool call: server connected → tool present in the discovered set → not skill-gated → arguments valid against the declared input schema → not cancelled → permission → dispatch. Every denial happens **before** the upstream call, and every outcome (allowed or denied) appends exactly one audit record.
 
@@ -75,6 +76,8 @@ Permission rules:
 
 Skill grants from MCP servers require explicit user approval and are bound to server + resource URI + a hash of the sorted tool list, so widening `allowed-tools` or replaying a grant from a different server re-prompts. Resource reads use the same policy: `skill://` URIs are origin-bound to the server that advertised them, and a discovery pass does not authorize a skill-load read.
 
+For SEP-2640 skills the `skills-extension` source narrows this further: reads are authorized by exact membership in _that skill's_ declared `resources` set (keyed `serverName` + `skillUri`), not by the per-server skill index, and the grant key additionally carries a fingerprint of the resource set so rotated content re-prompts. See [docs/skills.md](docs/skills.md) — the extension is **Draft** and gated off by default.
+
 `McpClientManager` is the transport gateway beneath the policy — it owns connections and protocol negotiation, not authorization.
 
 ### Tiered MCP Tool Access
@@ -86,6 +89,8 @@ The extension provides three tiers for exposing MCP tools to the agent:
 | 1 — Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                |
 | 2 — tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills          |
 | 3 — Code Mode | search+execute, read-only tools only (refused, not prompted)       | Read-only tools with structured output |
+
+Tier 1 has two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills` and the gate is on.
 
 ### tool-cli Architecture
 

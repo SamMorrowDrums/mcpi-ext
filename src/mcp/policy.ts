@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 import type { ReadResourceResult, Resource } from "@modelcontextprotocol/client";
+import type {
+  DirectoryReadResult,
+  SkillsGetResult,
+  SkillsListResult,
+} from "../skills/sep2640/protocol.js";
+import { SKILLS_EXTENSION_NAME } from "../skills/sep2640/spec.js";
 import type { TerminalCallToolResult } from "./call-tool-result.js";
 import type { McpTool } from "./client-manager.js";
 
@@ -13,8 +19,13 @@ export type McpCallSource = "proxy" | "code-mode" | "tool-cli";
  * Which skill workflow asked for a resource read. Resource authorization is
  * narrower than tool authorization: only skill discovery and skill loading
  * currently need it, and each is bound to a single server origin.
+ *
+ * `skills-extension` covers the draft SEP-2640 surface. It is a distinct source
+ * so a read authorized by a skill's declared `resources` set can never be
+ * confused with one authorized by the legacy `skill://…/SKILL.md` convention,
+ * and so the audit log says which contract produced each read.
  */
-export type McpResourceSource = "skill-discovery" | "skill-load";
+export type McpResourceSource = "skill-discovery" | "skill-load" | "skills-extension";
 
 export type McpPolicyDenialReason =
   | "server_not_connected"
@@ -26,7 +37,11 @@ export type McpPolicyDenialReason =
   | "approval_unavailable"
   | "cancelled"
   | "resource_not_discovered"
-  | "resource_origin_mismatch";
+  | "resource_origin_mismatch"
+  /** The server never declared the skills extension, so its methods are off-limits. */
+  | "extension_not_declared"
+  /** The server declared the extension but not `directoryRead`. */
+  | "directory_read_unavailable";
 
 export interface McpPolicyErrorInit {
   reason: McpPolicyDenialReason;
@@ -64,7 +79,13 @@ export type McpApprovalOutcome = "granted" | "reused" | "declined" | "unavailabl
 export interface McpAuditRecord {
   readonly id: string;
   readonly source: McpCallSource | McpResourceSource;
-  readonly operation: "tool" | "resource" | "skill-grant";
+  readonly operation:
+    | "tool"
+    | "resource"
+    | "skill-grant"
+    | "skill-list"
+    | "skill-get"
+    | "skill-directory";
   readonly serverName: string;
   readonly toolName?: string;
   readonly uri?: string;
@@ -108,6 +129,35 @@ export interface McpPolicyGateway {
   ): Promise<TerminalCallToolResult>;
   listResources(serverName: string, signal?: AbortSignal): Promise<Resource[]>;
   readResource(serverName: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult>;
+
+  /**
+   * The settings a server declared for one MCP extension in its `initialize`
+   * response, or `undefined` when it did not declare that extension at all.
+   *
+   * Read fresh on every call rather than cached as a boolean: the policy asks
+   * this immediately before each extension request so a reconnect that drops
+   * the extension cannot leave a stale "enabled" flag behind.
+   */
+  getExtensionCapability(
+    serverName: string,
+    extensionName: string,
+  ): Record<string, unknown> | undefined;
+
+  /** Draft SEP-2640 `skills/list`. */
+  requestSkillsList(
+    serverName: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<SkillsListResult>;
+  /** Draft SEP-2640 `skills/get`. */
+  requestSkillsGet(serverName: string, uri: string, signal?: AbortSignal): Promise<SkillsGetResult>;
+  /** Draft SEP-2640 `resources/directory/read`. */
+  requestDirectoryRead(
+    serverName: string,
+    uri: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<DirectoryReadResult>;
 }
 
 export interface McpToolCallRequest {
@@ -122,6 +172,12 @@ export interface McpResourceReadRequest {
   source: McpResourceSource;
   serverName: string;
   uri: string;
+  /**
+   * Required for `skills-extension` reads: which skill's declared `resources`
+   * set authorizes this URI. Naming the skill is what keeps the allowlist
+   * per-skill instead of pooling every declared file on the server.
+   */
+  skillUri?: string;
   signal?: AbortSignal;
 }
 
@@ -131,6 +187,16 @@ export interface McpPolicySkill {
   readonly uri: string;
   readonly serverName: string;
   readonly allowedTools: readonly string[];
+  /**
+   * A digest over the exact content this grant covers, when the origin can
+   * supply one (SEP-2640 servers can; the legacy `skill://` convention cannot).
+   *
+   * Folding it into the grant key is what makes an approval content-bound: if a
+   * later listing rotates a digest, adds a file, or drops one, the key changes,
+   * the prior approval no longer matches, and the user is asked again rather
+   * than having yesterday's consent silently applied to today's bytes.
+   */
+  readonly contentFingerprint?: string;
 }
 
 export type SkillGrantOutcome =
@@ -176,6 +242,14 @@ export class McpPolicy {
   private readonly skillUrisByServer = new Map<string, Set<string>>();
   /** URIs a server itself listed in the current discovery pass. */
   private readonly discoveredUrisByServer = new Map<string, Set<string>>();
+  /**
+   * Per-skill SEP-2640 resource allowlists, keyed by `serverName\0skillUri`.
+   *
+   * A skill's declared `resources` set is the *only* thing that authorizes a
+   * `skills-extension` read. Storing it per skill rather than per server means a
+   * file listed by skill A cannot be read while "loading" skill B.
+   */
+  private readonly extensionResourceUris = new Map<string, Set<string>>();
   private readonly audit: McpAuditRecord[] = [];
   private sequence = 0;
 
@@ -214,6 +288,24 @@ export class McpPolicy {
     }
   }
 
+  /**
+   * Bind a SEP-2640 skill's declared resource URIs so they become readable
+   * under the `skills-extension` source — and nothing else does.
+   *
+   * The set replaces any previous one for that skill, so a rotated listing
+   * narrows access immediately instead of accumulating stale grants.
+   */
+  registerSkillResources(
+    serverName: string,
+    skillUri: string,
+    resourceUris: readonly string[],
+  ): void {
+    this.extensionResourceUris.set(
+      extensionResourceKey(serverName, skillUri),
+      new Set(resourceUris),
+    );
+  }
+
   /** Every tool name currently gated behind an unapproved skill grant. */
   getGatedToolNames(): string[] {
     return [...this.gatedTools.keys()].filter((name) => !this.enabledTools.has(name)).sort();
@@ -235,6 +327,7 @@ export class McpPolicy {
     this.approvedGrants.clear();
     this.skillUrisByServer.clear();
     this.discoveredUrisByServer.clear();
+    this.extensionResourceUris.clear();
     this.audit.length = 0;
   }
 
@@ -498,6 +591,126 @@ export class McpPolicy {
   }
 
   // ---------------------------------------------------------------------------
+  // Skills extension (draft SEP-2640)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The server's declared settings for the draft skills extension, or
+   * `undefined` when it did not declare it.
+   *
+   * Resolved fresh on every call. The extension is negotiated in `initialize`,
+   * but a reconnect can change the answer, and caching "this server supports
+   * skills" would let a stale yes outlive the negotiation that produced it.
+   */
+  getSkillsExtension(serverName: string): Record<string, unknown> | undefined {
+    if (!this.gateway.getConnectedServers().includes(serverName)) return undefined;
+    return this.gateway.getExtensionCapability(serverName, SKILLS_EXTENSION_NAME);
+  }
+
+  /** True when the server declared `directoryRead: true` on the extension. */
+  supportsSkillDirectoryRead(serverName: string): boolean {
+    return this.getSkillsExtension(serverName)?.["directoryRead"] === true;
+  }
+
+  /**
+   * Draft SEP-2640 `skills/list`.
+   *
+   * Refused unless the server declared the extension: an undeclared method is
+   * not a method this host is entitled to probe for.
+   */
+  async listMcpSkills(
+    serverName: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<SkillsListResult> {
+    this.assertSkillsExtension(serverName, "skill-list");
+    if (signal?.aborted) {
+      throw this.denyExtension(serverName, "skill-list", "cancelled", "skills/list was cancelled.");
+    }
+    const result = await this.gateway.requestSkillsList(serverName, cursor, signal);
+    this.record({
+      source: "skills-extension",
+      operation: "skill-list",
+      serverName,
+      decision: "allowed",
+    });
+    return result;
+  }
+
+  /** Draft SEP-2640 `skills/get`. */
+  async getMcpSkill(
+    serverName: string,
+    uri: string,
+    signal?: AbortSignal,
+  ): Promise<SkillsGetResult> {
+    this.assertSkillsExtension(serverName, "skill-get", uri);
+    if (signal?.aborted) {
+      throw this.denyExtension(
+        serverName,
+        "skill-get",
+        "cancelled",
+        `skills/get for ${uri} was cancelled.`,
+        uri,
+      );
+    }
+    const result = await this.gateway.requestSkillsGet(serverName, uri, signal);
+    this.record({
+      source: "skills-extension",
+      operation: "skill-get",
+      serverName,
+      uri,
+      decision: "allowed",
+    });
+    return result;
+  }
+
+  /**
+   * Draft SEP-2640 `resources/directory/read`.
+   *
+   * Refused when the server declared the extension without `directoryRead`.
+   * The setting defaults to false, so silence means no.
+   */
+  async readSkillDirectory(
+    serverName: string,
+    uri: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<DirectoryReadResult> {
+    this.assertSkillsExtension(serverName, "skill-directory", uri);
+
+    if (!this.supportsSkillDirectoryRead(serverName)) {
+      throw this.denyExtension(
+        serverName,
+        "skill-directory",
+        "directory_read_unavailable",
+        `MCP server "${serverName}" did not declare "directoryRead" on the skills extension, so ` +
+          `${uri} cannot be enumerated.`,
+        uri,
+      );
+    }
+
+    if (signal?.aborted) {
+      throw this.denyExtension(
+        serverName,
+        "skill-directory",
+        "cancelled",
+        `Directory read of ${uri} was cancelled.`,
+        uri,
+      );
+    }
+
+    const result = await this.gateway.requestDirectoryRead(serverName, uri, cursor, signal);
+    this.record({
+      source: "skills-extension",
+      operation: "skill-directory",
+      serverName,
+      uri,
+      decision: "allowed",
+    });
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
   // Resources
   // ---------------------------------------------------------------------------
 
@@ -533,7 +746,7 @@ export class McpPolicy {
    * tool calls: origin binding, discovery, cancellation, and audit.
    */
   async readResource(request: McpResourceReadRequest): Promise<ReadResourceResult> {
-    const { source, serverName, uri, signal } = request;
+    const { source, serverName, uri, skillUri, signal } = request;
 
     const deny = (reason: McpPolicyDenialReason, message: string) => {
       this.record({
@@ -554,17 +767,33 @@ export class McpPolicy {
       );
     }
 
-    if (!uri.startsWith("skill://")) {
+    // The legacy convention recognises skills by URI shape, so the shape is the
+    // outer bound of what it may read. SEP-2640 reads are authorized by exact
+    // membership in a skill's declared `resources` set — strictly narrower — so
+    // they do not need, and must not be limited by, a scheme heuristic.
+    if (source !== "skills-extension" && !uri.startsWith("skill://")) {
       throw deny(
         "resource_not_discovered",
         `Resource ${uri} is outside the skill resource surface this host authorizes.`,
       );
     }
 
-    const allowed =
-      source === "skill-discovery"
-        ? (this.discoveredUrisByServer.get(serverName) ?? new Set<string>())
-        : (this.skillUrisByServer.get(serverName) ?? new Set<string>());
+    if (source === "skills-extension") {
+      if (!skillUri) {
+        throw deny(
+          "resource_not_discovered",
+          `Read of ${uri} did not name the skill whose declared resources authorize it.`,
+        );
+      }
+      if (!this.getSkillsExtension(serverName)) {
+        throw deny(
+          "extension_not_declared",
+          `MCP server "${serverName}" does not declare the skills extension, so ${uri} cannot be read under it.`,
+        );
+      }
+    }
+
+    const allowed = this.allowedReadUris(source, serverName, skillUri);
 
     if (!allowed.has(uri)) {
       // Distinguish "belongs to a different origin" so the denial is actionable.
@@ -577,7 +806,9 @@ export class McpPolicy {
       }
       throw deny(
         "resource_not_discovered",
-        `Resource ${uri} was not discovered as a skill on MCP server "${serverName}".`,
+        source === "skills-extension"
+          ? `Resource ${uri} is not listed in the resources of skill ${skillUri ?? "(unknown)"} on MCP server "${serverName}".`
+          : `Resource ${uri} was not discovered as a skill on MCP server "${serverName}".`,
       );
     }
 
@@ -614,17 +845,98 @@ export class McpPolicy {
     }
   }
 
+  private allowedReadUris(
+    source: McpResourceSource,
+    serverName: string,
+    skillUri: string | undefined,
+  ): Set<string> {
+    if (source === "skills-extension") {
+      if (!skillUri) return new Set<string>();
+      return (
+        this.extensionResourceUris.get(extensionResourceKey(serverName, skillUri)) ??
+        new Set<string>()
+      );
+    }
+    if (source === "skill-discovery") {
+      return this.discoveredUrisByServer.get(serverName) ?? new Set<string>();
+    }
+    return this.skillUrisByServer.get(serverName) ?? new Set<string>();
+  }
+
   private findOtherOrigin(
     uri: string,
     serverName: string,
     source: McpResourceSource,
   ): string | undefined {
+    if (source === "skills-extension") {
+      // Extension allowlists are keyed by `serverName\0skillUri`, so a match on
+      // another origin is what turns "not listed here" into "listed elsewhere".
+      for (const [key, uris] of this.extensionResourceUris) {
+        const owner = key.slice(0, key.indexOf(NUL));
+        if (owner !== serverName && uris.has(uri)) return owner;
+      }
+      return undefined;
+    }
     const index =
       source === "skill-discovery" ? this.discoveredUrisByServer : this.skillUrisByServer;
     for (const [candidate, uris] of index) {
       if (candidate !== serverName && uris.has(uri)) return candidate;
     }
     return undefined;
+  }
+
+  /**
+   * Refuse an extension method unless the server is connected and declared the
+   * extension. Records the denial before throwing, like every other refusal.
+   */
+  private assertSkillsExtension(
+    serverName: string,
+    operation: "skill-list" | "skill-get" | "skill-directory",
+    uri?: string,
+  ): void {
+    if (!this.gateway.getConnectedServers().includes(serverName)) {
+      throw this.denyExtension(
+        serverName,
+        operation,
+        "server_not_connected",
+        `MCP server "${serverName}" is not connected.`,
+        uri,
+      );
+    }
+    if (!this.gateway.getExtensionCapability(serverName, SKILLS_EXTENSION_NAME)) {
+      throw this.denyExtension(
+        serverName,
+        operation,
+        "extension_not_declared",
+        `MCP server "${serverName}" does not declare the "${SKILLS_EXTENSION_NAME}" extension, so ` +
+          `its skills methods are not available.`,
+        uri,
+      );
+    }
+  }
+
+  private denyExtension(
+    serverName: string,
+    operation: "skill-list" | "skill-get" | "skill-directory",
+    reason: McpPolicyDenialReason,
+    message: string,
+    uri?: string,
+  ): McpPolicyError {
+    this.record({
+      source: "skills-extension",
+      operation,
+      serverName,
+      ...(uri ? { uri } : {}),
+      decision: "denied",
+      reason,
+    });
+    return new McpPolicyError({
+      reason,
+      message,
+      source: "skills-extension",
+      serverName,
+      ...(uri ? { uri } : {}),
+    });
   }
 
   private async requestApproval(request: McpApprovalRequest): Promise<boolean | undefined> {
@@ -664,10 +976,16 @@ function isSkillResourceUri(resource: Resource): boolean {
   return resource.uri.startsWith("skill://") && resource.uri.endsWith("/SKILL.md");
 }
 
+function extensionResourceKey(serverName: string, skillUri: string): string {
+  return `${serverName}${NUL}${skillUri}`;
+}
+
 function skillGrantKey(skill: McpPolicySkill): string {
   const tools = [...skill.allowedTools].sort().join(" ");
   const digest = createHash("sha256").update(tools).digest("hex").slice(0, 32);
-  return [skill.serverName, skill.uri, digest].join(NUL);
+  // The fingerprint participates in the key so rotated content revokes approval.
+  // Legacy skills have none; they degrade to the previous origin+URI+tools key.
+  return [skill.serverName, skill.uri, digest, skill.contentFingerprint ?? ""].join(NUL);
 }
 
 function formatToolApprovalMessage(

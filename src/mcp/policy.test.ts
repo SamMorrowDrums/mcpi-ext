@@ -2,6 +2,7 @@ import type { ReadResourceResult, Resource } from "@modelcontextprotocol/client"
 import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult, type TerminalCallToolResult } from "./call-tool-result.js";
 import type { McpTool } from "./client-manager.js";
+import { noSkillsExtensionGateway } from "./gateway-defaults.js";
 import {
   McpPolicy,
   McpPolicyError,
@@ -89,6 +90,7 @@ function harness(
     );
 
   const gateway: McpPolicyGateway = {
+    ...noSkillsExtensionGateway,
     getConnectedServers: () => [...servers],
     getToolsForServer: (name) => toolsByServer[name] ?? [],
     callTool: callTool as unknown as McpPolicyGateway["callTool"],
@@ -1001,6 +1003,7 @@ describe("audit context", () => {
     const onAudit = vi.fn();
     const policy = new McpPolicy({
       gateway: {
+        ...noSkillsExtensionGateway,
         getConnectedServers: () => ["alpha"],
         getToolsForServer: () => [readOnlyTool],
         callTool: () => Promise.resolve(adaptTerminalCallToolResult(PROTOCOL_RESULT)),
@@ -1029,6 +1032,7 @@ describe("audit context", () => {
   it("bounds the audit ring buffer", async () => {
     const policy = new McpPolicy({
       gateway: {
+        ...noSkillsExtensionGateway,
         getConnectedServers: () => ["alpha"],
         getToolsForServer: () => [readOnlyTool],
         callTool: () => Promise.resolve(adaptTerminalCallToolResult(PROTOCOL_RESULT)),

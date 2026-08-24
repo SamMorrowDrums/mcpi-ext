@@ -2,6 +2,7 @@ import type { ReadResourceResult, Resource } from "@modelcontextprotocol/client"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpTool } from "../mcp/client-manager.js";
+import { noSkillsExtensionGateway } from "../mcp/gateway-defaults.js";
 import { McpPolicy, type McpPolicyGateway } from "../mcp/policy.js";
 import { ToolCliServer } from "./index.js";
 import { createPolicyToolProvider } from "./provider.js";
@@ -41,6 +42,7 @@ async function startBridge(options: { gate?: boolean } = {}) {
     .mockResolvedValue(adaptTerminalCallToolResult(PROTOCOL_RESULT));
 
   const gateway: McpPolicyGateway = {
+    ...noSkillsExtensionGateway,
     getConnectedServers: () => ["alpha"],
     getToolsForServer: () => [visibleTool, gatedTool],
     callTool: upstream as unknown as McpPolicyGateway["callTool"],

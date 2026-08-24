@@ -9,13 +9,21 @@ import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
 import { McpiHostApproval } from "./mcp/host-approval.js";
 import { McpiHostElicitation } from "./mcp/host-elicitation.js";
-import { McpClientManager, McpPolicy, loadMcpConfig } from "./mcp/index.js";
+import {
+  McpClientManager,
+  McpPolicy,
+  isSkillsExtensionEnabled,
+  loadMcpConfig,
+} from "./mcp/index.js";
 import {
   SkillRegistry,
+  SkillsExtensionClient,
   createLoadSkillTool,
   discoverSkillsFromServer,
+  discoverSkillsViaExtension,
   formatMcpSkillsForPrompt,
   registerMcpToolProxies,
+  skillsExtensionDiagnostic,
 } from "./skills/index.js";
 import {
   ToolCliServer,
@@ -32,11 +40,17 @@ export default function (pi: ExtensionAPI) {
     type: "string",
   });
 
+  pi.registerFlag("mcp-skills-extension", {
+    description: "Enable the DRAFT MCP skills extension (SEP-2640). Unratified; off by default.",
+    type: "boolean",
+  });
+
   const hostElicitation = new McpiHostElicitation();
   const hostApproval = new McpiHostApproval();
   const mcpManager = new McpClientManager({ elicitation: hostElicitation });
   const policy = new McpPolicy({ gateway: mcpManager, approvals: hostApproval });
   const skillRegistry = new SkillRegistry();
+  const skillsClient = new SkillsExtensionClient({ policy });
   const codeModeManager = new CodeModeManager();
   const { codeSearch, codeExecute } = codeModeManager.createTools();
 
@@ -48,7 +62,7 @@ export default function (pi: ExtensionAPI) {
   const rpcServer = new ToolCliServer(toolProvider);
 
   // Register the load_skill tool so the model can activate MCP skills
-  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, policy }));
+  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, policy, skillsClient }));
   pi.registerTool(codeSearch);
   pi.registerTool(codeExecute);
 
@@ -70,6 +84,17 @@ export default function (pi: ExtensionAPI) {
     try {
       const config = await loadMcpConfig(configPath);
       const serverCount = Object.keys(config.mcpServers).length;
+
+      // Draft extension support is opt-in from either the config file or the
+      // CLI flag, and must be decided before any connection is opened because
+      // capabilities are fixed at initialize.
+      const skillsExtensionEnabled =
+        pi.getFlag("mcp-skills-extension") === true || isSkillsExtensionEnabled(config);
+      mcpManager.enableSkillsExtension(skillsExtensionEnabled);
+      if (skillsExtensionEnabled) {
+        log(skillsExtensionDiagnostic());
+      }
+
       if (serverCount > 0) {
         await mcpManager.connectAll(config, log);
         const tools = mcpManager.getTools();
@@ -82,16 +107,39 @@ export default function (pi: ExtensionAPI) {
         const allToolNames = tools.map((t) => t.name);
         registerMcpToolProxies(allToolNames, mcpManager, policy, pi);
 
-        // Discover skills from all connected servers
+        // Discover skills from all connected servers. A server that declares
+        // the draft extension is served entirely by it: the legacy skill://
+        // resource scan is a compatibility fallback for servers that do not,
+        // never a second opinion on one that does. An empty extension listing
+        // therefore means "no skills right now", not "try the old way".
         for (const serverName of mcpManager.getConnectedServers()) {
+          const viaExtension = skillsExtensionEnabled && skillsClient.supports(serverName);
           try {
-            const skills = await discoverSkillsFromServer(policy, serverName, log);
-            skillRegistry.registerAll(skills);
+            if (viaExtension) {
+              const result = await discoverSkillsViaExtension(
+                policy,
+                skillsClient,
+                serverName,
+                log,
+              );
+              skillRegistry.registerAll(result.skills);
+            } else {
+              const skills = await discoverSkillsFromServer(policy, serverName, log);
+              skillRegistry.registerAll(skills);
+            }
           } catch (err) {
             log(
-              `[skills] Failed to discover skills from "${serverName}": ${(err as Error).message}`,
+              `[skills] Failed to discover skills from "${serverName}" via ${
+                viaExtension ? "the draft skills extension" : "skill:// resources"
+              }: ${(err as Error).message}`,
             );
           }
+        }
+
+        for (const collision of skillRegistry.getCollisions()) {
+          log(
+            `[skills] Name collision on "${collision.name}": "${collision.challenger.serverName}" exposed as "${collision.registeredAs}" (name held by "${collision.incumbent.serverName}")`,
+          );
         }
 
         // Hand the discovered skills to the policy so their tools are gated

@@ -15,6 +15,8 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { discoverSkillsFromServer } from "../skills/discover.js";
+import { SKILLS_EXTENSION_REVISION } from "../skills/sep2640/spec.js";
+import { noSkillsExtensionGateway } from "./gateway-defaults.js";
 import { McpPolicy } from "./policy.js";
 import {
   createMcpClient,
@@ -74,6 +76,16 @@ describe("MCP v2 client seam", () => {
     expect(getMcpClientDiagnostics(client)).toEqual({
       protocolEra: "legacy",
       discoverResult: undefined,
+      // A legacy server declares no extensions, and this client did not
+      // request the draft skills extension, so the diagnostic reports it
+      // as neither requested nor available rather than omitting it.
+      skillsExtension: {
+        requested: false,
+        revision: SKILLS_EXTENSION_REVISION,
+        status: "draft",
+        serverDeclared: false,
+        serverCapability: undefined,
+      },
     });
     await expect(client.callTool({ name: "ping", arguments: {} })).resolves.toMatchObject({
       content: [{ type: "text", text: "pong" }],
@@ -221,6 +233,7 @@ async function connectModern<T extends McpServer | Server>(
 function policyForClient(client: Client, serverName: string): McpPolicy {
   return new McpPolicy({
     gateway: {
+      ...noSkillsExtensionGateway,
       getConnectedServers: () => [serverName],
       getToolsForServer: () => [],
       callTool: () => Promise.reject(new Error("tool calls are out of scope for this fixture")),

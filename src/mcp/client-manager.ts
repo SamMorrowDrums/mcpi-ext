@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -7,6 +8,15 @@ import {
   type Transport,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  DirectoryReadResultSchema,
+  SkillsGetResultSchema,
+  SkillsListResultSchema,
+  type DirectoryReadResult,
+  type SkillsGetResult,
+  type SkillsListResult,
+} from "../skills/sep2640/protocol.js";
+import { describeNegotiation, SKILLS_METHODS } from "../skills/sep2640/spec.js";
 import { adaptTerminalCallToolResult, type TerminalCallToolResult } from "./call-tool-result.js";
 import {
   createMcpClient,
@@ -45,6 +55,13 @@ export interface McpClientManagerOptions {
   elicitation?: McpElicitationHandler;
   clientFactory?: (options: CreateMcpClientOptions) => Client;
   transportFactory?: (config: ServerConfig) => Transport;
+  /**
+   * Advertise the draft skills extension (SEP-2640) at initialize.
+   *
+   * Off by default; the host turns it on from config. When off, no connection
+   * this manager opens mentions the extension at all.
+   */
+  skillsExtension?: boolean;
 }
 
 const unavailableElicitation: McpElicitationHandler = {
@@ -67,11 +84,29 @@ export class McpClientManager {
   private readonly elicitation: McpElicitationHandler;
   private readonly clientFactory: (options: CreateMcpClientOptions) => Client;
   private readonly transportFactory: (config: ServerConfig) => Transport;
+  private skillsExtensionRequested: boolean;
 
   constructor(options: McpClientManagerOptions = {}) {
     this.elicitation = options.elicitation ?? unavailableElicitation;
     this.clientFactory = options.clientFactory ?? createMcpClient;
     this.transportFactory = options.transportFactory ?? createTransport;
+    this.skillsExtensionRequested = options.skillsExtension === true;
+  }
+
+  /** Whether this manager advertises the draft skills extension. */
+  requestsSkillsExtension(): boolean {
+    return this.skillsExtensionRequested;
+  }
+
+  /**
+   * Turn the draft skills extension on or off for future connections.
+   *
+   * The host reads the gate from config, which loads after this manager is
+   * constructed. Already-open connections keep whatever they negotiated at
+   * initialize, because the capability set is fixed for a session.
+   */
+  enableSkillsExtension(enabled: boolean): void {
+    this.skillsExtensionRequested = enabled;
   }
 
   /**
@@ -107,6 +142,7 @@ export class McpClientManager {
     const transport = this.transportFactory(serverConfig);
     const client = this.clientFactory({
       elicitation: this.elicitation,
+      skillsExtension: this.skillsExtensionRequested,
       listChanged: {
         tools: {
           onChanged: (error, tools) => {
@@ -139,7 +175,9 @@ export class McpClientManager {
         maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
       });
       const tools = toMcpTools(name, toolsResult.tools);
-      const diagnostics = getMcpClientDiagnostics(client);
+      const diagnostics = getMcpClientDiagnostics(client, {
+        skillsExtensionRequested: this.skillsExtensionRequested,
+      });
       const connection = this.connections.get(name);
       if (connection?.client === client) {
         connection.tools = tools;
@@ -148,6 +186,11 @@ export class McpClientManager {
       log(
         `[mcp] Connected to "${name}" (${tools.length} tools, protocol era: ${diagnostics.protocolEra ?? "unknown"})`,
       );
+      if (this.skillsExtensionRequested) {
+        log(
+          `[mcp] "${name}": ${describeNegotiation(name, diagnostics.skillsExtension.serverCapability)}`,
+        );
+      }
     } catch (error) {
       const connection = this.connections.get(name);
       if (connection?.client === client) {
@@ -219,6 +262,97 @@ export class McpClientManager {
         ...(signal ? { signal } : {}),
       },
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Draft SEP-2640 skills extension transport
+  //
+  // These are transport methods, not authorization. `McpPolicy` decides whether
+  // a call may happen; this class only knows how to put it on the wire and how
+  // to refuse to hand back a payload that does not match the draft schema.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The settings a server declared for one extension during `initialize`, or
+   * `undefined` if it declared no such extension.
+   */
+  getExtensionCapability(
+    serverName: string,
+    extensionName: string,
+  ): Record<string, unknown> | undefined {
+    const capability = this.connections.get(serverName)?.client.getServerCapabilities()
+      ?.extensions?.[extensionName];
+    if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+      // An extension declared with a non-object body is still "declared"; treat
+      // it as declared-with-no-settings rather than inventing settings for it.
+      return capability === undefined ? undefined : {};
+    }
+    return capability as Record<string, unknown>;
+  }
+
+  /** Draft SEP-2640 `skills/list`. */
+  async requestSkillsList(
+    serverName: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<SkillsListResult> {
+    return this.requestExtension(
+      serverName,
+      SKILLS_METHODS.list,
+      cursor ? { cursor } : {},
+      SkillsListResultSchema,
+      signal,
+    );
+  }
+
+  /** Draft SEP-2640 `skills/get`. */
+  async requestSkillsGet(
+    serverName: string,
+    uri: string,
+    signal?: AbortSignal,
+  ): Promise<SkillsGetResult> {
+    return this.requestExtension(
+      serverName,
+      SKILLS_METHODS.get,
+      { uri },
+      SkillsGetResultSchema,
+      signal,
+    );
+  }
+
+  /** Draft SEP-2640 `resources/directory/read`. */
+  async requestDirectoryRead(
+    serverName: string,
+    uri: string,
+    cursor?: string,
+    signal?: AbortSignal,
+  ): Promise<DirectoryReadResult> {
+    return this.requestExtension(
+      serverName,
+      SKILLS_METHODS.directoryRead,
+      cursor ? { uri, cursor } : { uri },
+      DirectoryReadResultSchema,
+      signal,
+    );
+  }
+
+  private async requestExtension<T>(
+    serverName: string,
+    method: string,
+    params: Record<string, unknown>,
+    schema: z.ZodType<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const connection = this.connections.get(serverName);
+    if (!connection) {
+      throw new Error(`MCP server "${serverName}" is not connected`);
+    }
+
+    return connection.client.request({ method, params }, schema, {
+      timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
+      maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
+      ...(signal ? { signal } : {}),
+    });
   }
 
   /** Disconnect a single server. */

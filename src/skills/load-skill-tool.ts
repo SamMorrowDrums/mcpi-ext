@@ -2,7 +2,10 @@ import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { stripFrontmatter } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
 import type { McpPolicy } from "../mcp/policy.js";
-import type { SkillRegistry } from "./skill-registry.js";
+import type { SkillsExtensionClient } from "./sep2640/client.js";
+import { loadSkillDocument, SkillFetchBudget } from "./sep2640/load.js";
+import { resourceSetFingerprint, type SkillEntry } from "./sep2640/protocol.js";
+import type { McpSkillMetadata, SkillRegistry } from "./skill-registry.js";
 
 const LoadSkillParams = Type.Object({
   name: Type.String({ description: "Name of the MCP skill to load" }),
@@ -13,6 +16,14 @@ type LoadSkillInput = Static<typeof LoadSkillParams>;
 export interface LoadSkillDeps {
   registry: SkillRegistry;
   policy: McpPolicy;
+  /**
+   * Client for the draft skills extension.
+   *
+   * Required to load a skill discovered over SEP-2640: that contract only holds
+   * if the digests are re-fetched at load time, so a skill with no client to
+   * ask is refused rather than loaded unverified.
+   */
+  skillsClient?: SkillsExtensionClient;
 }
 
 export interface LoadSkillDetails {
@@ -20,6 +31,10 @@ export interface LoadSkillDetails {
   serverName?: string;
   activatedTools?: string[];
   error?: string;
+  /** True when the content was verified against SEP-2640 digests. */
+  verified?: boolean;
+  /** True when the server's resource set changed since discovery. */
+  resourceSetRotated?: boolean;
 }
 
 /**
@@ -37,7 +52,7 @@ export interface LoadSkillDetails {
  * or unavailable approval leaves every gated tool locked.
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
-  const { registry, policy } = deps;
+  const { registry, policy, skillsClient } = deps;
 
   return {
     name: "load_skill",
@@ -70,29 +85,75 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
+      const verifiable = skill.origin === "sep2640";
+      if (verifiable && !skillsClient) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Skill "${params.name}" was discovered over the draft skills extension, but no extension client is available to verify it. Refusing to load unverified content.`,
+            },
+          ],
+          details: {
+            skillName: params.name,
+            serverName: skill.serverName,
+            error: "verification_unavailable",
+            verified: false,
+          },
+        };
+      }
+
       let body: string;
+      let entry: SkillEntry | undefined;
+      let rotated = false;
       try {
-        const result = await policy.readResource({
-          source: "skill-load",
-          serverName: skill.serverName,
-          uri: skill.uri,
-          ...(signal ? { signal } : {}),
-        });
-        const textContent = result.contents.find(
-          (c): c is { uri: string; text: string } => "text" in c,
-        );
-        if (!textContent) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Skill "${params.name}" returned no text content.`,
+        if (verifiable && skillsClient) {
+          // Re-fetch the entry so verification uses the digests the server is
+          // publishing now, not the ones it published at discovery.
+          entry = await skillsClient.getSkill(skill.serverName, skill.uri, signal);
+          const fingerprint = resourceSetFingerprint(entry);
+          rotated =
+            skill.contentFingerprint !== undefined && skill.contentFingerprint !== fingerprint;
+          policy.registerSkillResources(
+            skill.serverName,
+            entry.uri,
+            entry.resources === "dynamic" ? [] : entry.resources.map((ref) => ref.uri),
+          );
+          const document = await loadSkillDocument({
+            policy,
+            entry,
+            serverName: skill.serverName,
+            budget: new SkillFetchBudget(),
+            ...(signal ? { signal } : {}),
+          });
+          body = stripFrontmatter(document.text);
+        } else {
+          const result = await policy.readResource({
+            source: "skill-load",
+            serverName: skill.serverName,
+            uri: skill.uri,
+            ...(signal ? { signal } : {}),
+          });
+          const textContent = result.contents.find(
+            (c): c is { uri: string; text: string } => "text" in c,
+          );
+          if (!textContent) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Skill "${params.name}" returned no text content.`,
+                },
+              ],
+              details: {
+                skillName: params.name,
+                serverName: skill.serverName,
+                error: "no_content",
               },
-            ],
-            details: { skillName: params.name, serverName: skill.serverName, error: "no_content" },
-          };
+            };
+          }
+          body = stripFrontmatter(textContent.text);
         }
-        body = stripFrontmatter(textContent.text);
       } catch (err) {
         return {
           content: [
@@ -105,12 +166,16 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
             skillName: params.name,
             serverName: skill.serverName,
             error: (err as Error).message,
+            verified: false,
           },
         };
       }
 
-      // The skill's tool grant needs explicit user approval before activation.
-      const grant = await policy.activateSkillGrant(skill, signal);
+      // Approval is bound to the resource set the server just published. A
+      // rotated set produces a different grant key, so a previously approved
+      // skill is re-prompted instead of inheriting the old answer.
+      const grantSubject = entry ? withFreshContent(skill, entry) : skill;
+      const grant = await policy.activateSkillGrant(grantSubject, signal);
       if (grant.status === "granted" || grant.status === "reused") {
         return {
           content: [
@@ -123,6 +188,8 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
             skillName: params.name,
             serverName: skill.serverName,
             activatedTools: [...grant.activatedTools],
+            verified: verifiable,
+            resourceSetRotated: rotated,
           },
         };
       }
@@ -134,8 +201,32 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
           serverName: skill.serverName,
           activatedTools: [],
           error: grant.status === "declined" ? "approval_declined" : "approval_unavailable",
+          verified: verifiable,
+          resourceSetRotated: rotated,
         },
       };
     },
+  };
+}
+
+/**
+ * Rebuild skill metadata from the entry the server just served.
+ *
+ * Both the gated tool names and the content fingerprint come from the verified
+ * entry rather than the discovery-time copy, so an `allowed-tools` list that
+ * grew since discovery cannot ride in on an approval the user gave for a
+ * smaller one.
+ */
+function withFreshContent(skill: McpSkillMetadata, entry: SkillEntry): McpSkillMetadata {
+  const declared = entry.frontmatter["allowed-tools"];
+  const allowedTools = Array.isArray(declared)
+    ? declared.filter((value): value is string => typeof value === "string")
+    : typeof declared === "string" && declared.trim().length > 0
+      ? declared.trim().split(/\s+/)
+      : [];
+  return {
+    ...skill,
+    allowedTools,
+    contentFingerprint: resourceSetFingerprint(entry),
   };
 }
