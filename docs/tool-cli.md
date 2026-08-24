@@ -55,6 +55,6 @@ The server uses token-based auth and dynamic port allocation (provided by [`@sam
 2. Returns `{ port, token }` — the extension sets these as env vars via `pi.setEnv()`
 3. Every request must include `Authorization: Bearer <token>` — rejected with 401 otherwise
 
-This enables concurrent sessions and prevents random processes from calling MCP tools. The RPC server is the single choke point for all tool execution — the natural interception point for future human-in-the-loop confirmation on destructive operations.
+This enables concurrent sessions and prevents random processes from calling MCP tools. Authentication is not authorization, though: `ToolCliServer.callTool` forwards `server`/`tool`/`args` to the provider without checking them against the discovered set, so an authenticated caller could otherwise name a tool the CLI never advertised. `createPolicyToolProvider` routes every RPC call back through `McpPolicy` — the shared authorization boundary that also serves the proxy, Code Mode, and resource paths — which is where tool annotations are checked and non-read-only calls are gated through user confirmation.
 
 See [tool-cli security docs](https://github.com/SamMorrowDrums/tool-cli#security) and [DECISIONS.md #010](../DECISIONS.md).

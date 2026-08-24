@@ -2,6 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
+import { McpPolicy } from "../mcp/policy.js";
 import type { ExecuteResult } from "./executor.js";
 import { CodeModeManager } from "./index.js";
 
@@ -32,15 +33,14 @@ describe("CodeModeManager reliability", () => {
       async (): Promise<ExecuteResult> => ({ result: "unexpected", logs: [] }),
     );
     const codeMode = new CodeModeManager({ sandboxExecutor });
-    codeMode.initialize(
-      fakeManager(
-        [
-          makeTool("write_records", {
-            annotations: { readOnlyHint: false, destructiveHint: true },
-          }),
-        ],
-        vi.fn(),
-      ),
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("write_records", {
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        }),
+      ],
+      vi.fn(),
     );
 
     const result = await codeMode.searchTools("return await codemode.listTools();");
@@ -74,7 +74,7 @@ describe("CodeModeManager reliability", () => {
     ];
     const logs: string[] = [];
     const codeMode = new CodeModeManager({ log: (message) => logs.push(message) });
-    codeMode.initialize(fakeManager(tools, vi.fn()));
+    initCodeMode(codeMode, tools, vi.fn());
 
     expect(codeMode.getDiagnostics()).toEqual({
       totalTools: 3,
@@ -117,16 +117,15 @@ describe("CodeModeManager reliability", () => {
       adaptTerminalCallToolResult({ content: [{ type: "text", text: "should not run" }] }),
     );
     const codeMode = new CodeModeManager({ timeoutMs: 5000 });
-    codeMode.initialize(
-      fakeManager(
-        [
-          makeTool("schema_less_read", { annotations: { readOnlyHint: true } }),
-          makeTool("write_records", {
-            annotations: { readOnlyHint: false, destructiveHint: true },
-          }),
-        ],
-        callTool,
-      ),
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("schema_less_read", { annotations: { readOnlyHint: true } }),
+        makeTool("write_records", {
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        }),
+      ],
+      callTool,
     );
 
     const discovery = await codeMode.searchTools("return await codemode.listTools();");
@@ -168,11 +167,10 @@ describe("CodeModeManager reliability", () => {
       const protocolResult: CallToolResult = { content: [], structuredContent };
       const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
       const codeMode = new CodeModeManager({ timeoutMs: 5000 });
-      codeMode.initialize(
-        fakeManager(
-          [makeTool("schema_less_read", { annotations: { readOnlyHint: true } })],
-          callTool,
-        ),
+      initCodeMode(
+        codeMode,
+        [makeTool("schema_less_read", { annotations: { readOnlyHint: true } })],
+        callTool,
       );
 
       const result = await codeMode.executeCode(`
@@ -182,7 +180,7 @@ describe("CodeModeManager reliability", () => {
 
       expect(result.error).toBeUndefined();
       expect(result.result).toEqual(structuredContent);
-      expect(callTool).toHaveBeenCalledWith("fixture", "schema_less_read", {});
+      expect(callTool).toHaveBeenCalledWith("fixture", "schema_less_read", {}, undefined);
     },
   );
 });
@@ -199,6 +197,22 @@ function makeTool(name: string, overrides: Partial<McpTool> = {}): McpTool {
 function fakeManager(tools: McpTool[], callTool: ReturnType<typeof vi.fn>): McpClientManager {
   return {
     getTools: () => tools,
+    getConnectedServers: () => [...new Set(tools.map((t) => t.serverName))],
+    getToolsForServer: (name: string) => tools.filter((t) => t.serverName === name),
     callTool,
+    listResources: async () => [],
+    readResource: async () => ({ contents: [] }),
   } as unknown as McpClientManager;
+}
+
+/** Wire a fake manager through the real policy, mirroring production wiring. */
+function initCodeMode(
+  codeMode: CodeModeManager,
+  tools: McpTool[],
+  callTool: ReturnType<typeof vi.fn>,
+): McpPolicy {
+  const manager = fakeManager(tools, callTool);
+  const policy = new McpPolicy({ gateway: manager });
+  codeMode.initialize(manager, policy);
+  return policy;
 }

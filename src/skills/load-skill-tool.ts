@@ -1,7 +1,7 @@
 import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { stripFrontmatter } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
-import type { McpClientManager } from "../mcp/index.js";
+import type { McpPolicy } from "../mcp/policy.js";
 import type { SkillRegistry } from "./skill-registry.js";
 
 const LoadSkillParams = Type.Object({
@@ -12,8 +12,7 @@ type LoadSkillInput = Static<typeof LoadSkillParams>;
 
 export interface LoadSkillDeps {
   registry: SkillRegistry;
-  mcpManager: McpClientManager;
-  enabledTools: Set<string>;
+  policy: McpPolicy;
 }
 
 export interface LoadSkillDetails {
@@ -28,12 +27,17 @@ export interface LoadSkillDetails {
  *
  * When the model calls this tool, it:
  * 1. Looks up the skill in the registry
- * 2. Reads the full SKILL.md content from the MCP server
- * 3. Returns the SKILL.md body (the skill names its tools, and the model
+ * 2. Reads the full SKILL.md content through the shared policy boundary
+ * 3. Asks the user to approve the skill's `allowed-tools` grant
+ * 4. Returns the SKILL.md body (the skill names its tools, and the model
  *    already has their schemas from the deferred tools array)
+ *
+ * The grant is requested before the body is returned, so a server cannot use
+ * skill instructions to influence a pending authorization decision. A declined
+ * or unavailable approval leaves every gated tool locked.
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
-  const { registry, mcpManager, enabledTools } = deps;
+  const { registry, policy } = deps;
 
   return {
     name: "load_skill",
@@ -45,7 +49,7 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
     async execute(
       _toolCallId: string,
       params: LoadSkillInput,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: undefined,
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<LoadSkillDetails>> {
@@ -66,22 +70,14 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      const client = mcpManager.getClient(skill.serverName);
-      if (!client) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `MCP server "${skill.serverName}" is not connected. Cannot load skill "${params.name}".`,
-            },
-          ],
-          details: { skillName: params.name, serverName: skill.serverName, error: "disconnected" },
-        };
-      }
-
       let body: string;
       try {
-        const result = await client.readResource({ uri: skill.uri });
+        const result = await policy.readResource({
+          source: "skill-load",
+          serverName: skill.serverName,
+          uri: skill.uri,
+          ...(signal ? { signal } : {}),
+        });
         const textContent = result.contents.find(
           (c): c is { uri: string; text: string } => "text" in c,
         );
@@ -113,22 +109,31 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Enable the skill's tools so the tool_call gate allows them
-      for (const t of skill.allowedTools) {
-        enabledTools.add(t);
+      // The skill's tool grant needs explicit user approval before activation.
+      const grant = await policy.activateSkillGrant(skill, signal);
+      if (grant.status === "granted" || grant.status === "reused") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: body,
+            },
+          ],
+          details: {
+            skillName: params.name,
+            serverName: skill.serverName,
+            activatedTools: [...grant.activatedTools],
+          },
+        };
       }
 
       return {
-        content: [
-          {
-            type: "text",
-            text: body,
-          },
-        ],
+        content: [{ type: "text", text: grant.message }],
         details: {
           skillName: params.name,
           serverName: skill.serverName,
-          activatedTools: skill.allowedTools,
+          activatedTools: [],
+          error: grant.status === "declined" ? "approval_declined" : "approval_unavailable",
         },
       };
     },

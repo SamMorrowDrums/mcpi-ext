@@ -7,9 +7,9 @@ import type {
 } from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
-import { toToolCliCallToolResult } from "./mcp/call-tool-result.js";
+import { McpiHostApproval } from "./mcp/host-approval.js";
 import { McpiHostElicitation } from "./mcp/host-elicitation.js";
-import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
+import { McpClientManager, McpPolicy, loadMcpConfig } from "./mcp/index.js";
 import {
   SkillRegistry,
   createLoadSkillTool,
@@ -17,7 +17,11 @@ import {
   formatMcpSkillsForPrompt,
   registerMcpToolProxies,
 } from "./skills/index.js";
-import { ToolCliServer, formatToolCliForPrompt } from "./tool-cli/index.js";
+import {
+  ToolCliServer,
+  createPolicyToolProvider,
+  formatToolCliForPrompt,
+} from "./tool-cli/index.js";
 import type { ToolProvider } from "./tool-cli/index.js";
 
 export default function (pi: ExtensionAPI) {
@@ -29,31 +33,28 @@ export default function (pi: ExtensionAPI) {
   });
 
   const hostElicitation = new McpiHostElicitation();
+  const hostApproval = new McpiHostApproval();
   const mcpManager = new McpClientManager({ elicitation: hostElicitation });
+  const policy = new McpPolicy({ gateway: mcpManager, approvals: hostApproval });
   const skillRegistry = new SkillRegistry();
   const codeModeManager = new CodeModeManager();
   const { codeSearch, codeExecute } = codeModeManager.createTools();
-  const enabledTools = new Set<string>();
-  const gatedToolNames = new Set<string>();
 
-  // Bridge McpClientManager to the ToolProvider interface
-  const toolProvider: ToolProvider = {
-    getServerNames: () => mcpManager.getConnectedServers(),
-    getTools: (server) => mcpManager.getToolsForServer(server),
-    async callTool(server, tool, args) {
-      const terminal = await mcpManager.callTool(server, tool, args);
-      return toToolCliCallToolResult(terminal);
-    },
-  };
+  // Bridge the shared policy boundary to the ToolProvider interface. tool-cli
+  // sees exactly the policy-visible discovered schema set, and every call it
+  // makes is re-authorized by the same dispatcher, so it cannot reach a hidden
+  // tool by naming it directly.
+  const toolProvider: ToolProvider = createPolicyToolProvider(policy);
   const rpcServer = new ToolCliServer(toolProvider);
 
   // Register the load_skill tool so the model can activate MCP skills
-  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
+  pi.registerTool(createLoadSkillTool({ registry: skillRegistry, policy }));
   pi.registerTool(codeSearch);
   pi.registerTool(codeExecute);
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     hostElicitation.setContext(ctx);
+    hostApproval.setContext(ctx);
     if (ctx.hasUI) {
       ctx.ui.notify("mcpi-ext loaded", "info");
     }
@@ -79,14 +80,12 @@ export default function (pi: ExtensionAPI) {
         // Pre-register all MCP tools as deferred Pi tool proxies
         // (in tools array for dispatch but excluded from system prompt)
         const allToolNames = tools.map((t) => t.name);
-        registerMcpToolProxies(allToolNames, mcpManager, pi);
+        registerMcpToolProxies(allToolNames, mcpManager, policy, pi);
 
         // Discover skills from all connected servers
         for (const serverName of mcpManager.getConnectedServers()) {
-          const client = mcpManager.getClient(serverName);
-          if (!client) continue;
           try {
-            const skills = await discoverSkillsFromServer(client, serverName, log);
+            const skills = await discoverSkillsFromServer(policy, serverName, log);
             skillRegistry.registerAll(skills);
           } catch (err) {
             log(
@@ -95,14 +94,13 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
+        // Hand the discovered skills to the policy so their tools are gated
+        // everywhere, not just on the mcpi dispatch path.
+        policy.registerSkills(skillRegistry.getAll());
+
         if (skillRegistry.size > 0) {
-          for (const skill of skillRegistry.getAll()) {
-            for (const t of skill.allowedTools) {
-              gatedToolNames.add(t);
-            }
-          }
           log(
-            `MCP: ${skillRegistry.size} skill(s) discovered, ${gatedToolNames.size} tool(s) deferred`,
+            `MCP: ${skillRegistry.size} skill(s) discovered, ${policy.getGatedToolNames().length} tool(s) deferred`,
           );
         }
 
@@ -116,7 +114,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
       // Code execution remains available even when no MCP servers or callable tools exist.
-      codeModeManager.initialize(mcpManager, log);
+      codeModeManager.initialize(mcpManager, policy, log);
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
       if (ctx.hasUI) {
@@ -148,14 +146,12 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt + extra };
   });
 
-  // Block deferred MCP tools until their skill is loaded
+  // Block deferred MCP tools until their skill is loaded. The policy owns the
+  // decision so mcpi dispatch and the RPC path cannot disagree.
   pi.on("tool_call", async (event: ToolCallEvent) => {
     const name = "toolName" in event ? event.toolName : undefined;
-    if (!name || !gatedToolNames.has(name) || enabledTools.has(name)) return;
-    const relevantSkills = skillRegistry
-      .getAll()
-      .filter((s) => s.allowedTools.includes(name))
-      .map((s) => s.name);
+    if (!name || !policy.isGated(name)) return;
+    const relevantSkills = policy.getGatingSkills(name);
     return {
       block: true,
       reason: `Tool "${name}" requires loading a skill first. Call load_skill with one of: ${relevantSkills.join(", ")}`,
@@ -164,10 +160,12 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     hostElicitation.setContext(undefined);
+    hostApproval.setContext(undefined);
     pi.unsetEnv("TOOL_CLI_PORT");
     pi.unsetEnv("TOOL_CLI_TOKEN");
     await rpcServer.stop();
     await mcpManager.disconnectAll();
     skillRegistry.clear();
+    policy.reset();
   });
 }

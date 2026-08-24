@@ -15,6 +15,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { discoverSkillsFromServer } from "../skills/discover.js";
+import { McpPolicy } from "./policy.js";
 import {
   createMcpClient,
   getMcpClientDiagnostics,
@@ -170,7 +171,10 @@ describe("MCP v2 client seam", () => {
       return server;
     });
     const tools = await client.listTools();
-    const skills = await discoverSkillsFromServer(client, "pagination-fixture");
+    const skills = await discoverSkillsFromServer(
+      policyForClient(client, "pagination-fixture"),
+      "pagination-fixture",
+    );
 
     expect(tools.tools.map((tool) => tool.name)).toEqual(["zulu", "alpha"]);
     expect(skills.map((skill) => skill.name)).toEqual(["alpha", "zulu"]);
@@ -211,6 +215,28 @@ async function connectModern<T extends McpServer | Server>(
     throw new Error("Modern fixture did not construct a server");
   }
   return firstServer;
+}
+
+/** Adapt a bare v2 client into the policy gateway shape for discovery tests. */
+function policyForClient(client: Client, serverName: string): McpPolicy {
+  return new McpPolicy({
+    gateway: {
+      getConnectedServers: () => [serverName],
+      getToolsForServer: () => [],
+      callTool: () => Promise.reject(new Error("tool calls are out of scope for this fixture")),
+      listResources: async (name, signal) => {
+        if (name !== serverName) throw new Error(`MCP server "${name}" is not connected`);
+        const result = await client.listResources(undefined, {
+          ...(signal ? { signal } : {}),
+        });
+        return [...result.resources].sort((left, right) => (left.uri < right.uri ? -1 : 1));
+      },
+      readResource: (name, uri, signal) => {
+        if (name !== serverName) throw new Error(`MCP server "${name}" is not connected`);
+        return client.readResource({ uri }, { ...(signal ? { signal } : {}) });
+      },
+    },
+  });
 }
 
 function listedTool(name: string) {

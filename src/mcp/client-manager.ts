@@ -1,6 +1,8 @@
 import {
   Client,
   StreamableHTTPClientTransport,
+  type ReadResourceResult,
+  type Resource,
   type Tool,
   type Transport,
 } from "@modelcontextprotocol/client";
@@ -165,6 +167,7 @@ export class McpClientManager {
     serverName: string,
     toolName: string,
     args: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<TerminalCallToolResult> {
     const connection = this.connections.get(serverName);
     if (!connection) {
@@ -176,9 +179,46 @@ export class McpClientManager {
       {
         timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
         maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
+        ...(signal ? { signal } : {}),
       },
     );
     return adaptTerminalCallToolResult(result);
+  }
+
+  /** List a server's resources. Discovery only; authorization lives in McpPolicy. */
+  async listResources(serverName: string, signal?: AbortSignal): Promise<Resource[]> {
+    const connection = this.connections.get(serverName);
+    if (!connection) {
+      throw new Error(`MCP server "${serverName}" is not connected`);
+    }
+
+    const result = await connection.client.listResources(undefined, {
+      timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
+      maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
+      ...(signal ? { signal } : {}),
+    });
+    return [...result.resources].sort(compareResources);
+  }
+
+  /** Read a single resource. Authorization is the caller-side policy's responsibility. */
+  async readResource(
+    serverName: string,
+    uri: string,
+    signal?: AbortSignal,
+  ): Promise<ReadResourceResult> {
+    const connection = this.connections.get(serverName);
+    if (!connection) {
+      throw new Error(`MCP server "${serverName}" is not connected`);
+    }
+
+    return connection.client.readResource(
+      { uri },
+      {
+        timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
+        maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
+        ...(signal ? { signal } : {}),
+      },
+    );
   }
 
   /** Disconnect a single server. */
@@ -265,6 +305,10 @@ function toMcpTools(serverName: string, tools: Tool[]): McpTool[] {
 
 function compareTools(left: McpTool, right: McpTool): number {
   return compareStrings(left.serverName, right.serverName) || compareStrings(left.name, right.name);
+}
+
+function compareResources(left: Resource, right: Resource): number {
+  return compareStrings(left.uri, right.uri) || compareStrings(left.name, right.name);
 }
 
 function compareStrings(left: string, right: string): number {

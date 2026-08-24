@@ -1,4 +1,5 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
+import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
 import {
   getCodeModeDiagnostics,
   getCodeModeTools,
@@ -48,6 +49,7 @@ const NO_ELIGIBLE_TOOLS_ERROR: CodeModeErrorDetails = {
  */
 export class CodeModeManager {
   private mcpManager: McpClientManager | null = null;
+  private policy: McpPolicy | null = null;
   private codeModeTools: CodeModeTool[] = [];
   private diagnostics: CodeModeDiagnostics = getCodeModeDiagnostics([]);
   private typeHints = generateTypeHints([]);
@@ -63,9 +65,10 @@ export class CodeModeManager {
     this.log = options.log;
   }
 
-  /** Initialize with MCP manager, catalog tools, and generate type hints. */
-  initialize(mcpManager: McpClientManager, log?: (msg: string) => void): void {
+  /** Initialize with MCP manager and policy, catalog tools, and generate type hints. */
+  initialize(mcpManager: McpClientManager, policy: McpPolicy, log?: (msg: string) => void): void {
     this.mcpManager = mcpManager;
+    this.policy = policy;
     this.log = log ?? this.log;
     this.refresh();
   }
@@ -211,7 +214,7 @@ export class CodeModeManager {
   }
 
   private async execute(code: string): Promise<ExecuteResult> {
-    const manager = this.mcpManager;
+    const policy = this.policy;
     const toolNames = this.codeModeTools.map((entry) => entry.tool.name);
 
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {
@@ -220,28 +223,21 @@ export class CodeModeManager {
         throw new Error(`Tool "${toolName}" not found in code mode eligible tools`);
       }
 
-      if (!codeModeTool.callable) {
-        throw new CodeModeDispatchError({
-          error: "permission_denied",
-          message:
-            `Tool "${toolName}" is visible for discovery but cannot be called from Code Mode. ` +
-            "Use load_skill or tool-cli through the host's permission-aware path.",
-          alternatives: ["load_skill", "tool-cli"],
-          toolName,
-          reason: formatRefusalReasons(codeModeTool),
+      if (!policy) {
+        throw new Error("Code mode MCP policy is not initialized");
+      }
+
+      try {
+        const terminal = await policy.callTool({
+          source: "code-mode",
+          serverName: codeModeTool.tool.serverName,
+          toolName: codeModeTool.tool.name,
+          args,
         });
+        return terminal.result;
+      } catch (error) {
+        throw toCodeModeDispatchError(error, codeModeTool);
       }
-
-      if (!manager) {
-        throw new Error("Code mode MCP manager is not initialized");
-      }
-
-      const terminal = await manager.callTool(
-        codeModeTool.tool.serverName,
-        codeModeTool.tool.name,
-        args,
-      );
-      return terminal.result;
     };
 
     return this.sandboxExecutor(code, toolNames, dispatch, {
@@ -249,6 +245,23 @@ export class CodeModeManager {
       timeoutMs: this.options.timeoutMs,
     });
   }
+}
+
+/**
+ * Translate a policy denial into Code Mode's structured dispatch error, keeping
+ * the catalog's refusal detail so the model learns why a tool was refused.
+ */
+function toCodeModeDispatchError(error: unknown, codeModeTool: CodeModeTool): unknown {
+  if (!(error instanceof McpPolicyError)) return error;
+
+  const isPermission = error.reason === "permission_denied";
+  return new CodeModeDispatchError({
+    error: isPermission ? "permission_denied" : error.reason,
+    message: error.message,
+    alternatives: [...error.alternatives],
+    toolName: codeModeTool.tool.name,
+    ...(isPermission ? { reason: formatRefusalReasons(codeModeTool) } : {}),
+  });
 }
 
 function formatRefusalReasons(codeModeTool: CodeModeTool): string {

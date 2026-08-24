@@ -1,6 +1,7 @@
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpClientManager } from "../mcp/client-manager.js";
+import { McpPolicy } from "../mcp/policy.js";
 import { createWeatherServer } from "../test-servers/weather-server.js";
 import { CodeModeManager } from "./index.js";
 
@@ -27,7 +28,7 @@ describe("code mode integration (weather server)", () => {
       },
     });
 
-    codeMode.initialize(manager);
+    codeMode.initialize(manager, new McpPolicy({ gateway: manager }));
   });
 
   afterAll(async () => {

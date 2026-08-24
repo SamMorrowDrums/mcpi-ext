@@ -69,7 +69,7 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
 📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
 
-This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through the harness, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
+This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through `McpPolicy`, the shared authorization boundary, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
 
 > _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching._
 
@@ -147,10 +147,13 @@ The harness controls what the model sees. MCP servers just expose their tools an
 
 ### Every call flows through the harness
 
-All three tiers route MCP tool calls back through the extension process. This is a subtle but important property: even when the model writes sandboxed JavaScript (Code Mode) or shells out to `tool-cli`, the actual MCP call happens in the harness. This means:
+All three tiers route MCP tool calls back through the extension process, and every one of them crosses the same authorization boundary: `McpPolicy`. Even when the model writes sandboxed JavaScript (Code Mode) or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by that one object. This means:
 
 - **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and Code Mode sandbox calls alike. Full observability without instrumentation.
-- **Human-in-the-loop can be added at one point** — the `McpClientManager` is the single choke point. Future work can check tool annotations (`readOnlyHint`, `destructiveHint`) and gate destructive calls through user confirmation, regardless of which tier initiated them.
+- **Human-in-the-loop happens at one point** — `McpPolicy` checks tool annotations (`readOnlyHint`, `destructiveHint`) and gates non-read-only calls through user confirmation, regardless of which tier initiated them. A tool unlocked by an approved skill grant is not re-prompted.
+- **Undiscovered and gated tools never reach upstream** — the policy verifies the tool exists in the discovered set and is not skill-gated before contacting the server, so naming a hidden tool over the authenticated RPC socket fails at the boundary.
+- **Resource reads use the same policy** — `skill://` reads are origin-bound to the server that advertised them, and a discovery pass cannot authorize a skill-load read.
+- **Every decision is audited** — allowed and denied operations alike are recorded with their source (`proxy`, `code-mode`, `tool-cli`, `skill-discovery`, `skill-load`).
 
 > _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._
 
