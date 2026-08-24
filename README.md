@@ -30,11 +30,11 @@ See [Quick Start](#quick-start) for MCP server configuration.
 
 Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/mcpi) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
 
-| Tier          | Aspect                   | Mechanism                                             |
-| ------------- | ------------------------ | ----------------------------------------------------- |
-| 1 — Skills    | **The Skill Dealer**     | `skill://` resources gate tools via `allowed-tools`   |
-| 2 — tool-cli  | **The Nuclear Football** | CLI progressive discovery via shell                   |
-| 3 — Code Mode | **Codey C. Maude**       | Sandboxed JS over read-only tools with `outputSchema` |
+| Tier          | Aspect                   | Mechanism                                           |
+| ------------- | ------------------------ | --------------------------------------------------- |
+| 1 — Skills    | **The Skill Dealer**     | `skill://` resources gate tools via `allowed-tools` |
+| 2 — tool-cli  | **The Nuclear Football** | CLI progressive discovery via shell                 |
+| 3 — Code Mode | **Codey C. Maude**       | Always-on sandboxed JS with read-only MCP dispatch  |
 
 ---
 
@@ -81,11 +81,11 @@ This is the dual-lock design: the agent holds the briefcase -- reach to every se
 
 ![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](images/code-c-maude.webp)
 
-> _Codey does not ask permission. Codey does not need to. Everything Codey touches is read-only, every result is typed, and the sandbox cannot be escaped. Codey is safe by construction._
+> _Codey does not ask permission. Codey does not need to. Everything Codey touches is explicitly read-only, and the sandbox cannot be escaped. Codey is safe by construction._
 
-Code Mode targets **read-only** tools with **structured output**. The model writes JavaScript that chains MCP tool calls inside a V8 isolate — memory-limited, time-limited, no filesystem or network access. Perfect for pagination loops, aggregation, and joins across many calls.
+Code Mode is always available for arithmetic, parsing, and deterministic transforms. It catalogs every MCP tool, but only dispatches tools that are explicitly **read-only** and non-destructive. Declared output schemas produce precise hints; read-only tools without one get a client-internal permissive survival schema with visible provenance. The model's JavaScript runs inside a memory- and time-limited V8 isolate with no filesystem, network, or process access.
 
-📖 [**How it works →**](docs/code-mode.md) — sandbox isolation, eligibility, tool dispatch.
+📖 [**How it works →**](docs/code-mode.md) — sandbox isolation, catalog provenance, tool dispatch.
 
 > _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
 

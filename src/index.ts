@@ -32,6 +32,7 @@ export default function (pi: ExtensionAPI) {
   const mcpManager = new McpClientManager({ elicitation: hostElicitation });
   const skillRegistry = new SkillRegistry();
   const codeModeManager = new CodeModeManager();
+  const { codeSearch, codeExecute } = codeModeManager.createTools();
   const enabledTools = new Set<string>();
   const gatedToolNames = new Set<string>();
 
@@ -48,6 +49,8 @@ export default function (pi: ExtensionAPI) {
 
   // Register the load_skill tool so the model can activate MCP skills
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
+  pi.registerTool(codeSearch);
+  pi.registerTool(codeExecute);
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     hostElicitation.setContext(ctx);
@@ -111,18 +114,9 @@ export default function (pi: ExtensionAPI) {
         } catch (err) {
           log(`[tool-cli] Failed to start RPC server: ${(err as Error).message}`);
         }
-
-        // Initialize code mode (Tier 3) for read-only tools with structured output
-        codeModeManager.initialize(mcpManager);
-        if (codeModeManager.isActive) {
-          const { codeSearch, codeExecute } = codeModeManager.createTools();
-          pi.registerTool(codeSearch);
-          pi.registerTool(codeExecute);
-          log(
-            `MCP: Code mode active (${codeModeManager.getEligibleTools().length} eligible tool(s))`,
-          );
-        }
       }
+      // Code execution remains available even when no MCP servers or callable tools exist.
+      codeModeManager.initialize(mcpManager, log);
     } catch (err) {
       const msg = `MCP config error: ${(err as Error).message}`;
       if (ctx.hasUI) {
@@ -146,6 +140,7 @@ export default function (pi: ExtensionAPI) {
     extra += formatToolCliForPrompt(serverCount);
 
     if (codeModeManager.isActive) {
+      codeModeManager.refresh();
       extra += codeModeManager.formatSystemPromptSection();
     }
 

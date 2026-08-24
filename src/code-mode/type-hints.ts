@@ -1,4 +1,5 @@
 import type { McpTool } from "../mcp/index.js";
+import { getCodeModeDiagnostics, toCodeModeTool, type CodeModeTool } from "./eligibility.js";
 
 type JsonSchema = Record<string, unknown>;
 
@@ -166,15 +167,16 @@ export function sanitizeToolName(name: string): string {
  * Produces a `declare const codemode: { ... }` block with type-safe
  * method signatures the model can use when writing code.
  */
-export function generateTypeHints(tools: McpTool[]): string {
-  if (tools.length === 0) return "";
-
+export function generateTypeHints(tools: readonly (McpTool | CodeModeTool)[]): string {
+  const codeModeTools = tools.map(normalizeCodeModeTool);
+  const diagnostics = getCodeModeDiagnostics(codeModeTools);
   const methods: string[] = [];
 
-  for (const tool of tools) {
+  for (const codeModeTool of codeModeTools) {
+    const tool = codeModeTool.tool;
     const safeName = sanitizeToolName(tool.name);
     const inputSchema = tool.inputSchema as JsonSchema;
-    const outputSchema = tool.outputSchema as JsonSchema | undefined;
+    const outputSchema = codeModeTool.outputSchema as JsonSchema | undefined;
     const definitions = (inputSchema.$defs ??
       inputSchema.definitions ??
       outputSchema?.$defs ??
@@ -187,16 +189,21 @@ export function generateTypeHints(tools: McpTool[]): string {
     const outputType = outputSchema ? jsonSchemaToTypeString(outputSchema, definitions) : "unknown";
 
     // Build JSDoc
-    const jsdoc = buildJsDoc(tool, inputSchema);
+    const jsdoc = buildJsDoc(codeModeTool, inputSchema);
 
     methods.push(`${jsdoc}  ${safeName}: (input: ${inputType}) => Promise<${outputType}>;`);
   }
 
-  const toolListType = tools.map((t) => `"${escapeStr(t.name)}"`).join(" | ");
+  const toolListType =
+    codeModeTools.length > 0
+      ? codeModeTools.map((entry) => `"${escapeStr(entry.tool.name)}"`).join(" | ")
+      : "never";
 
   return [
     "// Code mode type hints — auto-generated from MCP tool schemas",
     "// Available tools are accessed via the `codemode` namespace",
+    `// MCP catalog: ${diagnostics.totalTools} tool(s); ${diagnostics.callableTools} callable, ${diagnostics.refusedTools} dispatch-refused`,
+    `// Output schemas: ${diagnostics.declaredOutputSchemas} declared, ${diagnostics.synthesizedOutputSchemas} synthesized, ${diagnostics.unavailableOutputSchemas} unavailable`,
     "",
     `declare const codemode: {`,
     `  /** List all available code mode tool names. */`,
@@ -223,12 +230,20 @@ function generateInputType(
   return typeStr;
 }
 
-function buildJsDoc(tool: McpTool, inputSchema: JsonSchema): string {
+function buildJsDoc(codeModeTool: CodeModeTool, inputSchema: JsonSchema): string {
+  const tool = codeModeTool.tool;
   const lines: string[] = ["  /**"];
 
   if (tool.description) {
     lines.push(`   * ${tool.description}`);
   }
+
+  if (codeModeTool.callable) {
+    lines.push("   * Code Mode dispatch: callable (explicitly read-only and non-destructive).");
+  } else {
+    lines.push("   * Code Mode dispatch: refused. Use a permission-aware non-Code-Mode path.");
+  }
+  lines.push(`   * Output schema provenance: ${codeModeTool.outputSchemaProvenance}.`);
 
   const properties = inputSchema.properties as Record<string, JsonSchema> | undefined;
   if (properties) {
@@ -246,4 +261,8 @@ function buildJsDoc(tool: McpTool, inputSchema: JsonSchema): string {
 
 function escapeStr(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
+}
+
+function normalizeCodeModeTool(tool: McpTool | CodeModeTool): CodeModeTool {
+  return "tool" in tool && "outputSchemaProvenance" in tool ? tool : toCodeModeTool(tool);
 }

@@ -1,6 +1,6 @@
 # Tier 3 — Codey C. Maude (Code Mode)
 
-Code Mode targets tools that are **read-only** (`annotations.readOnlyHint === true`) and return **structured output** (`outputSchema` defined). These two properties together make a tool safe for autonomous use — it can't modify anything, and its results are machine-parseable.
+Code Mode is always available for pure JavaScript computation, even when no MCP servers are configured. Its discovery catalog and generated type hints include every MCP tool, but host dispatch is allowed only when `annotations.readOnlyHint === true` and `annotations.destructiveHint !== true`.
 
 ## How it works
 
@@ -16,16 +16,29 @@ return details.map((d) => ({ title: d.title, assignee: d.assignee }));
 ## Sandbox isolation
 
 - **128MB memory limit**, 30-second timeout
-- **No access** to filesystem, network, or Node.js APIs
+- **No access** to filesystem, network, `process`, or Node.js/browser APIs
 - Tool calls dispatch to the host via `Reference` callbacks — MCP execution happens outside the sandbox
 - ~15ms overhead, negligible vs network I/O
 
+## Catalog, schemas, and dispatch
+
+Code Mode keeps discovery separate from permission enforcement:
+
+1. Every MCP tool appears in `codemode.listTools()` and the generated type hints.
+2. Read-only, non-destructive tools are callable.
+3. A callable tool without `outputSchema` receives an internal permissive JSON Schema survival floor. Its output type is `unknown`, and the source MCP tool remains unchanged.
+4. Non-read-only or destructive tools stay visible but are refused before `McpClientManager.callTool()` is reached.
+
+Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and is never added to MCP traffic. Code Mode diagnostics and the type-hint header report declared and synthesized counts so schema degradation is visible without prompting.
+
 ## Tools
 
-| Tool           | Purpose                                                                            |
-| -------------- | ---------------------------------------------------------------------------------- |
-| `code_search`  | Discover available tools — `codemode.listTools()`, `codemode.describeTools(names)` |
-| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)`                   |
+| Tool           | Purpose                                                                      |
+| -------------- | ---------------------------------------------------------------------------- |
+| `code_search`  | Discover available tools; returns `no_eligible_tools` when none are callable |
+| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)`             |
+
+With zero callable MCP tools, `code_search` names `code_execute` and `tool-cli` as alternatives. `code_execute` still handles arithmetic, parsing, and deterministic transforms.
 
 ## When to use
 
@@ -35,4 +48,4 @@ Code Mode shines when you need real computation across many calls: pagination lo
 - For each open PR, fetch reviews and compute average time-to-first-review
 - Paginate all items, filter, group, and summarize
 
-See [DECISIONS.md #011–012](../DECISIONS.md) for implementation decisions.
+See [DECISIONS.md #011–012 and #014](../DECISIONS.md) for implementation decisions.

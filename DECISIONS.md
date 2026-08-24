@@ -22,11 +22,11 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** How should the model access MCP tools?
 **Decision:** Three tiers of access, all complementary:
 
-| Tier               | Mechanism                                                    | When Used                              |
-| ------------------ | ------------------------------------------------------------ | -------------------------------------- |
-| 1 — Skills (#1)    | Skill loaded → `allowed-tools` exact-matched → tools visible | MCP server ships skills                |
-| 2 — Football (#2)  | CLI progressive discovery → HITL for writes                  | Ad-hoc exploration, no skills          |
-| 3 — Code Mode (#4) | search+execute → no HITL                                     | Read-only tools with structured output |
+| Tier               | Mechanism                                                    | When Used                               |
+| ------------------ | ------------------------------------------------------------ | --------------------------------------- |
+| 1 — Skills (#1)    | Skill loaded → `allowed-tools` exact-matched → tools visible | MCP server ships skills                 |
+| 2 — Football (#2)  | CLI progressive discovery → HITL for writes                  | Ad-hoc exploration, no skills           |
+| 3 — Code Mode (#4) | all-tool discovery + read-only dispatch                      | Sandboxed computation and safe batching |
 
 **Rationale:** Different situations call for different access patterns. Skills give direct access with workflow knowledge. Football gives interactive access with safety. Code mode gives autonomous access to safe operations at scale.
 
@@ -104,3 +104,10 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 **Context:** The monolithic MCP SDK v1 client could not provide negotiated 2026-era behavior, SDK-managed multi-round-trip input, or one lossless result contract across direct tools, Code Mode, and tool-cli.
 **Decision:** Build every connection through one `@modelcontextprotocol/client@2.0.0` factory using automatic version negotiation, the public Streamable HTTP and stdio transports, and explicit `2026-07-28` support with legacy fallback. The seam advertises only form elicitation and an empty extensions declaration, bounds MRTR rounds and request time, and routes form input through mcpi's explicit UI. Every tool path receives one terminal `CallToolResult` adapter; protocol and transport failures remain thrown errors. Missing cache TTLs default to zero, and only SDK-managed tool-list change subscriptions are enabled.
 **Rationale:** A single seam keeps identity, capabilities, negotiation diagnostics, pagination, timeout policy, and user-input safety consistent. Preserving the protocol result object prevents each execution path from dropping newer content blocks or scalar structured JSON. Immediately stale cache defaults avoid surprising reuse, while servers can still opt in with explicit cache hints. General subscription lifecycle and persistent cache ownership remain future host-level work.
+
+## 014 — Code Mode separates discovery, schema survival, and dispatch permission
+
+**Date:** 2026-08-24
+**Context:** Code Mode registration and discovery were both gated by `readOnlyHint === true && outputSchema`, which disabled pure computation with zero MCP tools, hid non-read-only tools from discovery, and excluded safe legacy tools that omitted an output schema.
+**Decision:** Register `code_execute` and `code_search` independently of MCP connectivity. Catalog every MCP tool and generate hints for all of them, but allow host dispatch only for tools with `readOnlyHint === true` and `destructiveHint !== true`. For callable tools lacking `outputSchema`, use a client-internal permissive schema with separate synthesized provenance; preserve declared schemas by reference and never add provenance to MCP traffic. Report declared/synthesized counts in diagnostics and hint headers. Refuse zero-callable `code_search` before isolate creation with `no_eligible_tools`, while keeping `code_execute` available for pure computation.
+**Rationale:** Visibility is not authority. Keeping permission enforcement at the host dispatch boundary prevents generated code from invoking writes while still making the complete catalog understandable. The internal schema floor improves compatibility without pretending an unknown result is typed, and always-on execution preserves Code Mode's deterministic computation value even when MCP is unavailable.

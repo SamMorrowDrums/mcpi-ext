@@ -8,13 +8,13 @@ How to make your MCP server work with mcpi-ext's progressive discovery system. T
 
 mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which of the three tiers your tools land in:
 
-| What you provide                            | Tier                    | What happens                                       |
-| ------------------------------------------- | ----------------------- | -------------------------------------------------- |
-| `skill://` resources with tool declarations | **Tier 1 -- Skills**    | Tools deferred until the model loads the skill     |
-| Nothing special                             | **Tier 2 -- tool-cli**  | Tools discoverable via CLI progressive exploration |
-| `readOnlyHint: true` + `outputSchema`       | **Tier 3 -- Code Mode** | Tools callable from sandboxed JavaScript           |
+| What you provide                            | Tier                    | What happens                                                    |
+| ------------------------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `skill://` resources with tool declarations | **Tier 1 -- Skills**    | Tools deferred until the model loads the skill                  |
+| Nothing special                             | **Tier 2 -- tool-cli**  | Tools discoverable via CLI progressive exploration              |
+| `readOnlyHint: true`                        | **Tier 3 -- Code Mode** | Tool callable from sandboxed JS; `outputSchema` improves typing |
 
-These tiers are complementary. A single tool can participate in multiple tiers -- for example, a read-only tool with an output schema gated behind a skill will be available via Skills _and_ Code Mode.
+These tiers are complementary. Every MCP tool appears in Code Mode discovery and type hints, while only explicitly read-only, non-destructive tools are callable there. A read-only tool gated behind a skill can therefore be available via Skills _and_ Code Mode.
 
 ---
 
@@ -204,15 +204,15 @@ A tool can appear in multiple skills' `allowed-tools` lists -- it will be reveal
 
 ---
 
-## Tool Annotations for Code Mode
+## Tool Annotations and Schemas for Code Mode
 
-Code Mode (Tier 3) lets the agent write JavaScript that chains tool calls in a V8 sandbox. A tool is eligible for Code Mode when it meets **both** criteria:
+Code Mode (Tier 3) lets the agent write JavaScript that chains tool calls in a V8 sandbox. Every MCP tool is discoverable, but host dispatch is allowed only when both permission conditions hold:
 
 1. **`readOnlyHint: true`** -- the tool does not modify its environment
-2. **`outputSchema` is defined** -- the tool returns typed, structured data
+2. **`destructiveHint` is not `true`** -- contradictory destructive tools are refused
 
 ```typescript
-// Eligible for Code Mode
+// Callable from Code Mode with a precise declared output type
 server.registerTool(
   "check_weather_for_city",
   {
@@ -243,10 +243,13 @@ server.registerTool(
 );
 ```
 
-### Why both properties matter
+### Why annotations and schemas matter
 
-- **`readOnlyHint`** makes the tool safe for autonomous use -- Code Mode has no human-in-the-loop, so only tools that can't modify anything are allowed
-- **`outputSchema`** makes the tool's results machine-parseable -- the harness generates TypeScript type hints from it, so the model knows the exact shape of what it will get back
+- **`readOnlyHint`** is an explicit permission boundary -- missing or false means Code Mode refuses dispatch
+- **`destructiveHint`** is a deny signal -- `true` wins even if `readOnlyHint` is also true
+- **`outputSchema`** improves machine-readable type hints, but is not a permission signal
+
+For a callable read-only tool without `outputSchema`, the client creates an internal permissive JSON Schema survival floor. The generated return type is `unknown`, provenance is reported as `synthesized`, and the source tool definition is not modified. No provenance marker is sent to the server. Missing schemas are never synthesized for non-read-only tools.
 
 ### Returning structured content
 
@@ -265,7 +268,7 @@ return {
 };
 ```
 
-The harness prefers `structuredContent` when available. If it's missing, it falls back to parsing the text content as JSON.
+The harness preserves the complete terminal MCP result. Code Mode code can read `structuredContent` directly, including falsey scalar values such as `false`, `0`, `""`, and `null`.
 
 ### How type hints are generated
 
@@ -290,7 +293,7 @@ declare const codemode: {
 };
 ```
 
-These hints are injected into the model's system prompt. Write good `description` fields on your schema properties -- they become JSDoc comments that help the model write correct code.
+These hints are injected into the model's system prompt. The header reports total/callable/refused tools plus declared/synthesized/unavailable schema counts. Write good `description` fields on your schema properties -- they become JSDoc comments that help the model write correct code.
 
 ### Schema best practices
 
@@ -298,15 +301,16 @@ These hints are injected into the model's system prompt. Write good `description
 - **Use specific types.** `z.number().int()` is better than `z.any()`. `z.enum(["asc", "desc"])` is better than `z.string()`.
 - **Keep output shapes flat when possible.** Deeply nested schemas generate complex type hints that cost tokens.
 - **Include pagination fields** if your tool returns paginated results. The model can write loops.
+- **Still ship `outputSchema` for read-only tools.** The synthesized schema is a reliability floor, not a substitute for an accurate contract.
 
 ---
 
 ## Combining Skills and Code Mode
 
-A tool can be gated behind a skill _and_ eligible for Code Mode. These are independent mechanisms:
+A tool can be gated behind a skill _and_ callable from Code Mode. These are independent mechanisms:
 
 - The skill controls **when** the tool appears in the model's tool list (Tier 1)
-- Code Mode eligibility controls **whether** the tool is callable from sandboxed JavaScript (Tier 3)
+- Code Mode annotations control **whether** the tool is callable from sandboxed JavaScript (Tier 3)
 
 Code Mode tools are always available -- they don't require `load_skill`. If you gate a Code Mode-eligible tool behind a skill, it will be available via Code Mode immediately, but won't appear as a standalone tool until the skill is loaded.
 
@@ -359,7 +363,7 @@ Always search before updating to confirm the correct product.
   }),
 );
 
-// Read-only + outputSchema = Code Mode eligible + skill gated
+// Read-only + outputSchema = Code Mode callable with precise types + skill gated
 server.registerTool(
   "search_products",
   {
@@ -391,7 +395,7 @@ server.registerTool(
   },
 );
 
-// Write tool -- skill gated, NOT Code Mode eligible
+// Write tool -- visible in Code Mode discovery, but dispatch-refused
 server.registerTool(
   "update_stock",
   {
@@ -434,9 +438,9 @@ server.registerTool(
 
 In this example:
 
-- `search_products` and `get_product_details` are **skill-gated + Code Mode eligible** (read-only with output schemas)
-- `update_stock` is **skill-gated only** (writes data, so no Code Mode)
-- `server_status` is **ungated + Code Mode eligible** (always available, read-only with output schema)
+- `search_products` and `get_product_details` are **skill-gated + Code Mode callable** (read-only with output schemas)
+- `update_stock` is **skill-gated and Code Mode-visible, but dispatch-refused** (it writes data)
+- `server_status` is **ungated + Code Mode callable** (read-only with an output schema)
 
 ---
 
@@ -449,9 +453,9 @@ Before shipping your MCP server with progressive discovery support:
 - [ ] SKILL.md frontmatter includes `name`, `description`, and tool declarations (`allowed-tools` or `metadata.io.modelcontextprotocol/tools`)
 - [ ] SKILL.md body provides actionable workflow instructions, not just tool descriptions
 - [ ] Read-only tools set `annotations: { readOnlyHint: true }`
+- [ ] Destructive or write tools set `readOnlyHint: false` and optionally `destructiveHint: true`
 - [ ] Tools with typed output define `outputSchema` and return `structuredContent`
 - [ ] Schema properties have `.describe()` annotations for type hint generation
-- [ ] Write/destructive tools set `readOnlyHint: false` and optionally `destructiveHint: true`
 - [ ] Tools are grouped into skills by user workflow, not API structure
 
 ---

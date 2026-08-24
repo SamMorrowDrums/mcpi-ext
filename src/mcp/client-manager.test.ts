@@ -16,6 +16,15 @@ const nestedSchema = {
   unevaluatedProperties: false,
 } as const;
 
+const structuredValues: CallToolResult["structuredContent"][] = [
+  false,
+  0,
+  "",
+  null,
+  [],
+  { nested: ["value"] },
+];
+
 describe("McpClientManager", () => {
   let clients: FakeClient[];
   let clientOptions: CreateMcpClientOptions[];
@@ -65,26 +74,30 @@ describe("McpClientManager", () => {
     });
   });
 
-  it("returns one terminal result without losing content or structured values", async () => {
-    await manager.connectOne("server", { type: "stdio", command: "server" });
-    const result: CallToolResult = {
-      content: [
-        { type: "text", text: "done" },
-        { type: "audio", data: "YXVkaW8=", mimeType: "audio/wav" },
-      ],
-      structuredContent: false,
-      isError: true,
-    };
-    clients[0].callTool.mockResolvedValueOnce(result);
+  it.each(structuredValues)(
+    "returns one terminal result without losing structured value %j",
+    async (structuredContent) => {
+      await manager.connectOne("server", { type: "stdio", command: "server" });
+      const result: CallToolResult = {
+        content: [
+          { type: "text", text: "done" },
+          { type: "audio", data: "YXVkaW8=", mimeType: "audio/wav" },
+        ],
+        structuredContent,
+        isError: true,
+      };
+      clients[0].callTool.mockResolvedValueOnce(result);
 
-    const terminal = await manager.callTool("server", "z_tool", { value: 1 });
+      const terminal = await manager.callTool("server", "z_tool", { value: 1 });
 
-    expect(terminal).toEqual({ kind: "terminal", result });
-    expect(clients[0].callTool).toHaveBeenCalledWith(
-      { name: "z_tool", arguments: { value: 1 } },
-      expect.objectContaining({ timeout: 60_000, maxTotalTimeout: 600_000 }),
-    );
-  });
+      expect(terminal).toEqual({ kind: "terminal", result });
+      expect(terminal.result.structuredContent).toEqual(structuredContent);
+      expect(clients[0].callTool).toHaveBeenCalledWith(
+        { name: "z_tool", arguments: { value: 1 } },
+        expect.objectContaining({ timeout: 60_000, maxTotalTimeout: 600_000 }),
+      );
+    },
+  );
 
   it("keeps thrown protocol or transport failures distinct from terminal results", async () => {
     await manager.connectOne("server", { type: "stdio", command: "server" });

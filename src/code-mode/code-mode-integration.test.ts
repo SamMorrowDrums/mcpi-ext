@@ -6,7 +6,7 @@ import { CodeModeManager } from "./index.js";
 
 /**
  * Integration test: connect to the test weather server, verify code mode
- * eligibility, type hint generation, and sandboxed execution with real
+ * permission metadata, type hint generation, and sandboxed execution with real
  * MCP tool calls returning structuredContent.
  */
 describe("code mode integration (weather server)", () => {
@@ -34,13 +34,21 @@ describe("code mode integration (weather server)", () => {
     await Promise.all([manager.disconnectAll(), server.close()]);
   });
 
-  it("discovers eligible tools with readOnlyHint + outputSchema", () => {
+  it("discovers callable read-only tools", () => {
     const eligible = codeMode.getEligibleTools();
-    expect(eligible.length).toBeGreaterThanOrEqual(2);
+    expect(eligible).toHaveLength(3);
     const names = eligible.map((t) => t.name).sort();
     expect(names).toContain("check_weather_for_city");
     expect(names).toContain("check_weekly_forecast_for_city");
     expect(names).toContain("echo");
+    expect(codeMode.getDiagnostics()).toEqual({
+      totalTools: 3,
+      callableTools: 3,
+      refusedTools: 0,
+      declaredOutputSchemas: 3,
+      synthesizedOutputSchemas: 0,
+      unavailableOutputSchemas: 0,
+    });
   });
 
   it("generates type hints for eligible tools", () => {
@@ -50,6 +58,7 @@ describe("code mode integration (weather server)", () => {
     expect(hints).toContain("check_weekly_forecast_for_city");
     expect(hints).toContain("echo");
     expect(hints).toContain("listTools");
+    expect(hints).toContain("Output schemas: 3 declared, 0 synthesized, 0 unavailable");
   });
 
   it("reports as active", () => {

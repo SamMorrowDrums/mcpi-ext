@@ -16,6 +16,10 @@ export interface CodeModeToolDetails {
   executionMs: number;
   logs: string[];
   error?: string;
+  message?: string;
+  alternatives?: string[];
+  toolName?: string;
+  reason?: string;
 }
 
 /** Format an ExecuteResult into a tool response. Falls back to logs if result is undefined. */
@@ -25,15 +29,19 @@ function formatResult(
   errorPrefix: string,
 ): AgentToolResult<CodeModeToolDetails> {
   if (result.error) {
+    const errorDetails = result.errorDetails ?? {
+      error: "execution_failed",
+      message: result.error,
+    };
     return {
       content: [{ type: "text", text: `${errorPrefix}: ${result.error}` }],
-      details: { executionMs, logs: result.logs, error: result.error },
+      details: { executionMs, logs: result.logs, ...errorDetails },
     };
   }
 
   // If code didn't return a value, fall back to captured console output
   const output =
-    result.result !== undefined && result.result !== null
+    result.result !== undefined
       ? typeof result.result === "string"
         ? result.result
         : JSON.stringify(result.result, null, 2)
@@ -63,7 +71,7 @@ export function createCodeSearchTool(manager: CodeModeManager) {
     name: "code_search",
     label: "Code Search",
     description:
-      "Discover available read-only MCP tools by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info. Use this before code_execute to understand what data sources are available.",
+      "Discover all available MCP tools by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info. Type hints identify which tools Code Mode can call; non-read-only tools remain discovery-only.",
     parameters: CodeInput,
 
     async execute(

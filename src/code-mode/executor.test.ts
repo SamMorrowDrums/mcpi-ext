@@ -43,6 +43,28 @@ describe("executeInSandbox", () => {
     expect(result.error).toBeUndefined();
   });
 
+  it("does not expose filesystem, network, or process entry points", async () => {
+    const result = await executeInSandbox(
+      `return {
+        process: typeof process,
+        require: typeof require,
+        fetch: typeof fetch,
+        XMLHttpRequest: typeof XMLHttpRequest
+      };`,
+      [],
+      async () => ({}),
+      { timeoutMs: 5000 },
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual({
+      process: "undefined",
+      require: "undefined",
+      fetch: "undefined",
+      XMLHttpRequest: "undefined",
+    });
+  });
+
   it("captures console.log output", async () => {
     const result = await executeInSandbox(
       'console.log("hello", "world"); return 1;',

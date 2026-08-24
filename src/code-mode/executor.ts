@@ -5,7 +5,23 @@ import { sanitizeToolName } from "./type-hints.js";
 export interface ExecuteResult {
   result: unknown;
   error?: string;
+  errorDetails?: CodeModeErrorDetails;
   logs: string[];
+}
+
+export interface CodeModeErrorDetails {
+  error: string;
+  message: string;
+  alternatives?: string[];
+  toolName?: string;
+  reason?: string;
+}
+
+export class CodeModeDispatchError extends Error {
+  constructor(readonly details: CodeModeErrorDetails) {
+    super(details.message);
+    this.name = "CodeModeDispatchError";
+  }
 }
 
 /** A function the sandbox can call to invoke an MCP tool. */
@@ -20,6 +36,7 @@ export interface ExecutorOptions {
 
 const DEFAULT_MEMORY_LIMIT = 128;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const STRUCTURED_ERROR_PREFIX = "__CODE_MODE_ERROR__";
 
 /**
  * Execute model-generated JavaScript code in an isolated V8 sandbox.
@@ -71,8 +88,15 @@ async function runInIsolate(
   // Inject tool dispatcher Reference (async callback)
   const dispatchRef = new ivm.Reference(async (toolName: string, argsJson: string) => {
     const args = JSON.parse(argsJson) as Record<string, unknown>;
-    const result = await dispatch(toolName, args);
-    return JSON.stringify(result === undefined ? null : result);
+    try {
+      const result = await dispatch(toolName, args);
+      return JSON.stringify({ ok: true, value: result === undefined ? null : result });
+    } catch (error) {
+      if (error instanceof CodeModeDispatchError) {
+        return JSON.stringify({ ok: false, error: error.details });
+      }
+      throw error;
+    }
   });
   await jail.set("__dispatch", dispatchRef);
 
@@ -94,7 +118,11 @@ async function runInIsolate(
       const console = { log: (...args) => __log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) };
       const __callTool = async (name, args) => {
         const r = await __dispatch.apply(undefined, [name, JSON.stringify(args ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
-        return JSON.parse(r);
+        const response = JSON.parse(r);
+        if (!response.ok) {
+          throw new Error(${JSON.stringify(STRUCTURED_ERROR_PREFIX)} + JSON.stringify(response.error));
+        }
+        return response.value;
       };
       const codemode = {
         listTools: async () => ${JSON.stringify(toolNames)},
@@ -121,7 +149,13 @@ ${toolProxyEntries}
     return { result: parsed.value, logs };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { result: undefined, error: message, logs };
+    const errorDetails = parseStructuredError(message);
+    return {
+      result: undefined,
+      error: errorDetails?.message ?? message,
+      errorDetails,
+      logs,
+    };
   }
 }
 
@@ -160,4 +194,20 @@ export function normalizeCode(code: string): string {
 
   // Otherwise, treat as a code block — return the last expression
   return normalized;
+}
+
+function parseStructuredError(message: string): CodeModeErrorDetails | undefined {
+  const markerIndex = message.indexOf(STRUCTURED_ERROR_PREFIX);
+  if (markerIndex === -1) return undefined;
+
+  const serialized = message.slice(markerIndex + STRUCTURED_ERROR_PREFIX.length);
+  try {
+    const details = JSON.parse(serialized) as Partial<CodeModeErrorDetails>;
+    if (typeof details.error !== "string" || typeof details.message !== "string") {
+      return undefined;
+    }
+    return details as CodeModeErrorDetails;
+  } catch {
+    return undefined;
+  }
 }

@@ -1,12 +1,30 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
-import { getEligibleTools } from "./eligibility.js";
+import {
+  getCodeModeDiagnostics,
+  getCodeModeTools,
+  type CodeModeDiagnostics,
+  type CodeModeTool,
+} from "./eligibility.js";
 import type { ExecuteResult, ExecutorOptions } from "./executor.js";
-import { executeInSandbox } from "./executor.js";
+import { CodeModeDispatchError, executeInSandbox, type CodeModeErrorDetails } from "./executor.js";
 import { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 import { generateTypeHints } from "./type-hints.js";
 
-export { getEligibleTools, isEligibleForCodeMode } from "./eligibility.js";
-export type { ExecuteResult, ExecutorOptions } from "./executor.js";
+export {
+  SYNTHESIZED_OUTPUT_SCHEMA,
+  getCodeModeDiagnostics,
+  getCodeModeTools,
+  getEligibleTools,
+  isEligibleForCodeMode,
+  toCodeModeTool,
+} from "./eligibility.js";
+export type {
+  CodeModeDiagnostics,
+  CodeModeRefusalReason,
+  CodeModeTool,
+  OutputSchemaProvenance,
+} from "./eligibility.js";
+export type { CodeModeErrorDetails, ExecuteResult, ExecutorOptions } from "./executor.js";
 export { executeInSandbox, normalizeCode } from "./executor.js";
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
@@ -14,36 +32,61 @@ export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./t
 export interface CodeModeManagerOptions extends ExecutorOptions {
   /** Log function for status messages. */
   log?: (msg: string) => void;
+  /** Test seam for proving pre-isolate refusals. */
+  sandboxExecutor?: typeof executeInSandbox;
 }
 
+const NO_ELIGIBLE_TOOLS_ERROR: CodeModeErrorDetails = {
+  error: "no_eligible_tools",
+  message: "code_search has no callable read-only MCP tools to search.",
+  alternatives: ["code_execute", "tool-cli"],
+};
+
 /**
- * Orchestrates code mode: discovers eligible tools, generates type hints,
+ * Orchestrates code mode: catalogs tools, generates type hints,
  * and executes model-generated code in a sandbox with tool dispatch.
  */
 export class CodeModeManager {
   private mcpManager: McpClientManager | null = null;
-  private eligibleTools: McpTool[] = [];
-  private typeHints = "";
-  private options: CodeModeManagerOptions;
+  private codeModeTools: CodeModeTool[] = [];
+  private diagnostics: CodeModeDiagnostics = getCodeModeDiagnostics([]);
+  private typeHints = generateTypeHints([]);
+  private readonly options: CodeModeManagerOptions;
+  private readonly sandboxExecutor: typeof executeInSandbox;
+  private log: ((msg: string) => void) | undefined;
+  private lastDiagnosticSummary = "";
+  readonly isActive = true;
 
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
+    this.sandboxExecutor = options.sandboxExecutor ?? executeInSandbox;
+    this.log = options.log;
   }
 
-  /** Initialize with MCP manager, discover eligible tools, generate type hints. */
-  initialize(mcpManager: McpClientManager): void {
+  /** Initialize with MCP manager, catalog tools, and generate type hints. */
+  initialize(mcpManager: McpClientManager, log?: (msg: string) => void): void {
     this.mcpManager = mcpManager;
+    this.log = log ?? this.log;
     this.refresh();
   }
 
-  /** Refresh eligible tools and type hints (call on tools/list_changed). */
+  /** Refresh the complete tool catalog and type hints (call on tools/list_changed). */
   refresh(): void {
-    if (!this.mcpManager) return;
-    this.eligibleTools = getEligibleTools(this.mcpManager);
-    this.typeHints = generateTypeHints(this.eligibleTools);
-    this.options.log?.(
-      `[code-mode] ${this.eligibleTools.length} eligible tool(s), ${this.typeHints.length} chars of type hints`,
-    );
+    this.codeModeTools = this.mcpManager ? getCodeModeTools(this.mcpManager) : [];
+    this.diagnostics = getCodeModeDiagnostics(this.codeModeTools);
+    this.typeHints = generateTypeHints(this.codeModeTools);
+
+    const summary =
+      `[code-mode] ${this.diagnostics.totalTools} tool(s): ` +
+      `${this.diagnostics.callableTools} callable, ${this.diagnostics.refusedTools} dispatch-refused; ` +
+      `output schemas: ${this.diagnostics.declaredOutputSchemas} declared, ` +
+      `${this.diagnostics.synthesizedOutputSchemas} synthesized, ` +
+      `${this.diagnostics.unavailableOutputSchemas} unavailable; ` +
+      `${this.typeHints.length} chars of type hints`;
+    if (summary !== this.lastDiagnosticSummary) {
+      this.log?.(summary);
+      this.lastDiagnosticSummary = summary;
+    }
   }
 
   /** Get the type hints string for injection into system prompt. */
@@ -53,21 +96,38 @@ export class CodeModeManager {
 
   /** Get eligible tools. */
   getEligibleTools(): McpTool[] {
-    return this.eligibleTools;
+    return this.codeModeTools.filter((entry) => entry.callable).map((entry) => entry.tool);
   }
 
-  /** Whether code mode has any eligible tools. */
-  get isActive(): boolean {
-    return this.eligibleTools.length > 0;
+  /** Get the complete client-internal catalog, including permission and schema provenance. */
+  getCatalogTools(): readonly CodeModeTool[] {
+    return this.codeModeTools;
+  }
+
+  getDiagnostics(): CodeModeDiagnostics {
+    return this.diagnostics;
   }
 
   /** Execute code in search mode (tool catalog queries). */
   async searchTools(code: string): Promise<ExecuteResult> {
+    this.refresh();
+    if (this.diagnostics.callableTools === 0) {
+      return {
+        result: undefined,
+        error: NO_ELIGIBLE_TOOLS_ERROR.message,
+        errorDetails: {
+          ...NO_ELIGIBLE_TOOLS_ERROR,
+          alternatives: [...(NO_ELIGIBLE_TOOLS_ERROR.alternatives ?? [])],
+        },
+        logs: [],
+      };
+    }
     return this.execute(code);
   }
 
   /** Execute code that chains MCP tool calls. */
   async executeCode(code: string): Promise<ExecuteResult> {
+    this.refresh();
     return this.execute(code);
   }
 
@@ -81,8 +141,6 @@ export class CodeModeManager {
 
   /** Format a system prompt section for code mode. */
   formatSystemPromptSection(): string {
-    if (!this.isActive) return "";
-
     return [
       "",
       "<code_mode>",
@@ -153,29 +211,52 @@ export class CodeModeManager {
   }
 
   private async execute(code: string): Promise<ExecuteResult> {
-    if (!this.mcpManager) {
-      return { result: undefined, error: "Code mode not initialized", logs: [] };
-    }
-
-    // Refresh eligible tools in case MCP servers changed since initialization
-    this.refresh();
-
     const manager = this.mcpManager;
-    const toolNames = this.eligibleTools.map((t) => t.name);
+    const toolNames = this.codeModeTools.map((entry) => entry.tool.name);
 
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {
-      const tool = this.eligibleTools.find((t) => t.name === toolName);
-      if (!tool) {
+      const codeModeTool = this.codeModeTools.find((entry) => entry.tool.name === toolName);
+      if (!codeModeTool) {
         throw new Error(`Tool "${toolName}" not found in code mode eligible tools`);
       }
 
-      const terminal = await manager.callTool(tool.serverName, toolName, args);
+      if (!codeModeTool.callable) {
+        throw new CodeModeDispatchError({
+          error: "permission_denied",
+          message:
+            `Tool "${toolName}" is visible for discovery but cannot be called from Code Mode. ` +
+            "Use load_skill or tool-cli through the host's permission-aware path.",
+          alternatives: ["load_skill", "tool-cli"],
+          toolName,
+          reason: formatRefusalReasons(codeModeTool),
+        });
+      }
+
+      if (!manager) {
+        throw new Error("Code mode MCP manager is not initialized");
+      }
+
+      const terminal = await manager.callTool(
+        codeModeTool.tool.serverName,
+        codeModeTool.tool.name,
+        args,
+      );
       return terminal.result;
     };
 
-    return executeInSandbox(code, toolNames, dispatch, {
+    return this.sandboxExecutor(code, toolNames, dispatch, {
       memoryLimit: this.options.memoryLimit,
       timeoutMs: this.options.timeoutMs,
     });
   }
+}
+
+function formatRefusalReasons(codeModeTool: CodeModeTool): string {
+  return codeModeTool.refusalReasons
+    .map((reason) =>
+      reason === "destructive_hint"
+        ? "annotations.destructiveHint is true"
+        : "annotations.readOnlyHint is not true",
+    )
+    .join("; ");
 }
