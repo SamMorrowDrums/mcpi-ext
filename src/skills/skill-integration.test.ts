@@ -1,22 +1,26 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport, type Client } from "@modelcontextprotocol/client";
 import { McpClientManager } from "../mcp/client-manager.js";
+import { createWeatherServer } from "../test-servers/weather-server.js";
 import { SkillRegistry } from "./skill-registry.js";
 import { discoverSkillsFromServer } from "./discover.js";
 import { formatMcpSkillsForPrompt } from "./format.js";
 import { createLoadSkillTool } from "./load-skill-tool.js";
 
 /**
- * Integration test: connect to the test weather server via stdio,
+ * Integration test: connect to the test weather server in memory,
  * discover skills, load a skill, verify tool schemas in result, call a gated tool.
  */
 describe("skill integration (weather server)", () => {
-  const manager = new McpClientManager();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createWeatherServer();
+  const manager = new McpClientManager({ transportFactory: () => clientTransport });
   const registry = new SkillRegistry();
   const enabledTools = new Set<string>();
   let client: Client;
 
   beforeAll(async () => {
+    await server.connect(serverTransport);
     await manager.connectAll({
       mcpServers: {
         "test-weather": {
@@ -33,7 +37,7 @@ describe("skill integration (weather server)", () => {
   });
 
   afterAll(async () => {
-    await manager.disconnectAll();
+    await Promise.all([manager.disconnectAll(), server.close()]);
   });
 
   it("connects and discovers tools", () => {

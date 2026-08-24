@@ -7,6 +7,8 @@ import type {
 } from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
+import { toToolCliCallToolResult } from "./mcp/call-tool-result.js";
+import { McpiHostElicitation } from "./mcp/host-elicitation.js";
 import { McpClientManager, loadMcpConfig } from "./mcp/index.js";
 import {
   SkillRegistry,
@@ -26,7 +28,8 @@ export default function (pi: ExtensionAPI) {
     type: "string",
   });
 
-  const mcpManager = new McpClientManager();
+  const hostElicitation = new McpiHostElicitation();
+  const mcpManager = new McpClientManager({ elicitation: hostElicitation });
   const skillRegistry = new SkillRegistry();
   const codeModeManager = new CodeModeManager();
   const enabledTools = new Set<string>();
@@ -37,14 +40,8 @@ export default function (pi: ExtensionAPI) {
     getServerNames: () => mcpManager.getConnectedServers(),
     getTools: (server) => mcpManager.getToolsForServer(server),
     async callTool(server, tool, args) {
-      const client = mcpManager.getClient(server);
-      if (!client) throw new Error(`No client for server "${server}"`);
-      const result = await client.callTool({ name: tool, arguments: args });
-      return {
-        content: result.content as unknown[],
-        isError: result.isError === true ? true : undefined,
-        structuredContent: result.structuredContent as Record<string, unknown> | undefined,
-      };
+      const terminal = await mcpManager.callTool(server, tool, args);
+      return toToolCliCallToolResult(terminal);
     },
   };
   const rpcServer = new ToolCliServer(toolProvider);
@@ -53,6 +50,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(createLoadSkillTool({ registry: skillRegistry, mcpManager, enabledTools }));
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    hostElicitation.setContext(ctx);
     if (ctx.hasUI) {
       ctx.ui.notify("mcpi-ext loaded", "info");
     }
@@ -170,6 +168,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    hostElicitation.setContext(undefined);
     pi.unsetEnv("TOOL_CLI_PORT");
     pi.unsetEnv("TOOL_CLI_TOKEN");
     await rpcServer.stop();

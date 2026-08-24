@@ -133,7 +133,7 @@ flowchart TD
         T1["load_skill\n(Tier 1 — Skills)"]
         T2["tool-cli\n(Tier 2 — Football)"]
         T3["code_search / code_execute\n(Tier 3 — Code Mode)"]
-        MCM["McpClientManager\n(MCP SDK — stdio & Streamable HTTP)"]
+        MCM["McpClientManager\n(split MCP v2 client — stdio & Streamable HTTP)"]
         T1 --> MCM
         T2 --> MCM
         T3 --> MCM
@@ -211,6 +211,26 @@ You can add more servers — both `stdio` (spawns a process) and `remote` (Strea
   }
 }
 ```
+
+### Protocol compatibility and defaults
+
+mcpi-ext uses `@modelcontextprotocol/client@2.0.0` in automatic version-negotiation
+mode. It first probes the released `2026-07-28` protocol with `server/discover`, then
+falls back to the legacy `initialize` handshake when a server does not support the
+modern era. The connection log reports the negotiated era.
+
+- Tool and skill-resource lists follow cursors automatically, with a 64-page safety
+  limit.
+- Results without a server-provided `ttlMs` are immediately stale
+  (`defaultCacheTtlMs: 0`). Explicit server cache hints are still honored in the
+  SDK's in-memory cache; mcpi-ext does not configure a persistent or shared cache.
+- Tool-list change handling is enabled. On modern servers the SDK may open a
+  `subscriptions/listen` stream when the capability is advertised; legacy servers
+  continue to use list-changed notifications. General subscription management,
+  durable subscription resume, and live skill-resource refresh are not exposed.
+- Modern `input_required` flows support explicit form input, decline, and cancel in
+  interactive mcpi sessions. Headless and URL elicitation fail with an actionable
+  error rather than approving automatically.
 
 ### 3. Run
 

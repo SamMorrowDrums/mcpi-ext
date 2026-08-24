@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpClientManager } from "../mcp/client-manager.js";
+import { createWeatherServer } from "../test-servers/weather-server.js";
 import { CodeModeManager } from "./index.js";
 
 /**
@@ -8,10 +10,13 @@ import { CodeModeManager } from "./index.js";
  * MCP tool calls returning structuredContent.
  */
 describe("code mode integration (weather server)", () => {
-  const manager = new McpClientManager();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createWeatherServer();
+  const manager = new McpClientManager({ transportFactory: () => clientTransport });
   const codeMode = new CodeModeManager();
 
   beforeAll(async () => {
+    await server.connect(serverTransport);
     await manager.connectAll({
       mcpServers: {
         "test-weather": {
@@ -26,7 +31,7 @@ describe("code mode integration (weather server)", () => {
   });
 
   afterAll(async () => {
-    await manager.disconnectAll();
+    await Promise.all([manager.disconnectAll(), server.close()]);
   });
 
   it("discovers eligible tools with readOnlyHint + outputSchema", () => {
@@ -66,9 +71,15 @@ describe("code mode integration (weather server)", () => {
     `);
 
     expect(result.error).toBeUndefined();
-    expect(result.result).toHaveProperty("temperature", 26);
-    expect(result.result).toHaveProperty("conditions", "Sunny");
-    expect(result.result).toHaveProperty("humidity", 55);
+    expect(result.result).toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("26") }],
+      structuredContent: {
+        temperature: 26,
+        conditions: "Sunny",
+        humidity: 55,
+        city: "Tokyo",
+      },
+    });
   });
 
   it("executes code that chains multiple tool calls", async () => {
@@ -77,7 +88,7 @@ describe("code mode integration (weather server)", () => {
       const results = [];
       for (const city of cities) {
         const w = await codemode.check_weather_for_city({ city });
-        results.push({ city, temp: w.temperature });
+        results.push({ city, temp: w.structuredContent.temperature });
       }
       return results;
     `);
@@ -108,7 +119,10 @@ describe("code mode integration (weather server)", () => {
     `);
 
     expect(result.error).toBeUndefined();
-    expect(result.result).toEqual({ echo: "hello code mode" });
+    expect(result.result).toMatchObject({
+      content: [{ type: "text", text: "Echo: hello code mode" }],
+      structuredContent: { echo: "hello code mode" },
+    });
   });
 
   it("handles tool errors gracefully", async () => {
@@ -117,10 +131,11 @@ describe("code mode integration (weather server)", () => {
       return w;
     `);
 
-    // Atlantis isn't in the data — server returns text-only content (no structuredContent)
-    // The executor should still return something (parsed text or raw string)
     expect(result.error).toBeUndefined();
-    expect(result.result).toBeDefined();
+    expect(result.result).toMatchObject({
+      content: [{ type: "text", text: expect.stringContaining("Output validation error") }],
+      isError: true,
+    });
   });
 
   it("search mode works for tool discovery", async () => {

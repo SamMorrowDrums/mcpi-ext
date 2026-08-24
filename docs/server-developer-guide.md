@@ -114,10 +114,10 @@ Write the body as if you're briefing a capable engineer who has never used your 
 
 ### Registering a skill resource
 
-Using the MCP SDK (`@modelcontextprotocol/sdk`):
+Using the released split MCP server package:
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 
 const server = new McpServer(
   { name: "my-server", version: "1.0.0" },
@@ -317,7 +317,7 @@ Code Mode tools are always available -- they don't require `load_skill`. If you 
 Here's a full MCP server with a skill, gated tools, Code Mode-eligible tools, and an ungated utility:
 
 ```typescript
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 const server = new McpServer(

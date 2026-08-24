@@ -40,7 +40,9 @@ export class SkillRegistry {
 
   /** Get all registered skills. */
   getAll(): McpSkillMetadata[] {
-    return [...this.skills.values()];
+    return [...this.skills.values()].sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
+    );
   }
 
   /** Remove a skill by name. */

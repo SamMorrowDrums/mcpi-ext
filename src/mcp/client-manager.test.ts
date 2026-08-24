@@ -1,250 +1,177 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { CallToolResult, Client, Tool, Transport } from "@modelcontextprotocol/client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CreateMcpClientOptions } from "./client-factory.js";
 import { McpClientManager } from "./client-manager.js";
 
-// Mock the MCP SDK transports and client
-vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
-  class MockClient {
-    private _onToolsChanged?: (error: Error | null, tools: unknown[] | null) => void;
-
-    constructor(
-      _info: unknown,
-      options?: {
-        listChanged?: {
-          tools?: { onChanged?: (error: Error | null, tools: unknown[] | null) => void };
-        };
-      },
-    ) {
-      this._onToolsChanged = options?.listChanged?.tools?.onChanged;
-    }
-    async connect(_transport: unknown): Promise<void> {
-      // no-op for tests
-    }
-    async close(): Promise<void> {
-      // no-op for tests
-    }
-    async listTools(): Promise<{ tools: unknown[] }> {
-      return {
-        tools: [
-          {
-            name: "mock_tool",
-            description: "A mock tool for testing",
-            inputSchema: { type: "object", properties: { arg: { type: "string" } } },
-            annotations: { readOnlyHint: true },
-          },
-          {
-            name: "mock_tool_2",
-            description: "Another mock tool",
-            inputSchema: { type: "object", properties: {} },
-          },
-        ],
-      };
-    }
-
-    /** Test helper to simulate tools/list_changed notification. */
-    _simulateToolsChanged(tools: unknown[]): void {
-      this._onToolsChanged?.(null, tools);
-    }
-  }
-  return { Client: MockClient };
-});
-
-vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
-  StdioClientTransport: class {
-    // eslint-disable-next-line @typescript-eslint/no-useless-constructor
-    constructor(_params: unknown) {
-      // no-op mock
-    }
+const nestedSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  $defs: {
+    label: { type: "string", minLength: 2 },
   },
-}));
-
-vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
-  StreamableHTTPClientTransport: class {
-    // eslint-disable-next-line @typescript-eslint/no-useless-constructor
-    constructor(_url: URL, _opts?: unknown) {
-      // no-op mock
-    }
+  properties: {
+    name: { $ref: "#/$defs/label" },
   },
-}));
+  allOf: [{ required: ["name"] }],
+  unevaluatedProperties: false,
+} as const;
 
 describe("McpClientManager", () => {
+  let clients: FakeClient[];
+  let clientOptions: CreateMcpClientOptions[];
   let manager: McpClientManager;
 
   beforeEach(() => {
-    manager = new McpClientManager();
+    clients = [];
+    clientOptions = [];
+    manager = new McpClientManager({
+      clientFactory: (options) => {
+        clientOptions.push(options);
+        const client = new FakeClient();
+        clients.push(client);
+        return client as unknown as Client;
+      },
+      transportFactory: () => fakeTransport,
+    });
   });
 
-  it("connects to a stdio server and discovers tools", async () => {
+  it("aggregates complete schemas and orders servers and tools deterministically", async () => {
     await manager.connectAll({
       mcpServers: {
-        "test-stdio": {
-          type: "stdio",
-          command: "node",
-          args: ["test-server.js"],
-        },
+        zebra: { type: "stdio", command: "zebra" },
+        alpha: { type: "remote", url: "https://example.com/mcp" },
       },
     });
 
-    expect(manager.getConnectedServers()).toEqual(["test-stdio"]);
-
-    const tools = manager.getTools();
-    expect(tools).toHaveLength(2);
-    expect(tools[0].name).toBe("mock_tool");
-    expect(tools[0].serverName).toBe("test-stdio");
-    expect(tools[0].description).toBe("A mock tool for testing");
-    expect(tools[0].annotations).toEqual({ readOnlyHint: true });
-    expect(tools[1].name).toBe("mock_tool_2");
+    expect(manager.getConnectedServers()).toEqual(["alpha", "zebra"]);
+    expect(manager.getTools().map((tool) => `${tool.serverName}/${tool.name}`)).toEqual([
+      "alpha/a_tool",
+      "alpha/z_tool",
+      "zebra/a_tool",
+      "zebra/z_tool",
+    ]);
+    expect(manager.getTools()[0].inputSchema).toEqual(nestedSchema);
   });
 
-  it("connects to a remote server and discovers tools", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        "test-remote": {
-          type: "remote",
-          url: "https://example.com/mcp",
-          headers: { Authorization: "Bearer test" },
-        },
+  it("records negotiated diagnostics from the client", async () => {
+    await manager.connectOne("modern", { type: "stdio", command: "server" });
+
+    expect(manager.getDiagnostics("modern")).toEqual({
+      protocolEra: "modern",
+      discoverResult: {
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
       },
     });
-
-    expect(manager.getConnectedServers()).toEqual(["test-remote"]);
-    expect(manager.getTools()).toHaveLength(2);
   });
 
-  it("connects to multiple servers and aggregates tools", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        server1: { type: "stdio", command: "node", args: ["s1.js"] },
-        server2: { type: "remote", url: "https://example.com/mcp" },
-      },
-    });
-
-    expect(manager.getConnectedServers()).toHaveLength(2);
-    // 2 tools per server
-    expect(manager.getTools()).toHaveLength(4);
-  });
-
-  it("getToolsForServer returns tools for a specific server", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        srv: { type: "stdio", command: "echo" },
-      },
-    });
-
-    expect(manager.getToolsForServer("srv")).toHaveLength(2);
-    expect(manager.getToolsForServer("nonexistent")).toEqual([]);
-  });
-
-  it("getClient returns the client for a connected server", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        srv: { type: "stdio", command: "echo" },
-      },
-    });
-
-    expect(manager.getClient("srv")).toBeDefined();
-    expect(manager.getClient("nonexistent")).toBeUndefined();
-  });
-
-  it("disconnectOne removes a server", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        srv: { type: "stdio", command: "echo" },
-      },
-    });
-
-    expect(manager.getConnectedServers()).toEqual(["srv"]);
-    await manager.disconnectOne("srv");
-    expect(manager.getConnectedServers()).toEqual([]);
-    expect(manager.getTools()).toEqual([]);
-  });
-
-  it("disconnectAll removes all servers", async () => {
-    await manager.connectAll({
-      mcpServers: {
-        s1: { type: "stdio", command: "echo" },
-        s2: { type: "remote", url: "https://example.com/mcp" },
-      },
-    });
-
-    expect(manager.getConnectedServers()).toHaveLength(2);
-    await manager.disconnectAll();
-    expect(manager.getConnectedServers()).toEqual([]);
-  });
-
-  it("handles empty config gracefully", async () => {
-    await manager.connectAll({ mcpServers: {} });
-    expect(manager.getConnectedServers()).toEqual([]);
-    expect(manager.getTools()).toEqual([]);
-  });
-
-  it("reconnects when connecting to an already-connected server name", async () => {
-    await manager.connectOne("srv", { type: "stdio", command: "node" });
-    expect(manager.getConnectedServers()).toEqual(["srv"]);
-
-    // Connect again with same name — should replace
-    await manager.connectOne("srv", { type: "remote", url: "https://example.com/mcp" });
-    expect(manager.getConnectedServers()).toEqual(["srv"]);
-    expect(manager.getTools()).toHaveLength(2);
-  });
-
-  it("logs failures but continues connecting other servers", async () => {
-    const logs: string[] = [];
-    // Patch Client.connect to fail for a specific transport
-    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    const origConnect = Client.prototype.connect;
-    let callCount = 0;
-    Client.prototype.connect = async function (transport: unknown) {
-      callCount++;
-      if (callCount === 1) throw new Error("Connection refused");
-      return origConnect.call(
-        this,
-        transport as import("@modelcontextprotocol/sdk/shared/transport.js").Transport,
-      );
+  it("returns one terminal result without losing content or structured values", async () => {
+    await manager.connectOne("server", { type: "stdio", command: "server" });
+    const result: CallToolResult = {
+      content: [
+        { type: "text", text: "done" },
+        { type: "audio", data: "YXVkaW8=", mimeType: "audio/wav" },
+      ],
+      structuredContent: false,
+      isError: true,
     };
+    clients[0].callTool.mockResolvedValueOnce(result);
 
-    try {
-      await manager.connectAll(
-        {
-          mcpServers: {
-            failing: { type: "stdio", command: "bad-command" },
-            working: { type: "stdio", command: "good-command" },
-          },
-        },
-        (msg) => logs.push(msg),
-      );
+    const terminal = await manager.callTool("server", "z_tool", { value: 1 });
 
-      // The working server should still be connected
-      expect(manager.getConnectedServers()).toContain("working");
-      expect(logs.some((l) => l.includes("Failed to connect") && l.includes("failing"))).toBe(true);
-    } finally {
-      Client.prototype.connect = origConnect;
-    }
+    expect(terminal).toEqual({ kind: "terminal", result });
+    expect(clients[0].callTool).toHaveBeenCalledWith(
+      { name: "z_tool", arguments: { value: 1 } },
+      expect.objectContaining({ timeout: 60_000, maxTotalTimeout: 600_000 }),
+    );
   });
 
-  it("updates tools when list_changed notification fires", async () => {
+  it("keeps thrown protocol or transport failures distinct from terminal results", async () => {
+    await manager.connectOne("server", { type: "stdio", command: "server" });
+    clients[0].callTool.mockRejectedValueOnce(new Error("transport disconnected"));
+
+    await expect(manager.callTool("server", "z_tool", {})).rejects.toThrow(
+      "transport disconnected",
+    );
+  });
+
+  it("refreshes and sorts tools after a list_changed notification", async () => {
+    await manager.connectOne("server", { type: "stdio", command: "server" });
+    clientOptions[0].listChanged?.tools?.onChanged(null, [tool("later"), tool("earlier")]);
+
+    expect(manager.getToolsForServer("server").map((entry) => entry.name)).toEqual([
+      "earlier",
+      "later",
+    ]);
+  });
+
+  it("logs one failed connection while retaining successful connections", async () => {
     const logs: string[] = [];
-    await manager.connectAll({ mcpServers: { srv: { type: "stdio", command: "echo" } } }, (msg) =>
-      logs.push(msg),
+    const failingManager = new McpClientManager({
+      clientFactory: () => {
+        const client = new FakeClient();
+        if (clients.length === 0) {
+          client.connect.mockRejectedValueOnce(new Error("connection refused"));
+        }
+        clients.push(client);
+        return client as unknown as Client;
+      },
+      transportFactory: () => fakeTransport,
+    });
+
+    await failingManager.connectAll(
+      {
+        mcpServers: {
+          failing: { type: "stdio", command: "bad" },
+          working: { type: "stdio", command: "good" },
+        },
+      },
+      (message) => logs.push(message),
     );
 
-    expect(manager.getToolsForServer("srv")).toHaveLength(2);
+    expect(failingManager.getConnectedServers()).toEqual(["working"]);
+    expect(logs).toContain('[mcp] Failed to connect to "failing": connection refused');
+  });
 
-    // Simulate a tools/list_changed notification via the mock
-    const client = manager.getClient("srv") as unknown as {
-      _simulateToolsChanged: (tools: unknown[]) => void;
-    };
-    client._simulateToolsChanged([
-      {
-        name: "new_tool",
-        description: "A dynamically added tool",
-        inputSchema: { type: "object", properties: {} },
-      },
-    ]);
+  it("replaces and closes an existing connection with the same name", async () => {
+    await manager.connectOne("server", { type: "stdio", command: "one" });
+    await manager.connectOne("server", { type: "stdio", command: "two" });
 
-    expect(manager.getToolsForServer("srv")).toHaveLength(1);
-    expect(manager.getToolsForServer("srv")[0].name).toBe("new_tool");
-    expect(logs.some((l) => l.includes("Tools updated"))).toBe(true);
+    expect(clients[0].close).toHaveBeenCalledOnce();
+    expect(manager.getConnectedServers()).toEqual(["server"]);
   });
 });
+
+class FakeClient {
+  connect = vi.fn(async () => undefined);
+  close = vi.fn(async () => undefined);
+  callTool = vi.fn<() => Promise<CallToolResult>>();
+  listTools = vi.fn(async () => ({
+    tools: [tool("z_tool"), tool("a_tool", nestedSchema)],
+  }));
+
+  getProtocolEra(): "modern" {
+    return "modern";
+  }
+
+  getDiscoverResult() {
+    return {
+      supportedVersions: ["2026-07-28"],
+      capabilities: { tools: {} },
+    };
+  }
+}
+
+function tool(name: string, inputSchema: Tool["inputSchema"] = { type: "object" }): Tool {
+  return {
+    name,
+    inputSchema,
+    annotations: { readOnlyHint: true },
+  };
+}
+
+const fakeTransport: Transport = {
+  start: vi.fn(async () => undefined),
+  send: vi.fn(async () => undefined),
+  close: vi.fn(async () => undefined),
+};

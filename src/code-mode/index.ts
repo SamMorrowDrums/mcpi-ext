@@ -160,6 +160,7 @@ export class CodeModeManager {
     // Refresh eligible tools in case MCP servers changed since initialization
     this.refresh();
 
+    const manager = this.mcpManager;
     const toolNames = this.eligibleTools.map((t) => t.name);
 
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {
@@ -168,36 +169,8 @@ export class CodeModeManager {
         throw new Error(`Tool "${toolName}" not found in code mode eligible tools`);
       }
 
-      const client = this.mcpManager?.getClient(tool.serverName);
-      if (!client) {
-        throw new Error(`MCP server "${tool.serverName}" is not connected`);
-      }
-
-      const result = await client.callTool({ name: toolName, arguments: args });
-
-      // Prefer structuredContent (typed output) over raw content
-      if (result.structuredContent) {
-        return result.structuredContent;
-      }
-
-      // Fall back to parsing text content
-      if (Array.isArray(result.content)) {
-        const textParts = result.content
-          .filter(
-            (c): c is { type: string; text: string } =>
-              typeof c === "object" && c !== null && "text" in c,
-          )
-          .map((c) => c.text);
-
-        const combined = textParts.join("\n");
-        try {
-          return JSON.parse(combined);
-        } catch {
-          return combined;
-        }
-      }
-
-      return result;
+      const terminal = await manager.callTool(tool.serverName, toolName, args);
+      return terminal.result;
     };
 
     return executeInSandbox(code, toolNames, dispatch, {

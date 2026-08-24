@@ -13,6 +13,12 @@ flowchart TD
 
 The RPC server lives in the extension process, started on `session_start` and stopped on `session_shutdown`. The CLI binary uses `fetch` to call it.
 
+Tool execution returns the same terminal MCP `CallToolResult` used by direct tools
+and Code Mode. Text, image, audio, resource links, embedded resources, arbitrary
+JSON `structuredContent`, and `isError` are retained through the provider boundary.
+Protocol and transport failures remain rejected RPC calls rather than being
+converted into successful-looking tool results.
+
 ## Progressive discovery
 
 The agent pays only the tokens it needs:
