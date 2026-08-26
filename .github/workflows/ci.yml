@@ -15,16 +15,18 @@ permissions:
   models: read
 
 jobs:
-  ci:
-    name: Lint, Build & Test
+  quality:
+    name: Lint & format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v4
 
+      # npm ci installs exactly what the lockfile pins, so a drifted or
+      # hand-edited lockfile fails here instead of silently resolving.
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: mise run lint
@@ -37,6 +39,40 @@ jobs:
       - name: Check formatting
         run: mise run format:check
 
+      # The published tree must stay clean. Dev-only advisories are reported
+      # but do not fail the build; the accepted set is recorded in DECISIONS.md.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+
+      - name: Audit development dependencies (advisory)
+        run: npm audit || true
+
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    env:
+      MISE_NODE_VERSION: ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+
+      - name: Report runtime
+        run: node --version && npm --version
+
+      - name: Install dependencies
+        run: npm ci
+
+      # isolated-vm is optional, so npm ci can skip it without failing. The
+      # matrix exists to prove the prebuilt addon resolves on both supported
+      # ABIs (Node 22 = modules 127, Node 24 = modules 137).
+      - name: Verify the optional native addon loaded
+        run: node -e "const ivm=require('isolated-vm');new ivm.Isolate().dispose();console.log('isolated-vm '+require('isolated-vm/package.json').version+' ok on modules '+process.versions.modules)"
+
       - name: Type-check
         run: mise run check
 
@@ -48,3 +84,32 @@ jobs:
 
       - name: MCP integration smoke test
         run: mise run test:integration
+
+  package:
+    name: Package (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    needs: [test]
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    env:
+      MISE_NODE_VERSION: ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Builds, packs, installs the tarball into a throwaway project and drives
+      # the installed artefact: exports map, pinned deps, sandbox degradation,
+      # and both MCP discovery contracts.
+      - name: Verify the published package
+        run: node scripts/verify-package.mjs
+
+      # Registry-dependent checks are deferred to the publish workflow, which is
+      # the only place their answers can change the outcome.
+      - name: Release preflight
+        run: node scripts/release-check.mjs --offline
