@@ -20,6 +20,34 @@ describe("mcpi-ext", () => {
     expect(typeof mod.default).toBe("function");
   });
 
+  it("reports bash available only when it is active", async () => {
+    const { detectBashState } = await import("./index.js");
+    const active = {
+      getActiveTools: () => ["bash", "code_execute"],
+    } as unknown as Parameters<typeof detectBashState>[0];
+    const disabled = {
+      getActiveTools: () => ["code_execute"],
+      getAllTools: () => [{ name: "bash" }],
+    } as unknown as Parameters<typeof detectBashState>[0];
+
+    expect(detectBashState(active)).toEqual({ kind: "registered", toolName: "bash" });
+    expect(detectBashState(disabled)).toEqual({ kind: "absent" });
+  });
+
+  it("does not mistake an unavailable active-tool registry for absent bash", async () => {
+    const { detectBashState } = await import("./index.js");
+    const pi = {
+      getActiveTools: () => {
+        throw new Error("active tools unavailable");
+      },
+    } as unknown as Parameters<typeof detectBashState>[0];
+
+    expect(detectBashState(pi)).toEqual({
+      kind: "undiscoverable",
+      reason: "active tools unavailable",
+    });
+  });
+
   it("registers code tools before any MCP servers connect and executes pure computation", async () => {
     const { default: registerExtension } = await import("./index.js");
     const registeredTools: RegisteredTool[] = [];

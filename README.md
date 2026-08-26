@@ -64,7 +64,7 @@ Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/t
 
 > _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
 
-[`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks JSON-RPC to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. Each step pays only the tokens it needs.
+[`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks authenticated bridge protocol v1 to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. The same policy-backed bridge lists and reads ordinary MCP resources, including binary `--out` files, while keeping `skill://` and SEP-2640-declared skill resources isolated behind `load_skill`.
 
 📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
 📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
@@ -125,7 +125,9 @@ MCP servers connected, because pure computation needs no server.
 `tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done.
 Also the way to discover what's on a server you haven't used before. It is a program, not a tool:
 the agent invokes the bash tool with a `tool-cli ...` command. It is advertised as available only
-after its local RPC server has actually started.
+after bash is active and the local server completes an authenticated compatible v1 handshake;
+inherited credentials are masked and usage docs remain withheld on startup, timeout, auth, or
+major-version failure.
 
 **bash + external programs** — the substrate the other three lack. It is the only facility that can
 create, modify, or inspect files and artifacts, and the only one that runs the host's real programs.
@@ -179,7 +181,7 @@ All three tiers route MCP tool calls back through the extension process, and eve
 - **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and Code Mode sandbox calls alike. Full observability without instrumentation.
 - **Human-in-the-loop happens at one point** — `McpPolicy` checks tool annotations (`readOnlyHint`, `destructiveHint`) and gates non-read-only calls through user confirmation, regardless of which tier initiated them. A tool unlocked by an approved skill grant is not re-prompted.
 - **Undiscovered and gated tools never reach upstream** — the policy verifies the tool exists in the discovered set and is not skill-gated before contacting the server, so naming a hidden tool over the authenticated RPC socket fails at the boundary.
-- **Resource reads use the same policy** — `skill://` reads are origin-bound to the server that advertised them, and a discovery pass cannot authorize a skill-load read.
+- **Resource operations use the same policy** — tool-cli can list templates and read ordinary text/binary resources, while every `skill://` URI and SEP-2640-declared resource remains isolated; skill reads are origin-bound, and a discovery pass cannot authorize a skill-load read.
 - **Every decision is audited** — allowed and denied operations alike are recorded with their source (`proxy`, `code-mode`, `tool-cli`, `skill-discovery`, `skill-load`).
 
 > _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._

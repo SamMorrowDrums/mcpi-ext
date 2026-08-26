@@ -68,13 +68,11 @@ export function renderTerminalCallToolResult(
   };
 }
 
-/**
- * tool-cli 0.3's public type predates arbitrary JSON structuredContent. The RPC
- * server serializes the value unchanged; keep this assertion isolated at that
- * compatibility boundary until tool-cli widens its public contract.
- */
 export function toToolCliCallToolResult(terminal: TerminalCallToolResult): ToolCliCallToolResult {
-  return terminal.result as ToolCliCallToolResult;
+  return {
+    ...terminal.result,
+    content: [...terminal.result.content],
+  };
 }
 
 function formatResourceLink(

@@ -1,4 +1,8 @@
-import type { ReadResourceResult, Resource } from "@modelcontextprotocol/client";
+import type {
+  ReadResourceResult,
+  Resource,
+  ResourceTemplateType,
+} from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult, type TerminalCallToolResult } from "./call-tool-result.js";
 import type { McpTool } from "./client-manager.js";
@@ -56,6 +60,7 @@ interface Harness {
   gateway: {
     callTool: ReturnType<typeof vi.fn>;
     listResources: ReturnType<typeof vi.fn>;
+    listResourceTemplates: ReturnType<typeof vi.fn>;
     readResource: ReturnType<typeof vi.fn>;
   };
   confirm: ReturnType<typeof vi.fn>;
@@ -67,6 +72,7 @@ function harness(
     servers?: string[];
     approval?: boolean | undefined;
     resources?: Record<string, Resource[]>;
+    resourceTemplates?: Record<string, ResourceTemplateType[]>;
     resourceBody?: string;
   } = {},
 ): Harness {
@@ -81,6 +87,11 @@ function harness(
   const listResources = vi
     .fn<(server: string) => Promise<Resource[]>>()
     .mockImplementation((server: string) => Promise.resolve(options.resources?.[server] ?? []));
+  const listResourceTemplates = vi
+    .fn<(server: string) => Promise<ResourceTemplateType[]>>()
+    .mockImplementation((server: string) =>
+      Promise.resolve(options.resourceTemplates?.[server] ?? []),
+    );
   const readResource = vi
     .fn<(...args: unknown[]) => Promise<ReadResourceResult>>()
     .mockImplementation((_server: unknown, uri: unknown) =>
@@ -95,6 +106,8 @@ function harness(
     getToolsForServer: (name) => toolsByServer[name] ?? [],
     callTool: callTool as unknown as McpPolicyGateway["callTool"],
     listResources: listResources as unknown as McpPolicyGateway["listResources"],
+    listResourceTemplates:
+      listResourceTemplates as unknown as McpPolicyGateway["listResourceTemplates"],
     readResource: readResource as unknown as McpPolicyGateway["readResource"],
   };
 
@@ -106,7 +119,11 @@ function harness(
     ...("approval" in options ? { approvals: { confirm } } : {}),
   });
 
-  return { policy, gateway: { callTool, listResources, readResource }, confirm };
+  return {
+    policy,
+    gateway: { callTool, listResources, listResourceTemplates, readResource },
+    confirm,
+  };
 }
 
 async function expectDenied(promise: Promise<unknown>, reason: string): Promise<McpPolicyError> {
@@ -761,6 +778,187 @@ describe("resource authorization", () => {
     expect(resources.map((r) => r.uri)).toEqual([alphaSkillUri]);
   });
 
+  it("lists only non-skill resources for tool-cli and crosses policy once", async () => {
+    const { policy, gateway } = resourceHarness();
+
+    const resources = await policy.listResources({
+      source: "tool-cli",
+      serverName: "alpha",
+    });
+
+    expect(resources).toEqual([{ uri: "file:///etc/passwd", name: "not-a-skill" }]);
+    expect(gateway.listResources).toHaveBeenCalledOnce();
+    expect(policy.getAuditLog()).toEqual([
+      expect.objectContaining({
+        source: "tool-cli",
+        operation: "resource-list",
+        serverName: "alpha",
+        decision: "allowed",
+      }),
+    ]);
+  });
+
+  it("isolates skill resource templates from tool-cli", async () => {
+    const { policy, gateway } = harness({
+      tools: { alpha: [readOnlyTool] },
+      resourceTemplates: {
+        alpha: [
+          {
+            uriTemplate: "file:///logs/{date}.txt",
+            name: "logs",
+            _meta: { order: 0 },
+          },
+          { uriTemplate: "skill://hidden/{path}", name: "hidden" },
+        ],
+      },
+    });
+
+    const templates = await policy.listResourceTemplates({
+      source: "tool-cli",
+      serverName: "alpha",
+    });
+
+    expect(templates).toEqual([
+      {
+        uriTemplate: "file:///logs/{date}.txt",
+        name: "logs",
+        _meta: { order: 0 },
+      },
+    ]);
+    expect(gateway.listResourceTemplates).toHaveBeenCalledOnce();
+    expect(policy.getAuditLog()).toEqual([
+      expect.objectContaining({
+        source: "tool-cli",
+        operation: "resource-templates",
+        decision: "allowed",
+      }),
+    ]);
+  });
+
+  it("isolates skill URI schemes case-insensitively", async () => {
+    const { policy, gateway } = harness({
+      tools: { alpha: [readOnlyTool] },
+      resources: {
+        alpha: [
+          { uri: "SKILL://hidden/SKILL.md", name: "hidden" },
+          { uri: "file:///visible.txt", name: "visible" },
+        ],
+      },
+      resourceTemplates: {
+        alpha: [
+          { uriTemplate: "Skill://hidden/{path}", name: "hidden" },
+          { uriTemplate: "file:///visible/{path}", name: "visible" },
+        ],
+      },
+    });
+
+    await expect(
+      policy.listResources({ source: "tool-cli", serverName: "alpha" }),
+    ).resolves.toEqual([{ uri: "file:///visible.txt", name: "visible" }]);
+    await expect(
+      policy.listResourceTemplates({ source: "tool-cli", serverName: "alpha" }),
+    ).resolves.toEqual([{ uriTemplate: "file:///visible/{path}", name: "visible" }]);
+    await expectDenied(
+      policy.readResource({
+        source: "tool-cli",
+        serverName: "alpha",
+        uri: "sKiLl://hidden/SKILL.md",
+      }),
+      "resource_not_discovered",
+    );
+    expect(gateway.readResource).not.toHaveBeenCalled();
+  });
+
+  it("isolates SEP-2640 skill-owned resources under arbitrary URI schemes", async () => {
+    const skillUri = "https://skills.example/weather/SKILL.md";
+    const referenceUri = "https://skills.example/weather/reference.md";
+    const { policy, gateway } = harness({
+      tools: { alpha: [readOnlyTool] },
+      resources: {
+        alpha: [
+          { uri: skillUri, name: "weather" },
+          { uri: referenceUri, name: "reference" },
+          { uri: "https://docs.example/visible.md", name: "visible" },
+        ],
+      },
+    });
+    policy.registerSkills([
+      {
+        name: "weather",
+        uri: skillUri,
+        serverName: "alpha",
+        allowedTools: [],
+      },
+    ]);
+    policy.registerSkillResources("alpha", skillUri, [skillUri, referenceUri]);
+
+    await expect(
+      policy.listResources({ source: "tool-cli", serverName: "alpha" }),
+    ).resolves.toEqual([{ uri: "https://docs.example/visible.md", name: "visible" }]);
+    await expectDenied(
+      policy.readResource({
+        source: "tool-cli",
+        serverName: "alpha",
+        uri: referenceUri,
+      }),
+      "resource_not_discovered",
+    );
+    expect(gateway.readResource).not.toHaveBeenCalled();
+  });
+
+  it("refuses an ordinary tool-cli read whose response contains a skill resource", async () => {
+    const { policy, gateway } = resourceHarness();
+    gateway.readResource.mockResolvedValueOnce({
+      contents: [
+        { uri: "file:///ordinary.txt", text: "ordinary" },
+        { uri: "SKILL://hidden/SKILL.md", text: "hidden instructions" },
+      ],
+    });
+
+    await expectDenied(
+      policy.readResource({
+        source: "tool-cli",
+        serverName: "alpha",
+        uri: "file:///ordinary.txt",
+      }),
+      "resource_not_discovered",
+    );
+    expect(gateway.readResource).toHaveBeenCalledOnce();
+    expect(policy.getAuditLog()).toEqual([
+      expect.objectContaining({
+        source: "tool-cli",
+        operation: "resource",
+        decision: "denied",
+      }),
+    ]);
+  });
+
+  it("allows ordinary tool-cli resource reads but refuses skill:// before dispatch", async () => {
+    const { policy, gateway } = resourceHarness();
+
+    await expect(
+      policy.readResource({
+        source: "tool-cli",
+        serverName: "alpha",
+        uri: "file:///ordinary.txt",
+      }),
+    ).resolves.toEqual({
+      contents: [{ uri: "file:///ordinary.txt", text: "body" }],
+    });
+    expect(gateway.readResource).toHaveBeenCalledOnce();
+
+    await expectDenied(
+      policy.readResource({
+        source: "tool-cli",
+        serverName: "alpha",
+        uri: alphaSkillUri,
+      }),
+      "resource_not_discovered",
+    );
+    expect(gateway.readResource).toHaveBeenCalledOnce();
+    expect(policy.getAuditLog().map((record) => record.decision)).toEqual(["allowed", "denied"]);
+  });
+
   it("refuses a resource read for a disconnected server", async () => {
     const { policy, gateway } = resourceHarness();
 
@@ -1008,6 +1206,7 @@ describe("audit context", () => {
         getToolsForServer: () => [readOnlyTool],
         callTool: () => Promise.resolve(adaptTerminalCallToolResult(PROTOCOL_RESULT)),
         listResources: () => Promise.resolve([]),
+        listResourceTemplates: () => Promise.resolve([]),
         readResource: () => Promise.resolve({ contents: [] }),
       },
       approvals: { confirm: () => Promise.resolve(true) },
@@ -1037,6 +1236,7 @@ describe("audit context", () => {
         getToolsForServer: () => [readOnlyTool],
         callTool: () => Promise.resolve(adaptTerminalCallToolResult(PROTOCOL_RESULT)),
         listResources: () => Promise.resolve([]),
+        listResourceTemplates: () => Promise.resolve([]),
         readResource: () => Promise.resolve({ contents: [] }),
       },
       auditLimit: 3,

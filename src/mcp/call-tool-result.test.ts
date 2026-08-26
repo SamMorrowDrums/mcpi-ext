@@ -71,7 +71,7 @@ describe("terminal CallToolResult adapter", () => {
       ),
     ).toBe(true);
     expect(toolCli.structuredContent).toBe(false);
-    expect(toolCli.content).toBe(result.content);
+    expect(toolCli.content).toEqual(result.content);
     expect(toolCli.isError).toBe(true);
   });
 

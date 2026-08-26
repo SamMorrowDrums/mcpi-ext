@@ -1,3 +1,5 @@
+import type { BridgeInfo } from "@sammorrowdrums/tool-cli/client";
+
 /**
  * The model-facing execution facilities mcpi-ext puts in front of an agent.
  *
@@ -60,16 +62,17 @@ export interface SkillsState {
 }
 
 /**
- * tool-cli is only ever advertised as available once its local RPC server has
- * actually started. A failure is carried through so it can be surfaced to the
- * agent with a next step rather than swallowed into silence.
+ * tool-cli is only advertised after its local bridge completes an authenticated
+ * compatible handshake. Failures remain explicit so the prompt has a next step.
  */
 export type ToolCliState =
-  | { kind: "started"; port: number }
+  | { kind: "verified"; port: number; bridgeInfo: BridgeInfo }
   | { kind: "not_started"; reason: string }
-  | { kind: "failed"; reason: string };
+  | { kind: "failed"; reason: string }
+  | { kind: "incompatible"; reason: string }
+  | { kind: "no_bash"; reason: string };
 
-/** Whether the host registered a shell tool, when that is discoverable at all. */
+/** Whether the host currently exposes a shell tool, when that is discoverable at all. */
 export type BashState =
   | { kind: "registered"; toolName: string }
   | { kind: "absent" }
@@ -117,10 +120,24 @@ function codeModeAvailability(active: boolean): FacilityAvailability {
 }
 
 function toolCliAvailability(toolCli: ToolCliState, bash: BashState): FacilityAvailability {
+  if (toolCli.kind === "incompatible") {
+    return {
+      state: "unavailable",
+      detail: `The authenticated tool-cli bridge handshake found an incompatible bridge/client contract: ${toolCli.reason}. TOOL_CLI_PORT and TOOL_CLI_TOKEN were not exposed. Install matching tool-cli and mcpi-ext major versions before retrying.`,
+    };
+  }
+
   if (toolCli.kind === "failed") {
     return {
       state: "unavailable",
-      detail: `The local tool-cli RPC server failed to start: ${toolCli.reason}. MCP tools cannot be reached from the shell this session — use code mode or a skill instead, and tell the user about this startup failure rather than retrying tool-cli.`,
+      detail: `The local tool-cli bridge failed startup or its authenticated handshake: ${toolCli.reason}. MCP tools cannot be reached from the shell this session — use another available facility and report this failure rather than retrying tool-cli blindly.`,
+    };
+  }
+
+  if (toolCli.kind === "no_bash") {
+    return {
+      state: "unavailable",
+      detail: `The tool-cli bridge was not started because bash availability is required and was not confirmed: ${toolCli.reason}. No bridge credentials were exposed.`,
     };
   }
 
@@ -131,18 +148,31 @@ function toolCliAvailability(toolCli: ToolCliState, bash: BashState): FacilityAv
     };
   }
 
-  const started = `The local tool-cli RPC server started on port ${toolCli.port}; TOOL_CLI_PORT and TOOL_CLI_TOKEN are set for commands run with the bash tool.`;
+  const verified =
+    `The local tool-cli bridge started on port ${toolCli.port}, completed an authenticated ` +
+    `${toolCli.bridgeInfo.bridgeProtocol.name} v${toolCli.bridgeInfo.bridgeProtocol.version} handshake, ` +
+    `and reported ${toolCli.bridgeInfo.serverImplementation.name}@${toolCli.bridgeInfo.serverImplementation.version}.`;
 
   // tool-cli is reached through the shell, so a missing shell tool makes a
   // healthy RPC server unusable. Saying "available" here would be a lie.
   if (bash.kind === "absent") {
     return {
       state: "unavailable",
-      detail: `${started} However, no host bash tool is registered, so tool-cli cannot be invoked this session.`,
+      detail: `${verified} However, no host bash tool is active now, so its credentials are not usable through the required invocation path.`,
     };
   }
 
-  return { state: "available", detail: started };
+  if (bash.kind === "undiscoverable") {
+    return {
+      state: "unavailable",
+      detail: `${verified} However, current bash availability is unconfirmed (${bash.reason}), so tool-cli is not advertised as invocable.`,
+    };
+  }
+
+  return {
+    state: "available",
+    detail: `${verified} TOOL_CLI_PORT and TOOL_CLI_TOKEN are set for commands run with the "${bash.toolName}" tool.`,
+  };
 }
 
 function bashAvailability(bash: BashState): FacilityAvailability {
@@ -150,13 +180,13 @@ function bashAvailability(bash: BashState): FacilityAvailability {
     case "registered":
       return {
         state: "available",
-        detail: `The host "${bash.toolName}" tool is registered this session.`,
+        detail: `The host "${bash.toolName}" tool is active this session.`,
       };
     case "absent":
       return {
         state: "unavailable",
         detail:
-          "No host shell tool is registered this session, so shell commands, external programs, and tool-cli cannot run.",
+          "No host shell tool is active this session, so shell commands, external programs, and tool-cli cannot run.",
       };
     case "undiscoverable":
       return {
@@ -232,11 +262,13 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       provides: [
         "An authenticated command-line on-ramp to the same MCP tools the host already authorises, invoked through the host bash tool as `tool-cli ...`.",
         "Progressive discovery: servers, then a server's tools, then one tool's schema, so you read only what you need.",
+        "Policy-authorized MCP resource listing, templates, and reads, including binary output written with `--out`.",
         "Plain text and JSON on stdout, so results compose with jq, grep, pipes, and loops inside the same bash command.",
       ],
       doesNotProvide: [
         "A tool of its own. tool-cli is a program you run with the bash tool, never something you call directly.",
         "Any authority the host has not already granted — every call is re-authorised before it reaches a server.",
+        "Access to `skill://` resources, which remain isolated behind skill discovery and load_skill.",
       ],
       availability: toolCliAvailability(state.toolCli, state.bash),
     },

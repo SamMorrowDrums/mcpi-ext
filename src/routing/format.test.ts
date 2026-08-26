@@ -1,3 +1,4 @@
+import type { BridgeInfo } from "@sammorrowdrums/tool-cli/client";
 import { describe, it, expect } from "vitest";
 import {
   buildExecutionFacilities,
@@ -6,12 +7,44 @@ import {
 } from "./facilities.js";
 import { EXECUTION_ROUTING_TAG, formatExecutionRouting } from "./format.js";
 
-/** Everything working: skills discovered, RPC up, shell registered. */
+const VERIFIED_BRIDGE_INFO: BridgeInfo = {
+  bridgeProtocol: { name: "tool-cli-bridge", major: 1, version: "1.0" },
+  serverImplementation: { name: "@sammorrowdrums/tool-cli", version: "1.0.0" },
+  operations: [
+    "getBridgeInfo",
+    "listServers",
+    "listTools",
+    "describeTool",
+    "callTool",
+    "listResources",
+    "listResourceTemplates",
+    "readResource",
+  ],
+  capabilities: {
+    authentication: { required: true, scheme: "bearer" },
+    tools: {
+      discovery: true,
+      calls: true,
+      inputSchemaValidation: true,
+      jsonSchemaDialect: "https://json-schema.org/draft/2020-12/schema",
+      supportedJsonSchemaDialects: [
+        "https://json-schema.org/draft/2020-12/schema",
+        "https://json-schema.org/draft/2019-09/schema",
+        "http://json-schema.org/draft-07/schema#",
+      ],
+    },
+    resources: { list: true, templates: true, read: true },
+    cancellation: { providerAbortSignal: true },
+  },
+  upstreamMcp: { serverCount: 2 },
+};
+
+/** Everything working: skills discovered, authenticated bridge verified, shell active. */
 function fullState(): ExecutionRoutingState {
   return {
     skills: { count: 3, draftExtensionEnabled: false },
     codeMode: { active: true },
-    toolCli: { kind: "started", port: 51234 },
+    toolCli: { kind: "verified", port: 51234, bridgeInfo: VERIFIED_BRIDGE_INFO },
     bash: { kind: "registered", toolName: "bash" },
   };
 }
@@ -145,10 +178,14 @@ describe("execution routing section", () => {
       expect(skills?.availability.detail).toContain("No MCP skills were discovered");
     });
 
-    it("advertises tool-cli only after the RPC server starts", () => {
-      const started = buildExecutionFacilities(fullState()).find((f) => f.id === "tool_cli");
-      expect(started?.availability.state).toBe("available");
-      expect(started?.availability.detail).toContain("started on port 51234");
+    it("advertises tool-cli only after a compatible authenticated handshake", () => {
+      const verified = buildExecutionFacilities(fullState()).find((f) => f.id === "tool_cli");
+      expect(verified?.availability.state).toBe("available");
+      expect(verified?.availability.detail).toContain("started on port 51234");
+      expect(verified?.availability.detail).toContain(
+        "authenticated tool-cli-bridge v1.0 handshake",
+      );
+      expect(verified?.availability.detail).toContain("@sammorrowdrums/tool-cli@1.0.0");
 
       const notStarted = buildExecutionFacilities(zeroServerState()).find(
         (f) => f.id === "tool_cli",
@@ -166,13 +203,41 @@ describe("execution routing section", () => {
       expect(toolCli?.availability.state).toBe("unavailable");
       // the actual error, plus what to do about it
       expect(toolCli?.availability.detail).toContain("EADDRINUSE: port already bound");
-      expect(toolCli?.availability.detail).toContain("tell the user about this startup failure");
+      expect(toolCli?.availability.detail).toContain("report this failure");
+    });
+
+    it("surfaces bridge incompatibility and keeps credentials unexposed", () => {
+      const facilities = buildExecutionFacilities({
+        ...fullState(),
+        toolCli: {
+          kind: "incompatible",
+          reason: "expected tool-cli-bridge major 1, received major 2",
+        },
+      });
+      const toolCli = facilities.find((f) => f.id === "tool_cli");
+      expect(toolCli?.availability.state).toBe("unavailable");
+      expect(toolCli?.availability.detail).toContain("received major 2");
+      expect(toolCli?.availability.detail).toContain(
+        "TOOL_CLI_PORT and TOOL_CLI_TOKEN were not exposed",
+      );
+    });
+
+    it("reports no-bash startup suppression explicitly", () => {
+      const facilities = buildExecutionFacilities({
+        ...fullState(),
+        toolCli: { kind: "no_bash", reason: "no host bash tool is registered" },
+        bash: { kind: "absent" },
+      });
+      const toolCli = facilities.find((f) => f.id === "tool_cli");
+      expect(toolCli?.availability.state).toBe("unavailable");
+      expect(toolCli?.availability.detail).toContain("was not started");
+      expect(toolCli?.availability.detail).toContain("No bridge credentials were exposed");
     });
 
     it("reports bash from host tool registration", () => {
       const registered = buildExecutionFacilities(fullState()).find((f) => f.id === "bash");
       expect(registered?.availability.state).toBe("available");
-      expect(registered?.availability.detail).toContain('host "bash" tool is registered');
+      expect(registered?.availability.detail).toContain('host "bash" tool is active');
 
       const absent = buildExecutionFacilities({
         ...fullState(),
@@ -189,6 +254,9 @@ describe("execution routing section", () => {
       const bash = facilities.find((f) => f.id === "bash");
       expect(bash?.availability.state).toBe("unknown");
       expect(bash?.availability.detail).toContain("getAllTools is not a function");
+      const toolCli = facilities.find((f) => f.id === "tool_cli");
+      expect(toolCli?.availability.state).toBe("unavailable");
+      expect(toolCli?.availability.detail).toContain("current bash availability is unconfirmed");
     });
 
     it("marks tool-cli unavailable when no shell can run it", () => {
@@ -200,7 +268,7 @@ describe("execution routing section", () => {
       });
       const toolCli = facilities.find((f) => f.id === "tool_cli");
       expect(toolCli?.availability.state).toBe("unavailable");
-      expect(toolCli?.availability.detail).toContain("no host bash tool is registered");
+      expect(toolCli?.availability.detail).toContain("no host bash tool is active");
     });
 
     it("never silently omits an unavailable facility", () => {

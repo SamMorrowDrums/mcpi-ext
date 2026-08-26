@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { ReadResourceResult, Resource } from "@modelcontextprotocol/client";
+import type {
+  ReadResourceResult,
+  Resource,
+  ResourceTemplateType,
+} from "@modelcontextprotocol/client";
 import type {
   DirectoryReadResult,
   SkillsGetResult,
@@ -25,7 +29,7 @@ export type McpCallSource = "proxy" | "code-mode" | "tool-cli";
  * confused with one authorized by the legacy `skill://…/SKILL.md` convention,
  * and so the audit log says which contract produced each read.
  */
-export type McpResourceSource = "skill-discovery" | "skill-load" | "skills-extension";
+export type McpResourceSource = "skill-discovery" | "skill-load" | "skills-extension" | "tool-cli";
 
 export type McpPolicyDenialReason =
   | "server_not_connected"
@@ -82,6 +86,8 @@ export interface McpAuditRecord {
   readonly operation:
     | "tool"
     | "resource"
+    | "resource-list"
+    | "resource-templates"
     | "skill-grant"
     | "skill-list"
     | "skill-get"
@@ -128,6 +134,7 @@ export interface McpPolicyGateway {
     signal?: AbortSignal,
   ): Promise<TerminalCallToolResult>;
   listResources(serverName: string, signal?: AbortSignal): Promise<Resource[]>;
+  listResourceTemplates(serverName: string, signal?: AbortSignal): Promise<ResourceTemplateType[]>;
   readResource(serverName: string, uri: string, signal?: AbortSignal): Promise<ReadResourceResult>;
 
   /**
@@ -178,6 +185,12 @@ export interface McpResourceReadRequest {
    * per-skill instead of pooling every declared file on the server.
    */
   skillUri?: string;
+  signal?: AbortSignal;
+}
+
+export interface McpResourceListRequest {
+  source: "tool-cli";
+  serverName: string;
   signal?: AbortSignal;
 }
 
@@ -410,7 +423,7 @@ export class McpPolicy {
         `MCP server "${skill.serverName}" offers skill "${skill.name}" (${skill.uri}).\n` +
         `Approving activates these tools for this session:\n` +
         skill.allowedTools.map((tool) => `  - ${tool}`).join("\n"),
-      ...(signal ? { signal } : {}),
+      ...(signal !== undefined ? { signal } : {}),
     });
 
     if (granted === true) {
@@ -474,7 +487,7 @@ export class McpPolicy {
         source,
         serverName,
         toolName,
-        ...(alternatives ? { alternatives } : {}),
+        ...(alternatives !== undefined ? { alternatives } : {}),
       });
     };
 
@@ -545,7 +558,7 @@ export class McpPolicy {
         toolName,
         title: `Run MCP tool "${toolName}"?`,
         message: formatToolApprovalMessage(source, serverName, tool, args),
-        ...(signal ? { signal } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       });
 
       if (approved !== true) {
@@ -585,7 +598,7 @@ export class McpPolicy {
       serverName,
       toolName,
       decision: "allowed",
-      ...(approval ? { approval } : {}),
+      ...(approval !== undefined ? { approval } : {}),
     });
     return terminal;
   }
@@ -715,6 +728,80 @@ export class McpPolicy {
   // ---------------------------------------------------------------------------
 
   /**
+   * List the resources visible to tool-cli.
+   *
+   * `skill://` is a separate authorization domain: those resources carry
+   * workflow instructions and grants, so they remain reachable only through
+   * skill discovery/load and can never be enumerated through the shell bridge.
+   */
+  async listResources(request: McpResourceListRequest): Promise<Resource[]> {
+    const { source, serverName, signal } = request;
+    const deny = (reason: McpPolicyDenialReason, message: string) => {
+      this.record({
+        source,
+        operation: "resource-list",
+        serverName,
+        decision: "denied",
+        reason,
+      });
+      return new McpPolicyError({ reason, message, source, serverName });
+    };
+
+    if (!this.gateway.getConnectedServers().includes(serverName)) {
+      throw deny("server_not_connected", `MCP server "${serverName}" is not connected.`);
+    }
+    if (signal?.aborted) {
+      throw deny("cancelled", `Listing resources on "${serverName}" was cancelled.`);
+    }
+
+    const resources = await this.gateway.listResources(serverName, signal);
+    const visible = resources.filter(
+      (resource) => !this.isSkillOwnedResource(serverName, resource.uri),
+    );
+    this.record({
+      source,
+      operation: "resource-list",
+      serverName,
+      decision: "allowed",
+    });
+    return visible;
+  }
+
+  /** List policy-visible resource templates for tool-cli. */
+  async listResourceTemplates(request: McpResourceListRequest): Promise<ResourceTemplateType[]> {
+    const { source, serverName, signal } = request;
+    const deny = (reason: McpPolicyDenialReason, message: string) => {
+      this.record({
+        source,
+        operation: "resource-templates",
+        serverName,
+        decision: "denied",
+        reason,
+      });
+      return new McpPolicyError({ reason, message, source, serverName });
+    };
+
+    if (!this.gateway.getConnectedServers().includes(serverName)) {
+      throw deny("server_not_connected", `MCP server "${serverName}" is not connected.`);
+    }
+    if (signal?.aborted) {
+      throw deny("cancelled", `Listing resource templates on "${serverName}" was cancelled.`);
+    }
+
+    const templates = await this.gateway.listResourceTemplates(serverName, signal);
+    const visible = templates.filter(
+      (template) => !this.isSkillOwnedResource(serverName, template.uriTemplate),
+    );
+    this.record({
+      source,
+      operation: "resource-templates",
+      serverName,
+      decision: "allowed",
+    });
+    return visible;
+  }
+
+  /**
    * List a server's skill resources and remember them as this pass's discovery
    * candidates. Only URIs seen here become readable under `skill-discovery`.
    */
@@ -735,9 +822,31 @@ export class McpPolicy {
       });
     }
 
+    if (signal?.aborted) {
+      this.record({
+        source: "skill-discovery",
+        operation: "resource-list",
+        serverName,
+        decision: "denied",
+        reason: "cancelled",
+      });
+      throw new McpPolicyError({
+        reason: "cancelled",
+        message: `Listing skill resources on "${serverName}" was cancelled.`,
+        source: "skill-discovery",
+        serverName,
+      });
+    }
+
     const resources = await this.gateway.listResources(serverName, signal);
     const skillResources = resources.filter(isSkillResourceUri);
     this.discoveredUrisByServer.set(serverName, new Set(skillResources.map((r) => r.uri)));
+    this.record({
+      source: "skill-discovery",
+      operation: "resource-list",
+      serverName,
+      decision: "allowed",
+    });
     return skillResources;
   }
 
@@ -771,7 +880,14 @@ export class McpPolicy {
     // outer bound of what it may read. SEP-2640 reads are authorized by exact
     // membership in a skill's declared `resources` set — strictly narrower — so
     // they do not need, and must not be limited by, a scheme heuristic.
-    if (source !== "skills-extension" && !uri.startsWith("skill://")) {
+    if (source === "tool-cli" && this.isSkillOwnedResource(serverName, uri)) {
+      throw deny(
+        "resource_not_discovered",
+        `Resource ${uri} belongs to the skill authorization surface and cannot be read through tool-cli. Use load_skill instead.`,
+      );
+    }
+
+    if (source !== "skills-extension" && source !== "tool-cli" && !hasSkillScheme(uri)) {
       throw deny(
         "resource_not_discovered",
         `Resource ${uri} is outside the skill resource surface this host authorizes.`,
@@ -793,9 +909,10 @@ export class McpPolicy {
       }
     }
 
-    const allowed = this.allowedReadUris(source, serverName, skillUri);
+    const allowed =
+      source === "tool-cli" ? undefined : this.allowedReadUris(source, serverName, skillUri);
 
-    if (!allowed.has(uri)) {
+    if (allowed !== undefined && !allowed.has(uri)) {
       // Distinguish "belongs to a different origin" so the denial is actionable.
       const otherOrigin = this.findOtherOrigin(uri, serverName, source);
       if (otherOrigin) {
@@ -817,6 +934,17 @@ export class McpPolicy {
     }
 
     const result = await this.gateway.readResource(serverName, uri, signal);
+    if (source === "tool-cli") {
+      const hidden = result.contents.find((content) =>
+        this.isSkillOwnedResource(serverName, content.uri),
+      );
+      if (hidden !== undefined) {
+        throw deny(
+          "resource_not_discovered",
+          `MCP server "${serverName}" returned skill-owned resource ${hidden.uri} while reading ${uri}; the entire response was refused. Use load_skill for skill resources.`,
+        );
+      }
+    }
     this.record({
       source,
       operation: "resource",
@@ -846,7 +974,7 @@ export class McpPolicy {
   }
 
   private allowedReadUris(
-    source: McpResourceSource,
+    source: Exclude<McpResourceSource, "tool-cli">,
     serverName: string,
     skillUri: string | undefined,
   ): Set<string> {
@@ -863,11 +991,23 @@ export class McpPolicy {
     return this.skillUrisByServer.get(serverName) ?? new Set<string>();
   }
 
+  private isSkillOwnedResource(serverName: string, uri: string): boolean {
+    if (hasSkillScheme(uri) || this.skillUrisByServer.get(serverName)?.has(uri) === true) {
+      return true;
+    }
+    for (const [key, resourceUris] of this.extensionResourceUris) {
+      const owner = key.slice(0, key.indexOf(NUL));
+      if (owner === serverName && resourceUris.has(uri)) return true;
+    }
+    return false;
+  }
+
   private findOtherOrigin(
     uri: string,
     serverName: string,
     source: McpResourceSource,
   ): string | undefined {
+    if (source === "tool-cli") return undefined;
     if (source === "skills-extension") {
       // Extension allowlists are keyed by `serverName\0skillUri`, so a match on
       // another origin is what turns "not listed here" into "listed elsewhere".
@@ -926,7 +1066,7 @@ export class McpPolicy {
       source: "skills-extension",
       operation,
       serverName,
-      ...(uri ? { uri } : {}),
+      ...(uri !== undefined ? { uri } : {}),
       decision: "denied",
       reason,
     });
@@ -935,7 +1075,7 @@ export class McpPolicy {
       message,
       source: "skills-extension",
       serverName,
-      ...(uri ? { uri } : {}),
+      ...(uri !== undefined ? { uri } : {}),
     });
   }
 
@@ -973,7 +1113,11 @@ export function isReadOnlyToolCall(tool: McpTool): boolean {
 }
 
 function isSkillResourceUri(resource: Resource): boolean {
-  return resource.uri.startsWith("skill://") && resource.uri.endsWith("/SKILL.md");
+  return hasSkillScheme(resource.uri) && resource.uri.endsWith("/SKILL.md");
+}
+
+function hasSkillScheme(uri: string): boolean {
+  return uri.slice(0, "skill://".length).toLowerCase() === "skill://";
 }
 
 function extensionResourceKey(serverName: string, skillUri: string): string {

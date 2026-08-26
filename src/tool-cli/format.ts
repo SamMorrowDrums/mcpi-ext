@@ -1,3 +1,5 @@
+import type { BashState, ToolCliState } from "../routing/facilities.js";
+
 /**
  * Usage documentation for tool-cli.
  *
@@ -11,14 +13,17 @@
  * nothing is silently omitted.
  */
 export interface ToolCliPromptState {
-  /** True only after the local tool-cli RPC server started successfully. */
-  available: boolean;
-  /** Connected MCP servers, reported to the agent verbatim. */
-  serverCount: number;
+  /** Authenticated bridge state, including the verified v1 handshake metadata. */
+  toolCli: ToolCliState;
+  /** tool-cli is a shell program, so a registered bash tool is mandatory. */
+  bash: BashState;
 }
 
 export function formatToolCliForPrompt(state: ToolCliPromptState): string {
-  if (!state.available) return "";
+  if (state.toolCli.kind !== "verified" || state.bash.kind !== "registered") return "";
+
+  const { bridgeInfo } = state.toolCli;
+  const upstreamServerCount = readUpstreamServerCount(bridgeInfo.upstreamMcp);
 
   return `
 
@@ -39,6 +44,12 @@ Discovery (progressive — only fetch what you need):
 Calling tools:
   tool-cli <server> <tool> '{"key":"value"}' # Call a tool with JSON arguments
   tool-cli <server> <tool> '{}' --out /tmp/result.json  # Save large output to file
+
+Resources:
+  tool-cli resource list --server <server>
+  tool-cli resource templates --server <server>
+  tool-cli resource read --server <server> <uri>
+  tool-cli resource read --server <server> <uri> --out /tmp/resource.bin
 
 tool-cli outputs plain text or JSON. When a tool provides structured output (typed JSON),
 tool-cli returns it directly as JSON — use \`jq\` to query fields.
@@ -65,6 +76,21 @@ Because tool-cli runs inside a bash command, filtering, joining, or writing resu
 ordinary programs is part of the same invocation — prefer one piped command over many separate
 calls when processing collections.
 Errors go to stderr with exit code 1 — use \`&&\` or \`set -e\` for safe chaining.
-${state.serverCount} MCP server(s) currently connected.
+Verified bridge: ${bridgeInfo.serverImplementation.name}@${bridgeInfo.serverImplementation.version};
+protocol ${bridgeInfo.bridgeProtocol.name} v${bridgeInfo.bridgeProtocol.version}; authenticated bearer RPC;
+operations ${bridgeInfo.operations.join(", ")}.
+Verified capabilities: tool discovery=${bridgeInfo.capabilities.tools.discovery}, calls=${bridgeInfo.capabilities.tools.calls},
+schema validation=${bridgeInfo.capabilities.tools.inputSchemaValidation}; resource list=${bridgeInfo.capabilities.resources.list},
+templates=${bridgeInfo.capabilities.resources.templates}, read=${bridgeInfo.capabilities.resources.read};
+provider cancellation=${bridgeInfo.capabilities.cancellation.providerAbortSignal}.
+Upstream MCP summary: ${upstreamServerCount} server(s) reported by the verified bridge handshake.
 </tool_cli_usage_docs>`;
+}
+
+function readUpstreamServerCount(upstream: unknown): number | "unknown" {
+  if (upstream === null || typeof upstream !== "object" || Array.isArray(upstream)) {
+    return "unknown";
+  }
+  const count = Reflect.get(upstream, "serverCount");
+  return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : "unknown";
 }

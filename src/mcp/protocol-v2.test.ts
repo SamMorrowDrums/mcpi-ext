@@ -74,8 +74,11 @@ describe("MCP v2 client seam", () => {
     await connectLegacy(client, server);
 
     expect(getMcpClientDiagnostics(client)).toEqual({
+      protocolVersion: "2025-11-25",
       protocolEra: "legacy",
       discoverResult: undefined,
+      serverImplementation: { name: "legacy-fixture", version: "1.0.0" },
+      serverCapabilities: { tools: { listChanged: true } },
       // A legacy server declares no extensions, and this client did not
       // request the draft skills extension, so the diagnostic reports it
       // as neither requested nor available rather than omitting it.
@@ -243,6 +246,13 @@ function policyForClient(client: Client, serverName: string): McpPolicy {
           ...(signal ? { signal } : {}),
         });
         return [...result.resources].sort((left, right) => (left.uri < right.uri ? -1 : 1));
+      },
+      listResourceTemplates: async (name, signal) => {
+        if (name !== serverName) throw new Error(`MCP server "${name}" is not connected`);
+        const result = await client.listResourceTemplates(undefined, {
+          ...(signal ? { signal } : {}),
+        });
+        return result.resourceTemplates;
       },
       readResource: (name, uri, signal) => {
         if (name !== serverName) throw new Error(`MCP server "${name}" is not connected`);

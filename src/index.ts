@@ -29,6 +29,8 @@ import {
   ToolCliServer,
   createPolicyToolProvider,
   formatToolCliForPrompt,
+  startToolCliBridge,
+  withholdToolCliCredentials,
 } from "./tool-cli/index.js";
 import type { ToolProvider } from "./tool-cli/index.js";
 import {
@@ -43,16 +45,17 @@ function errorMessage(err: unknown): string {
 }
 
 /**
- * Report whether the host registers a shell tool.
+ * Report whether the host currently exposes a shell tool to the agent.
  *
- * `getAllTools` may be missing on an older host or throw if the runner context
+ * `getActiveTools` may be missing on an older host or throw if the runner context
  * is not bound, and neither is evidence that bash is absent — so both collapse
  * to `undiscoverable` rather than a false negative.
  */
-function detectBashState(pi: ExtensionAPI): BashState {
+export function detectBashState(pi: ExtensionAPI): BashState {
   try {
-    const bashTool = pi.getAllTools().find((tool) => tool.name === "bash");
-    return bashTool ? { kind: "registered", toolName: bashTool.name } : { kind: "absent" };
+    return pi.getActiveTools().includes("bash")
+      ? { kind: "registered", toolName: "bash" }
+      : { kind: "absent" };
   } catch (err) {
     return { kind: "undiscoverable", reason: errorMessage(err) };
   }
@@ -84,12 +87,11 @@ export default function (pi: ExtensionAPI) {
   // sees exactly the policy-visible discovered schema set, and every call it
   // makes is re-authorized by the same dispatcher, so it cannot reach a hidden
   // tool by naming it directly.
-  const toolProvider: ToolProvider = createPolicyToolProvider(policy);
+  const toolProvider: ToolProvider = createPolicyToolProvider(policy, { upstream: mcpManager });
   const rpcServer = new ToolCliServer(toolProvider);
 
-  // Routing state the prompt reports on. tool-cli is only ever advertised as
-  // available once its RPC server has actually started, and a failure is kept
-  // here so the agent is told why rather than left to infer it from silence.
+  // Routing state the prompt reports on. tool-cli is only ever advertised after
+  // a compatible authenticated v1 handshake and confirmed bash availability.
   let toolCliState: ToolCliState = {
     kind: "not_started",
     reason: "the session has not finished starting",
@@ -105,6 +107,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     hostElicitation.setContext(ctx);
     hostApproval.setContext(ctx);
+    withholdToolCliCredentials(pi);
     if (ctx.hasUI) {
       ctx.ui.notify("mcpi-ext loaded", "info");
     }
@@ -189,19 +192,12 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
-        // Start the tool-cli RPC server for progressive tool discovery
-        try {
-          const { port, token } = await rpcServer.start(log);
-          pi.setEnv("TOOL_CLI_PORT", String(port));
-          pi.setEnv("TOOL_CLI_TOKEN", token);
-          toolCliState = { kind: "started", port };
-        } catch (err) {
-          const reason = errorMessage(err);
-          toolCliState = { kind: "failed", reason };
-          // Surfaced to the user here and reported to the agent in the routing
-          // section, so a dead RPC server never masquerades as a working one.
-          log(`[tool-cli] Failed to start RPC server: ${reason}`);
-        }
+        toolCliState = await startToolCliBridge({
+          bash: detectBashState(pi),
+          server: rpcServer,
+          environment: pi,
+          log,
+        });
       } else {
         toolCliState = {
           kind: "not_started",
@@ -211,6 +207,8 @@ export default function (pi: ExtensionAPI) {
       // Code execution remains available even when no MCP servers or callable tools exist.
       codeModeManager.initialize(mcpManager, policy, log);
     } catch (err) {
+      withholdToolCliCredentials(pi);
+      await rpcServer.stop();
       const msg = `MCP config error: ${errorMessage(err)}`;
       toolCliState = { kind: "not_started", reason: msg };
       if (ctx.hasUI) {
@@ -227,7 +225,7 @@ export default function (pi: ExtensionAPI) {
     let extra = "";
 
     const skills = skillRegistry.getAll();
-    const serverCount = mcpManager.getConnectedServers().length;
+    const bashState = detectBashState(pi);
 
     // The routing section is emitted on every load, including with zero MCP
     // servers — an agent still needs to know that exact computation and the
@@ -239,7 +237,7 @@ export default function (pi: ExtensionAPI) {
       },
       codeMode: { active: codeModeManager.isActive },
       toolCli: toolCliState,
-      bash: detectBashState(pi),
+      bash: bashState,
     });
     // Prefer the host's own facility registry when it grows one. The two paths
     // are mutually exclusive, so the section can never be emitted twice.
@@ -254,10 +252,7 @@ export default function (pi: ExtensionAPI) {
       extra += formatMcpSkillsForPrompt(skills);
     }
 
-    extra += formatToolCliForPrompt({
-      available: toolCliState.kind === "started",
-      serverCount,
-    });
+    extra += formatToolCliForPrompt({ toolCli: toolCliState, bash: bashState });
 
     if (codeModeManager.isActive) {
       codeModeManager.refresh();
@@ -283,8 +278,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     hostElicitation.setContext(undefined);
     hostApproval.setContext(undefined);
-    pi.unsetEnv("TOOL_CLI_PORT");
-    pi.unsetEnv("TOOL_CLI_TOKEN");
+    withholdToolCliCredentials(pi);
     toolCliState = { kind: "not_started", reason: "the session has shut down" };
     facilitiesPublished = false;
     await rpcServer.stop();

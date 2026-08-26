@@ -111,13 +111,13 @@ Two invariants hold across the module:
 - **Task shape, not precedence.** `FACILITY_ORDER` is alphabetical by id specifically so the order cannot be read as a ranking, and so the rendered bytes are stable turn to turn.
 - **Availability is always stated, never silently omitted.** Each facility reports `available` / `unavailable` / `unknown` with a non-empty reason. `unknown` means the host tool registry could not be read — it is not a synonym for absent.
 
-Availability sources: code mode is available whenever the extension loads (pure computation needs no server); skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised as available only after its local RPC server actually starts, and a startup failure is surfaced with a next step rather than swallowed; bash comes from host tool registration via `getAllTools()` when that is discoverable.
+Availability sources: code mode is available whenever the extension loads (pure computation needs no server); skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised only after bash is active and its local server completes an authenticated compatible bridge-v1 handshake, with inherited credentials masked until verification succeeds; bash comes from the host's active-tool registry via `getActiveTools()` when that is discoverable.
 
 `src/routing/seam.ts` is a narrow feature-detection seam for a future mcpi core `registerExecutionFacility` API. It probes with `"registerExecutionFacility" in host` plus a `typeof` check — no type assertions — and falls back to emitting the complete section from `before_agent_start`. The two paths are mutually exclusive, so the section is never duplicated. The core API is **not** implemented here.
 
 `src/routing/tripwire.ts` ships `detectToolCliTripwires`, a regression guard for the failure mode where assistant text contains `<tool_cli…` markup or narrates a `tool-cli` transcript without a real bash tool call having run it. It is a test-facing detector; wiring it into the runtime is future work.
 
-Section split: `<execution_routing>` answers _when_; `<tool_cli_usage_docs>` answers _how_, and is emitted only once the RPC server has started.
+Section split: `<execution_routing>` answers _when_; `<tool_cli_usage_docs>` answers _how_, and is emitted only after the verified bridge handshake.
 
 ### tool-cli Architecture
 
@@ -146,7 +146,11 @@ MCP Server(s)
 **Key design points:**
 
 - **Authenticated, but not trusted** — the RPC server binds a random port and requires a session token, so other local processes cannot call it. Authentication is not authorization: an authenticated caller can still name any string it likes, so every call is re-authorized by `McpPolicy` behind the provider.
+- **Verified before exposure** — mcpi-ext serializes and authenticates `getBridgeInfo`, pins the client target to loopback, requires bridge protocol major 1 plus the complete deterministic operation/capability contract, and derives the advertised upstream summary from live per-server MCP diagnostics. It masks inherited subprocess credentials until this handshake succeeds.
 - **Authorization happens in `McpPolicy`, not in the RPC server** — `ToolCliServer.callTool` forwards `server`/`tool`/`args` to the provider without checking membership in the discovered set. `createPolicyToolProvider` closes that gap: the provider exposes only the policy-visible tools and routes every call back through the same dispatcher used by the proxy and Code Mode paths, so a hidden or gated tool is refused before the MCP server is contacted.
+- **Resources cross the same boundary** — ordinary resource lists, templates, and reads are policy-backed and preserve modern metadata/text/blob fields; every `skill://` URI and all SEP-2640-declared resources stay inaccessible through tool-cli and remain owned by skill discovery/load.
+- **Cancellation reaches MCP v2** — request disconnects and client aborts flow through the provider context and policy to upstream tool and resource calls.
+- **Bridge credentials never enter MCP children** — stdio servers receive the MCP SDK's safe default environment plus explicit server configuration, with every `TOOL_CLI_*` value stripped even in nested mcpi sessions.
 - **Progressive discovery** — the agent discovers servers → tools → schemas incrementally, paying only the tokens it needs.
 - **Shell-native** — plain text output composes with grep, jq, xargs, pipes, loops. The agent can chain tool calls using standard bash idioms.
 

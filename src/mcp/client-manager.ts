@@ -4,10 +4,11 @@ import {
   StreamableHTTPClientTransport,
   type ReadResourceResult,
   type Resource,
+  type ResourceTemplateType,
   type Tool,
   type Transport,
 } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
   DirectoryReadResultSchema,
   SkillsGetResultSchema,
@@ -29,20 +30,11 @@ import {
 import type { McpConfig, ServerConfig } from "./config.js";
 import { McpHostElicitationError } from "./host-elicitation.js";
 
-/** An MCP tool as discovered from a server. */
-export interface McpTool {
-  /** Tool name as reported by the server. */
-  name: string;
-  description?: string;
-  /** Complete JSON Schema 2020-12 object for the tool's parameters. */
-  inputSchema: Tool["inputSchema"];
-  /** Complete JSON Schema 2020-12 object for structured output, if declared. */
-  outputSchema?: Tool["outputSchema"];
-  /** Tool annotations (readOnlyHint, destructiveHint, etc.). */
-  annotations?: Tool["annotations"];
+/** A lossless MCP tool as discovered from a server, tagged with its origin. */
+export type McpTool = Tool & {
   /** Which configured server this tool came from. */
   serverName: string;
-}
+};
 
 interface ManagedConnection {
   client: Client;
@@ -150,7 +142,7 @@ export class McpClientManager {
               log(`[mcp] Failed to refresh tools for "${name}": ${formatError(error)}`);
               return;
             }
-            if (!tools) return;
+            if (tools === null) return;
 
             const connection = this.connections.get(name);
             if (connection?.client === client) {
@@ -222,7 +214,7 @@ export class McpClientManager {
       {
         timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
         maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
-        ...(signal ? { signal } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       },
     );
     return adaptTerminalCallToolResult(result);
@@ -238,9 +230,27 @@ export class McpClientManager {
     const result = await connection.client.listResources(undefined, {
       timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
       maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
-      ...(signal ? { signal } : {}),
+      ...(signal !== undefined ? { signal } : {}),
     });
     return [...result.resources].sort(compareResources);
+  }
+
+  /** List a server's resource templates. Authorization lives in McpPolicy. */
+  async listResourceTemplates(
+    serverName: string,
+    signal?: AbortSignal,
+  ): Promise<ResourceTemplateType[]> {
+    const connection = this.connections.get(serverName);
+    if (!connection) {
+      throw new Error(`MCP server "${serverName}" is not connected`);
+    }
+
+    const result = await connection.client.listResourceTemplates(undefined, {
+      timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
+      maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    return [...result.resourceTemplates].sort(compareResourceTemplates);
   }
 
   /** Read a single resource. Authorization is the caller-side policy's responsibility. */
@@ -259,7 +269,7 @@ export class McpClientManager {
       {
         timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
         maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
-        ...(signal ? { signal } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       },
     );
   }
@@ -282,10 +292,13 @@ export class McpClientManager {
   ): Record<string, unknown> | undefined {
     const capability = this.connections.get(serverName)?.client.getServerCapabilities()
       ?.extensions?.[extensionName];
-    if (!capability || typeof capability !== "object" || Array.isArray(capability)) {
+    if (capability === undefined) {
+      return undefined;
+    }
+    if (capability === null || typeof capability !== "object" || Array.isArray(capability)) {
       // An extension declared with a non-object body is still "declared"; treat
       // it as declared-with-no-settings rather than inventing settings for it.
-      return capability === undefined ? undefined : {};
+      return {};
     }
     return capability as Record<string, unknown>;
   }
@@ -299,7 +312,7 @@ export class McpClientManager {
     return this.requestExtension(
       serverName,
       SKILLS_METHODS.list,
-      cursor ? { cursor } : {},
+      cursor !== undefined ? { cursor } : {},
       SkillsListResultSchema,
       signal,
     );
@@ -330,7 +343,7 @@ export class McpClientManager {
     return this.requestExtension(
       serverName,
       SKILLS_METHODS.directoryRead,
-      cursor ? { uri, cursor } : { uri },
+      cursor !== undefined ? { uri, cursor } : { uri },
       DirectoryReadResultSchema,
       signal,
     );
@@ -351,7 +364,7 @@ export class McpClientManager {
     return connection.client.request({ method, params }, schema, {
       timeout: MCP_CLIENT_POLICY.requestTimeoutMs,
       maxTotalTimeout: MCP_CLIENT_POLICY.maxTotalTimeoutMs,
-      ...(signal ? { signal } : {}),
+      ...(signal !== undefined ? { signal } : {}),
     });
   }
 
@@ -402,17 +415,10 @@ export class McpClientManager {
 
 function createTransport(config: ServerConfig): Transport {
   if (config.type === "stdio") {
-    const env = config.env
-      ? Object.fromEntries(
-          Object.entries({ ...process.env, ...config.env }).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        )
-      : undefined;
     return new StdioClientTransport({
       command: config.command,
       args: config.args,
-      env,
+      env: buildStdioEnvironment(config.env),
       cwd: config.cwd,
     });
   }
@@ -424,14 +430,23 @@ function createTransport(config: ServerConfig): Transport {
   });
 }
 
+/** Build the SDK's safe child environment without leaking this or a parent bridge endpoint. */
+export function buildStdioEnvironment(
+  configured: Readonly<Record<string, string>> | undefined,
+): Record<string, string> {
+  const environment = { ...getDefaultEnvironment(), ...configured };
+  for (const name of Object.keys(environment)) {
+    if (name.startsWith("TOOL_CLI_")) {
+      Reflect.deleteProperty(environment, name);
+    }
+  }
+  return environment;
+}
+
 function toMcpTools(serverName: string, tools: Tool[]): McpTool[] {
   return tools
     .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
-      annotations: tool.annotations,
+      ...tool,
       serverName,
     }))
     .sort(compareTools);
@@ -443,6 +458,12 @@ function compareTools(left: McpTool, right: McpTool): number {
 
 function compareResources(left: Resource, right: Resource): number {
   return compareStrings(left.uri, right.uri) || compareStrings(left.name, right.name);
+}
+
+function compareResourceTemplates(left: ResourceTemplateType, right: ResourceTemplateType): number {
+  return (
+    compareStrings(left.uriTemplate, right.uriTemplate) || compareStrings(left.name, right.name)
+  );
 }
 
 function compareStrings(left: string, right: string): number {

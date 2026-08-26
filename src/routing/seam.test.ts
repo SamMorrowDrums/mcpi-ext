@@ -10,7 +10,7 @@ function facilities(): ExecutionFacility[] {
   return buildExecutionFacilities({
     skills: { count: 2, draftExtensionEnabled: false },
     codeMode: { active: true },
-    toolCli: { kind: "started", port: 4242 },
+    toolCli: { kind: "not_started", reason: "test fixture does not start the bridge" },
     bash: { kind: "registered", toolName: "bash" },
   });
 }

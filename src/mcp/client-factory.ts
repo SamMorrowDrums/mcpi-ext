@@ -4,8 +4,10 @@ import {
   type DiscoverResult,
   type ElicitRequestParams,
   type ElicitResult,
+  type Implementation,
   type ListChangedHandlers,
   type ProtocolEra,
+  type ServerCapabilities,
 } from "@modelcontextprotocol/client";
 import {
   SKILLS_EXTENSION_NAME,
@@ -36,8 +38,11 @@ export interface McpElicitationHandler {
 }
 
 export interface McpClientDiagnostics {
+  protocolVersion: string | undefined;
   protocolEra: ProtocolEra | undefined;
   discoverResult: DiscoverResult | undefined;
+  serverImplementation: Implementation | undefined;
+  serverCapabilities: ServerCapabilities | undefined;
   /**
    * What this client requested and what the server declared for the draft
    * skills extension, so a draft feature is never silently in play.
@@ -114,15 +119,23 @@ export function getMcpClientDiagnostics(
   // connection. `getServerCapabilities` is absent on minimal client doubles and
   // returns undefined before initialize completes; either way an unavailable
   // capability is reported as "not declared", never thrown.
-  const declared =
-    typeof client.getServerCapabilities === "function"
-      ? client.getServerCapabilities()?.extensions?.[SKILLS_EXTENSION_NAME]
-      : undefined;
+  const serverCapabilities =
+    typeof client.getServerCapabilities === "function" ? client.getServerCapabilities() : undefined;
+  const declared = serverCapabilities?.extensions?.[SKILLS_EXTENSION_NAME];
   const capability =
-    declared && typeof declared === "object" ? (declared as Record<string, unknown>) : undefined;
+    declared !== undefined && declared !== null && typeof declared === "object"
+      ? (declared as Record<string, unknown>)
+      : undefined;
   return {
+    protocolVersion:
+      typeof client.getNegotiatedProtocolVersion === "function"
+        ? client.getNegotiatedProtocolVersion()
+        : undefined,
     protocolEra: client.getProtocolEra(),
     discoverResult: client.getDiscoverResult(),
+    serverImplementation:
+      typeof client.getServerVersion === "function" ? client.getServerVersion() : undefined,
+    serverCapabilities,
     skillsExtension: {
       requested: options.skillsExtensionRequested === true,
       revision: SKILLS_EXTENSION_REVISION,
