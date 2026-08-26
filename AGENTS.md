@@ -43,13 +43,33 @@ src/
   routing/             Execution-facility descriptors, prompt section, host registration seam
   skills/              Skill registry, discovery, gating, tool proxies
   tool-cli/            tool-cli RPC server, client, CLI binary, prompt
+  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, eligibility, type hints
   test-servers/        Test MCP servers (weather, echo)
 dist/                  Compiled output (gitignored)
-scripts/               Integration and smoke test scripts
+scripts/               Integration, smoke, and release-check scripts
+docs/                  Detailed mechanism documentation
 mise.toml              Tool versions and tasks
 package.json           Dependencies and npm scripts
-tsconfig.json          TypeScript configuration
+tsconfig.json          Development build — compiles tests and fixture servers
+tsconfig.build.json    Published build — no tests, fixture servers, or source maps
 ```
+
+## Release Engineering
+
+`npm run release:check` (also wired into `prepublishOnly`) guards the mistakes that
+npm's immutable versions make unrecoverable:
+
+- the MCP client identity version matches `package.json`
+- a LICENSE file exists behind the declared license
+- dependency contracts hold — MCP client pinned exactly, tool-cli on v1, isolated-vm
+  still optional rather than promoted to a hard dependency
+- the tarball carries no tests, fixture servers, or source maps
+- the production dependency tree has no advisories
+- the `@sammorrowdrums/mcpi` peer floor is actually on the registry, so this package
+  cannot be published ahead of the host release it requires
+
+Publishing runs through `.github/workflows/publish.yml` on a release event, using npm
+Trusted Publishing (OIDC). There is no `NPM_TOKEN` anywhere in the repository or in CI.
 
 ## Architecture
 
@@ -111,7 +131,7 @@ Two invariants hold across the module:
 - **Task shape, not precedence.** `FACILITY_ORDER` is alphabetical by id specifically so the order cannot be read as a ranking, and so the rendered bytes are stable turn to turn.
 - **Availability is always stated, never silently omitted.** Each facility reports `available` / `unavailable` / `unknown` with a non-empty reason. `unknown` means the host tool registry could not be read — it is not a synonym for absent.
 
-Availability sources: code mode is available whenever the extension loads (pure computation needs no server); skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised only after bash is active and its local server completes an authenticated compatible bridge-v1 handshake, with inherited credentials masked until verification succeeds; bash comes from the host's active-tool registry via `getActiveTools()` when that is discoverable.
+Availability sources: code mode needs no MCP server, but it does need the optional `isolated-vm` addon, so it is probed at `session_start` and reports the specific failure cause when the addon is missing or fails to load — it never falls back to `node:vm`, because that would downgrade an isolate boundary to same-process execution; skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised only after bash is active and its local server completes an authenticated compatible bridge-v1 handshake, with inherited credentials masked until verification succeeds; bash comes from the host's active-tool registry via `getActiveTools()` when that is discoverable.
 
 `src/routing/seam.ts` is a narrow feature-detection seam for a future mcpi core `registerExecutionFacility` API. It probes with `"registerExecutionFacility" in host` plus a `typeof` check — no type assertions — and falls back to emitting the complete section from `before_agent_start`. The two paths are mutually exclusive, so the section is never duplicated. The core API is **not** implemented here.
 

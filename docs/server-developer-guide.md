@@ -464,7 +464,7 @@ Before shipping your MCP server with progressive discovery support:
 
 - [skills-as-groups MCP spec proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) — the proposed spec addition for skill frontmatter with `metadata.io.modelcontextprotocol/*` keys
 - [Progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) — how mcpi implements deferred tool loading across Anthropic and OpenAI providers
-- [Skills mechanism (Tier 1)](docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement
-- [tool-cli (Tier 2)](docs/tool-cli.md) — architecture, progressive discovery, shell composability
-- [Code Mode (Tier 3)](docs/code-mode.md) — sandbox isolation, eligibility, tool dispatch
+- [Skills mechanism (Tier 1)](skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement
+- [tool-cli (Tier 2)](tool-cli.md) — architecture, progressive discovery, shell composability
+- [Code Mode (Tier 3)](code-mode.md) — sandbox isolation, eligibility, tool dispatch
 - [Anthropic tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) — model-side deferred tool loading (pull model vs skill invocation's push model)

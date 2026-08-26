@@ -16,7 +16,7 @@ See [Quick Start](#quick-start) for MCP server configuration.
 
 ---
 
-![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](images/banner.webp)
+![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/banner.webp)
 
 > _They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well._
 >
@@ -40,7 +40,7 @@ Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https:
 
 ## I. The Skill Dealer
 
-![A shadowy figure behind a table of glowing cards, each card inscribed with the name of an MCP tool](images/the-skill-dealer.webp)
+![A shadowy figure behind a table of glowing cards, each card inscribed with the name of an MCP tool](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/the-skill-dealer.webp)
 
 > _The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more._
 
@@ -50,46 +50,46 @@ When the model calls `load_skill`, the skill's instructions arrive and its tools
 
 Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side -- deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools -- the right tools arrive because the skill declared them.
 
-📖 [**How it works →**](docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement.
+📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement.
 
 > _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
 
-![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](images/skills-enabling-mcp-tools.png)
+![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/skills-enabling-mcp-tools.png)
 
 ---
 
 ## II. The Nuclear Football
 
-![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](images/nuclear-mcp-football.webp)
+![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/nuclear-mcp-football.webp)
 
 > _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
 
 [`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks authenticated bridge protocol v1 to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. The same policy-backed bridge lists and reads ordinary MCP resources, including binary `--out` files, while keeping `skill://` and SEP-2640-declared skill resources isolated behind `load_skill`.
 
-📖 [**How it works →**](docs/tool-cli.md) — architecture, progressive discovery, shell composability.
+📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/tool-cli.md) — architecture, progressive discovery, shell composability.
 📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
 
 This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through `McpPolicy`, the shared authorization boundary, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
 
 > _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching._
 
-![tool-cli in action — progressive discovery piped through grep](images/tool-cli-grep.png)
+![tool-cli in action — progressive discovery piped through grep](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/tool-cli-grep.png)
 
 ---
 
 ## III. Codey C. Maude
 
-![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](images/code-c-maude.webp)
+![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/code-c-maude.webp)
 
 > _Codey does not ask permission. Codey does not need to. Everything Codey touches is explicitly read-only, and the sandbox cannot be escaped. Codey is safe by construction._
 
 Code Mode is always available for arithmetic, parsing, and deterministic transforms. It catalogs every MCP tool, but only dispatches tools that are explicitly **read-only** and non-destructive. Declared output schemas produce precise hints; read-only tools without one get a client-internal permissive survival schema with visible provenance. The model's JavaScript runs inside a memory- and time-limited V8 isolate with no filesystem, network, or process access.
 
-📖 [**How it works →**](docs/code-mode.md) — sandbox isolation, catalog provenance, tool dispatch.
+📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/code-mode.md) — sandbox isolation, catalog provenance, tool dispatch.
 
 > _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
 
-![Code Mode in action — chaining MCP tools in a V8 sandbox to build a histogram](images/code-mode-histogram.png)
+![Code Mode in action — chaining MCP tools in a V8 sandbox to build a histogram](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/code-mode-histogram.png)
 
 ---
 
@@ -287,23 +287,44 @@ Then run with your local build:
 mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
 
-See [AGENTS.md](AGENTS.md) for full tooling docs, dev loop, and architecture details.
+See [AGENTS.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/AGENTS.md) for full tooling docs, dev loop, and architecture details.
 
 ## Project Structure
 
 ```
 src/
   index.ts             Extension entry point (lifecycle hooks, wiring)
-  mcp/                 MCP client management (connections, tool discovery)
+  mcp/                 MCP client management (connections, discovery) + McpPolicy
   routing/             Execution-facility descriptors, prompt section, host seam
   skills/              Skill registry, discovery, gating, tool proxies
-  tool-cli/            tool-cli RPC server, client, CLI binary, prompt
-  code-mode/           V8 sandbox executor, eligibility, type hints
-  test-servers/        Test MCP servers (weather, echo)
+  tool-cli/            tool-cli RPC server, provider, bridge handshake, prompt
+  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, type hints
+  test-servers/        Test MCP servers (weather, echo, skills fixtures)
 docs/                  Detailed mechanism documentation
 images/                Banner, character art, and screenshots
+scripts/               Integration, smoke, and release-check scripts
+tsconfig.json          Development build (compiles tests and fixture servers)
+tsconfig.build.json    Published build (no tests, fixtures, or source maps)
 ```
+
+## Requirements
+
+Node.js `>=22.13.0`. Node 22 and 24 are both covered by CI.
+
+Code Mode needs the optional [`isolated-vm`](https://github.com/laverdet/isolated-vm)
+native addon. It ships prebuilt binaries for Linux (x64, arm64), macOS
+(Apple Silicon), and Windows (x64), so the usual install is a download rather than a
+compile. Where no prebuild matches — Intel macOS, for instance — npm compiles it from
+source and needs a C++ toolchain.
+
+If the addon is unavailable for any reason, installation still succeeds and the
+extension still loads. Code Mode reports itself unavailable with the specific cause,
+and skills, tool-cli, and execution routing continue to work. Code Mode never falls
+back to `node:vm`: that would silently downgrade an isolate boundary to same-process
+execution and hand sandboxed code the host realm.
+
+To skip the addon deliberately, install with `npm install --omit=optional`.
 
 ## License
 
-See repository for license details.
+[MIT](LICENSE)
