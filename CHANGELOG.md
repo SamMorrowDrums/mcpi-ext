@@ -24,9 +24,11 @@ It is now `optionalDependencies: "~6.2.0"`, loaded lazily on first use. Installa
 succeeds without it and the extension still loads. Code Mode reports itself
 unavailable with the specific cause, and every other facility keeps working.
 
-The `~6.2.0` range is deliberate. `isolated-vm@7` requires Node `>=26.0.0`, so a
-caret range would resolve to a version that cannot run on the Node 22 and 24 releases
-this package supports.
+The `~6.2.0` range is deliberate. `isolated-vm@7` declares `engines.node >=24.0.0`,
+so a caret range would resolve on Node 24 to a major this package has not been
+verified against, and would resolve on Node 22 to a version that only warns rather
+than refusing to install — `engines` is advisory unless `engine-strict` is set. The
+tilde range, not the `engines` field, is what actually keeps 7.x out.
 
 **Code Mode does not fall back to `node:vm`.** A `node:vm` context is not a security
 boundary: it shares the host realm and its escapes are well known. Substituting it
@@ -191,7 +193,9 @@ cd mcpi-ext && npm install && npm run build
 ### 5. Check your Node version
 
 `>=22.13.0`, unchanged from `0.2.1`. Node 22 and 24 are both covered by CI. The
-`~6.2.0` isolated-vm range exists specifically to keep Node 22 working, since
-`isolated-vm@7` requires Node `>=26.0.0`.
+`~6.2.0` isolated-vm range exists specifically to keep Node 22 working:
+`isolated-vm@7` declares `engines.node >=24.0.0`, and because `engines` only
+produces an `EBADENGINE` warning by default, the pinned range is the guard that
+actually prevents it from being selected.
 
 [1.0.0]: https://github.com/SamMorrowDrums/mcpi-ext/releases/tag/v1.0.0
