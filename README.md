@@ -300,7 +300,7 @@ src/
   tool-cli/            tool-cli RPC server, provider, bridge handshake, prompt
   code-mode/           V8 sandbox executor, lazy isolated-vm adapter, type hints
   test-servers/        Test MCP servers (weather, echo, skills fixtures)
-docs/                  Detailed mechanism documentation
+docs/                  Detailed mechanism documentation (incl. releasing.md)
 images/                Banner, character art, and screenshots
 scripts/               Integration, smoke, and release-check scripts
 tsconfig.json          Development build (compiles tests and fixture servers)
@@ -325,6 +325,14 @@ execution and hand sandboxed code the host realm.
 
 To skip the addon deliberately, install with `npm install --omit=optional`.
 
+## Releasing
+
+Published to npm by [`.github/workflows/publish.yml`](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/.github/workflows/publish.yml)
+using npm trusted publishing — a GitHub Release triggers it, OIDC authenticates it,
+and no `NPM_TOKEN` exists anywhere in this repository.
+
+📖 [**Release process →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/releasing.md) — trusted-publisher setup, cutting a release, and what the workflow refuses to do.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/LICENSE)
