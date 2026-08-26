@@ -189,22 +189,27 @@ export function createSkillsExtensionServer(options: SkillsFixtureOptions): Skil
     },
   );
 
-  server.server.setRequestHandler(
-    SKILLS_METHODS.directoryRead,
-    {
-      params: z.looseObject({ uri: z.string(), cursor: z.string().optional() }),
-      result: z.looseObject({}),
-    },
-    (params: { uri: string }) => {
-      for (const skill of skills) {
-        const entries = skill.directories?.[params.uri];
-        if (entries) {
-          return { resources: entries };
+  // Registered only when the capability is declared. A server that answers
+  // `resources/directory/read` it never advertised is lying on the wire, and a
+  // fixture that does so cannot prove the client honours the declaration.
+  if (options.declareExtension !== false && options.directoryRead) {
+    server.server.setRequestHandler(
+      SKILLS_METHODS.directoryRead,
+      {
+        params: z.looseObject({ uri: z.string(), cursor: z.string().optional() }),
+        result: z.looseObject({}),
+      },
+      (params: { uri: string }) => {
+        for (const skill of skills) {
+          const entries = skill.directories?.[params.uri];
+          if (entries) {
+            return { resources: entries };
+          }
         }
-      }
-      throw new Error(`Not a directory: ${params.uri}`);
-    },
-  );
+        throw new Error(`Not a directory: ${params.uri}`);
+      },
+    );
+  }
 
   server.server.setRequestHandler(
     "resources/read",
