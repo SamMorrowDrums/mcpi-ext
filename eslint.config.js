@@ -10,7 +10,10 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // Root-level tooling config lives outside tsconfig's `src` rootDir.
+          allowDefaultProject: ["vitest.config.ts"],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },

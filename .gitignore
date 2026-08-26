@@ -10,3 +10,9 @@ dist/
 .env.*
 !.env.example
 out.txt
+
+# Compiled copies of root-level tooling config. A stray vitest.config.js takes
+# precedence over vitest.config.ts, silently running the build with stale config.
+/vitest.config.js
+/vitest.config.d.ts
+/vitest.config.*.map
