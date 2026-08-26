@@ -19,7 +19,7 @@ import {
 } from "@sammorrowdrums/tool-cli/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
-import type { McpClientDiagnostics } from "../mcp/client-factory.js";
+import { type McpClientDiagnostics, MCP_CLIENT_IDENTITY } from "../mcp/client-factory.js";
 import type { McpTool } from "../mcp/client-manager.js";
 import { noSkillsExtensionGateway } from "../mcp/gateway-defaults.js";
 import { McpPolicy, type McpPolicyGateway } from "../mcp/policy.js";
@@ -285,7 +285,7 @@ describe("tool-cli v1 authenticated bridge", () => {
     });
     expect(info.upstreamMcp).toEqual({
       protocolVersion: "2025-06-18",
-      implementation: { name: "@sammorrowdrums/mcpi-ext", version: "0.2.1" },
+      implementation: { ...MCP_CLIENT_IDENTITY },
       capabilities: {
         multiplexedServers: true,
         tools: { serverCount: 1 },

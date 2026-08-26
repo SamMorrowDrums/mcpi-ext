@@ -1,6 +1,65 @@
 {
   "name": "@sammorrowdrums/mcpi-ext",
-  "version": "0.2.1",
+  "version": "1.0.0",
+  "description": "MCP extension for mcpi — skills, tool-cli, and code mode behind one authorization boundary",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcpi",
+    "extension",
+    "skills",
+    "agent",
+    "tool-cli",
+    "code-mode"
+  ],
+  "homepage": "https://github.com/SamMorrowDrums/mcpi-ext#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SamMorrowDrums/mcpi-ext.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SamMorrowDrums/mcpi-ext/issues"
+  },
+  "author": "Sam Morrow",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts",
+    "!dist/test-servers/**",
+    "!dist/**/*.map",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:release": "node --run clean && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "dev": "tsc --watch",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "prepublishOnly": "node --run release:check && node --run build:release",
+    "release:check": "node scripts/release-check.mjs",
+    "start": "node dist/index.js",
+    "test": "vitest --run"
+  },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
@@ -12,11 +71,11 @@
     "isolated-vm": "~6.2.0"
   },
   "peerDependencies": {
-    "@sammorrowdrums/mcpi": ">=0.70.9"
+    "@sammorrowdrums/mcpi": ">=0.85.0 <1.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@sammorrowdrums/mcpi": "^0.70.9",
+    "@sammorrowdrums/mcpi": ">=0.70.9 <1.0.0",
     "@types/node": "^25.6.0",
     "eslint": "^10.2.1",
     "eslint-config-prettier": "^10.1.8",
@@ -25,27 +84,12 @@
     "typescript-eslint": "^8.59.0",
     "vitest": "^4.1.5"
   },
-  "scripts": {
-    "build": "tsc",
-    "check": "tsc --noEmit",
-    "dev": "tsc --watch",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint .",
-    "lint:fix": "eslint --fix .",
-    "prepublishOnly": "npm run build",
-    "start": "node dist/index.js",
-    "test": "vitest --run"
+  "overrides": {
+    "fast-uri": "^3.1.5",
+    "@anthropic-ai/sdk": ">=0.91.1"
   },
-  "engines": {
-    "node": ">=22.13.0"
-  },
-  "description": "MCP extension for mcpi — tiered progressive tool discovery",
-  "files": [
-    "dist"
-  ],
-  "license": "MIT",
-  "main": "./dist/index.js",
-  "type": "module",
-  "types": "./dist/index.d.ts"
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
 }

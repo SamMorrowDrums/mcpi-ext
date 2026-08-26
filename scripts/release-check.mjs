@@ -1,0 +1,149 @@
+#!/usr/bin/env node
+// Release preflight. Runs from prepublishOnly and from CI.
+//
+// Every check here encodes a mistake that is cheap to make and expensive to
+// undo once a version is on the registry, because npm versions are immutable.
+import { execFileSync } from "node:child_process";
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const offline = process.argv.includes("--offline");
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+
+const failures = [];
+const notes = [];
+const fail = (msg) => failures.push(msg);
+const ok = (msg) => notes.push(msg);
+
+function check(name, fn) {
+  try {
+    fn();
+  } catch (err) {
+    fail(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+check("client identity", () => {
+  const src = readFileSync(join(root, "src/mcp/client-factory.ts"), "utf8");
+  const match = /version:\s*"([^"]+)"/.exec(src);
+  if (!match) throw new Error("could not find the MCP client identity version");
+  if (match[1] !== pkg.version) {
+    throw new Error(
+      `MCP client identity is ${match[1]} but package.json is ${pkg.version}. ` +
+        `Servers see the identity string, so a stale value misreports the client to every peer.`,
+    );
+  }
+  ok(`client identity matches package version ${pkg.version}`);
+});
+
+check("license file", () => {
+  if (!existsSync(join(root, "LICENSE"))) {
+    throw new Error(`package.json declares "${pkg.license}" but no LICENSE file exists`);
+  }
+  ok("LICENSE present");
+});
+
+check("pinned dependencies", () => {
+  const deps = pkg.dependencies ?? {};
+  if (deps["@modelcontextprotocol/client"] !== "2.0.0") {
+    throw new Error(
+      `@modelcontextprotocol/client must stay pinned to exactly 2.0.0, found ${deps["@modelcontextprotocol/client"]}`,
+    );
+  }
+  if (!/^\^1\.0\./.test(deps["@sammorrowdrums/tool-cli"] ?? "")) {
+    throw new Error(
+      `@sammorrowdrums/tool-cli must stay on the v1 bridge contract, found ${deps["@sammorrowdrums/tool-cli"]}`,
+    );
+  }
+  if (deps["isolated-vm"]) {
+    throw new Error(
+      "isolated-vm must stay in optionalDependencies. As a hard dependency it turns an " +
+        "unsupported platform into a failed install instead of a degraded code mode.",
+    );
+  }
+  if (!pkg.optionalDependencies?.["isolated-vm"]) {
+    throw new Error("isolated-vm is missing from optionalDependencies");
+  }
+  ok("dependency contracts intact (MCP client 2.0.0, tool-cli v1, isolated-vm optional)");
+});
+
+check("packed contents", () => {
+  const raw = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const files = JSON.parse(raw)[0].files.map((f) => f.path);
+  const leaked = files.filter(
+    (f) =>
+      /\.test\.(js|d\.ts)$/.test(f) || f.startsWith("dist/test-servers/") || f.endsWith(".map"),
+  );
+  if (leaked.length > 0) {
+    throw new Error(`tarball would ship non-production files: ${leaked.join(", ")}`);
+  }
+  for (const required of ["dist/index.js", "dist/index.d.ts", "LICENSE", "README.md"]) {
+    if (!files.includes(required)) throw new Error(`tarball is missing ${required}`);
+  }
+  ok(`tarball contents clean (${files.length} files)`);
+});
+
+check("peer availability", () => {
+  const range = pkg.peerDependencies?.["@sammorrowdrums/mcpi"];
+  if (!range) throw new Error("no @sammorrowdrums/mcpi peer range declared");
+  if (offline) {
+    ok(`peer range ${range} (registry check skipped: --offline)`);
+    return;
+  }
+  const versions = JSON.parse(
+    execFileSync("npm", ["view", "@sammorrowdrums/mcpi", "versions", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }),
+  );
+  const floor = /^>=\s*([\d.]+)/.exec(range)?.[1];
+  if (!floor) throw new Error(`peer range ${range} has no >= floor to verify`);
+  if (!versions.includes(floor)) {
+    throw new Error(
+      `peer floor @sammorrowdrums/mcpi@${floor} is not on the registry yet. ` +
+        `Publishing mcpi-ext first would ship a package that cannot resolve its own peer. ` +
+        `Release mcpi ${floor} before this package.`,
+    );
+  }
+  ok(`peer floor @sammorrowdrums/mcpi@${floor} is published`);
+});
+
+check("production audit", () => {
+  if (offline) {
+    ok("production audit skipped: --offline");
+    return;
+  }
+  let report;
+  try {
+    report = execFileSync("npm", ["audit", "--omit=dev", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (err) {
+    // npm audit exits non-zero when it finds anything; the JSON is still on stdout.
+    report = err.stdout;
+  }
+  const total = JSON.parse(report).metadata?.vulnerabilities ?? {};
+  const count = Object.entries(total)
+    .filter(([severity]) => severity !== "info" && severity !== "total")
+    .reduce((sum, [, n]) => sum + n, 0);
+  if (count > 0) {
+    throw new Error(`production dependency tree has ${count} advisories: ${JSON.stringify(total)}`);
+  }
+  ok("production dependency tree has no advisories");
+});
+
+for (const note of notes) console.log(`  ok  ${note}`);
+for (const failure of failures) console.error(`FAIL  ${failure}`);
+if (failures.length > 0) {
+  console.error(`\n${failures.length} release check(s) failed.`);
+  process.exit(1);
+}
+console.log(`\nRelease checks passed for ${pkg.name}@${pkg.version}.`);
