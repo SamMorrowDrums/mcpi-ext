@@ -61,9 +61,14 @@ automation tokens** for the package so the OIDC path is the only way to publish.
    ```sh
    npm ci
    mise run lint && mise run format:check && mise run check && mise run test
+   node --run build:release
    node scripts/release-check.mjs
    node scripts/verify-package.mjs
    ```
+
+   `release-check.mjs` inspects the tarball npm would pack, so `dist/` has to
+   exist before it runs. Nothing above it emits any output — `check` is
+   `tsc --noEmit` and `test` is vitest — so the build step is not optional.
 
 4. Commit, tag `vX.Y.Z` on that exact commit, and push both.
 5. Publish a GitHub Release pointing at that tag. That — and only that —
@@ -82,12 +87,12 @@ the trigger, and fails closed:
 - the version must not already exist on the registry — releases are immutable;
 - npm must be `>= 11.5.1`, the first version that can use trusted publishing.
 
-Only after all of that does it run lint, format, type-check, tests, the full
-`release-check.mjs`, and `verify-package.mjs` — which packs the tarball,
-installs it into a throwaway project, and drives the installed artefact. The
-package is published only if the thing a consumer would install has already
-been proven to work. Publication is then confirmed by reading the version back
-from the registry.
+Only after all of that does it run lint, format, type-check, tests, the release
+build, the full `release-check.mjs`, and `verify-package.mjs` — which packs the
+tarball, installs it into a throwaway project, and drives the installed
+artefact. The package is published only if the thing a consumer would install
+has already been proven to work. Publication is then confirmed by reading the
+version back from the registry.
 
 A prerelease GitHub Release publishes under the `next` dist-tag; a normal
 release publishes under `latest`.

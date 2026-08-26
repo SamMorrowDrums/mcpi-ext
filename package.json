@@ -55,7 +55,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
-    "prepublishOnly": "node --run release:check && node --run build:release",
+    "prepublishOnly": "node --run build:release && node --run release:check",
     "release:check": "node scripts/release-check.mjs",
     "start": "node dist/index.js",
     "test": "vitest --run"

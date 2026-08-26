@@ -144,6 +144,12 @@ jobs:
       - name: Test
         run: mise run test
 
+      # release-check inspects the tarball npm would pack, so dist/ has to exist
+      # before it runs. Nothing earlier in this job emits — check and test both
+      # run without output — so the build belongs here rather than after.
+      - name: Build release output
+        run: npm run build:release
+
       # Full preflight, including the registry-dependent checks that CI skips.
       - name: Release preflight
         run: node scripts/release-check.mjs
@@ -153,9 +159,6 @@ jobs:
       # installable and functional in that form.
       - name: Verify the package a consumer will install
         run: node scripts/verify-package.mjs
-
-      - name: Build release output
-        run: npm run build:release
 
       - name: Publish
         run: npm publish --tag "${{ steps.guard.outputs.dist_tag }}"
