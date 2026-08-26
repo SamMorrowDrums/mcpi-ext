@@ -1,4 +1,4 @@
-import ivm from "isolated-vm";
+import { loadIsolatedVm, type IsolatedVmIsolate, type IsolatedVmModule } from "./isolated-vm.js";
 import { sanitizeToolName } from "./type-hints.js";
 
 /** Result of code execution. */
@@ -38,6 +38,9 @@ const DEFAULT_MEMORY_LIMIT = 128;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const STRUCTURED_ERROR_PREFIX = "__CODE_MODE_ERROR__";
 
+/** Error code surfaced when the V8 isolate backend is not installed. */
+export const SANDBOX_UNAVAILABLE_ERROR = "sandbox_unavailable";
+
 /**
  * Execute model-generated JavaScript code in an isolated V8 sandbox.
  *
@@ -49,6 +52,11 @@ const STRUCTURED_ERROR_PREFIX = "__CODE_MODE_ERROR__";
  *
  * Tool calls are dispatched to the host via `Reference` callbacks —
  * actual MCP tool execution happens outside the sandbox.
+ *
+ * The `isolated-vm` addon is optional and loaded lazily. If it is unavailable
+ * this returns a structured `sandbox_unavailable` error rather than falling
+ * back to Node's `vm` module: `node:vm` shares the host realm and heap, so
+ * using it here would silently void the isolation guarantee this API makes.
  */
 export async function executeInSandbox(
   code: string,
@@ -59,16 +67,34 @@ export async function executeInSandbox(
   const memoryLimit = options.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  const load = await loadIsolatedVm();
+  if (!load.available) {
+    const message = `Code Mode is unavailable: ${load.reason}. Use tool-cli or the MCP tool proxies instead.`;
+    return {
+      result: undefined,
+      error: message,
+      errorDetails: {
+        error: SANDBOX_UNAVAILABLE_ERROR,
+        message,
+        reason: load.reason,
+        alternatives: ["tool-cli", "MCP tool proxies"],
+      },
+      logs: [],
+    };
+  }
+
+  const ivm = load.module;
   const isolate = new ivm.Isolate({ memoryLimit });
   try {
-    return await runInIsolate(isolate, code, toolNames, dispatch, timeoutMs);
+    return await runInIsolate(ivm, isolate, code, toolNames, dispatch, timeoutMs);
   } finally {
     isolate.dispose();
   }
 }
 
 async function runInIsolate(
-  isolate: ivm.Isolate,
+  ivm: IsolatedVmModule,
+  isolate: IsolatedVmIsolate,
   code: string,
   toolNames: string[],
   dispatch: ToolDispatchFn,

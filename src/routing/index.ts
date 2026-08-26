@@ -3,6 +3,7 @@ export {
   FACILITY_ORDER,
   type AvailabilityState,
   type BashState,
+  type CodeModeState,
   type ExecutionFacility,
   type ExecutionRoutingState,
   type FacilityAvailability,

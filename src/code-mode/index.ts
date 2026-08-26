@@ -8,6 +8,7 @@ import {
 } from "./eligibility.js";
 import type { ExecuteResult, ExecutorOptions } from "./executor.js";
 import { CodeModeDispatchError, executeInSandbox, type CodeModeErrorDetails } from "./executor.js";
+import { loadIsolatedVm } from "./isolated-vm.js";
 import { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 import { generateTypeHints } from "./type-hints.js";
 
@@ -26,7 +27,15 @@ export type {
   OutputSchemaProvenance,
 } from "./eligibility.js";
 export type { CodeModeErrorDetails, ExecuteResult, ExecutorOptions } from "./executor.js";
-export { executeInSandbox, normalizeCode } from "./executor.js";
+export { SANDBOX_UNAVAILABLE_ERROR, executeInSandbox, normalizeCode } from "./executor.js";
+export {
+  loadIsolatedVm,
+  peekIsolatedVm,
+  resetIsolatedVmCacheForTests,
+  setIsolatedVmForTests,
+  type IsolatedVmLoad,
+  type IsolatedVmModule,
+} from "./isolated-vm.js";
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
 
@@ -44,6 +53,33 @@ const NO_ELIGIBLE_TOOLS_ERROR: CodeModeErrorDetails = {
 };
 
 /**
+ * Whether the sandbox backend can run code.
+ *
+ * `unknown` is a real state, not a synonym for unavailable: before the optional
+ * native addon has been probed we have not established anything, and reporting
+ * that honestly is better than guessing in either direction.
+ */
+export interface SandboxAvailability {
+  readonly state: "available" | "unavailable" | "unknown";
+  readonly reason: string;
+}
+
+const SANDBOX_UNPROBED: SandboxAvailability = {
+  state: "unknown",
+  reason: "the isolated-vm native addon has not been probed yet",
+};
+
+const SANDBOX_INJECTED: SandboxAvailability = {
+  state: "available",
+  reason: "a sandbox executor was supplied directly, bypassing the isolated-vm addon",
+};
+
+const SANDBOX_NATIVE: SandboxAvailability = {
+  state: "available",
+  reason: "the isolated-vm native addon loaded",
+};
+
+/**
  * Orchestrates code mode: catalogs tools, generates type hints,
  * and executes model-generated code in a sandbox with tool dispatch.
  */
@@ -57,12 +93,54 @@ export class CodeModeManager {
   private readonly sandboxExecutor: typeof executeInSandbox;
   private log: ((msg: string) => void) | undefined;
   private lastDiagnosticSummary = "";
-  readonly isActive = true;
+  private sandbox: SandboxAvailability;
+  private sandboxProbe: Promise<SandboxAvailability> | undefined;
 
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
     this.sandboxExecutor = options.sandboxExecutor ?? executeInSandbox;
     this.log = options.log;
+    // An injected executor is the sandbox. Probing the native addon in that
+    // case would report on a backend this manager will never call.
+    this.sandbox = options.sandboxExecutor ? SANDBOX_INJECTED : SANDBOX_UNPROBED;
+  }
+
+  /**
+   * Whether code mode should be advertised to the model.
+   *
+   * Only a *proven* unavailable sandbox switches this off. An unprobed backend
+   * stays active because `code_execute` is registered synchronously at load and
+   * returns a structured `sandbox_unavailable` error if it turns out it cannot
+   * run — a truthful refusal at call time beats hiding a facility that works.
+   */
+  get isActive(): boolean {
+    return this.sandbox.state !== "unavailable";
+  }
+
+  /** Current sandbox backend availability, without triggering a probe. */
+  getSandboxAvailability(): SandboxAvailability {
+    return this.sandbox;
+  }
+
+  /**
+   * Load the optional native addon once and cache the verdict.
+   *
+   * Safe to call from any lifecycle hook; concurrent callers share one probe.
+   */
+  async probeSandbox(): Promise<SandboxAvailability> {
+    if (this.sandbox.state !== "unknown") return this.sandbox;
+    this.sandboxProbe ??= loadIsolatedVm().then((load) => {
+      this.sandbox = load.available
+        ? SANDBOX_NATIVE
+        : { state: "unavailable", reason: load.reason };
+      if (!load.available) {
+        this.log?.(
+          `[code-mode] disabled: ${load.reason}. Skills, tool-cli, and routing are unaffected.`,
+        );
+      }
+      return this.sandbox;
+    });
+    return this.sandboxProbe;
   }
 
   /** Initialize with MCP manager and policy, catalog tools, and generate type hints. */

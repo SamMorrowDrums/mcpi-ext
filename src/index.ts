@@ -206,6 +206,9 @@ export default function (pi: ExtensionAPI) {
       }
       // Code execution remains available even when no MCP servers or callable tools exist.
       codeModeManager.initialize(mcpManager, policy, log);
+      // Probe the optional native sandbox backend once, so routing can state
+      // plainly whether code mode can run rather than assuming it can.
+      await codeModeManager.probeSandbox();
     } catch (err) {
       withholdToolCliCredentials(pi);
       await rpcServer.stop();
@@ -226,6 +229,9 @@ export default function (pi: ExtensionAPI) {
 
     const skills = skillRegistry.getAll();
     const bashState = detectBashState(pi);
+    // Idempotent after the first resolution; covers hosts that reach
+    // before_agent_start without a preceding successful session_start.
+    const sandbox = await codeModeManager.probeSandbox();
 
     // The routing section is emitted on every load, including with zero MCP
     // servers — an agent still needs to know that exact computation and the
@@ -235,7 +241,7 @@ export default function (pi: ExtensionAPI) {
         count: skills.length,
         draftExtensionEnabled: skillsExtensionEnabled,
       },
-      codeMode: { active: codeModeManager.isActive },
+      codeMode: { active: codeModeManager.isActive, reason: sandbox.reason },
       toolCli: toolCliState,
       bash: bashState,
     });

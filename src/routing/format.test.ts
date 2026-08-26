@@ -284,6 +284,35 @@ describe("execution routing section", () => {
       expect(result).toContain("bash and external programs");
       expect(result.match(/^Availability: unavailable/gm)).toHaveLength(4);
     });
+
+    it("states why code mode is unavailable when a reason is known", () => {
+      const [codeMode] = buildExecutionFacilities({
+        skills: { count: 0, draftExtensionEnabled: false },
+        codeMode: {
+          active: false,
+          reason: "the optional isolated-vm native addon is not installed",
+        },
+        toolCli: { kind: "no_bash", reason: "no bash" },
+        bash: { kind: "absent" },
+      }).filter((f) => f.id === "code_mode");
+
+      expect(codeMode?.availability.state).toBe("unavailable");
+      expect(codeMode?.availability.detail).toContain("isolated-vm native addon is not installed");
+      // The reason must never imply a silent in-process downgrade.
+      expect(codeMode?.availability.detail).toContain("never downgraded");
+    });
+
+    it("ignores a stale reason once code mode is active", () => {
+      const [codeMode] = buildExecutionFacilities({
+        skills: { count: 0, draftExtensionEnabled: false },
+        codeMode: { active: true, reason: "the isolated-vm native addon loaded" },
+        toolCli: { kind: "no_bash", reason: "no bash" },
+        bash: { kind: "absent" },
+      }).filter((f) => f.id === "code_mode");
+
+      expect(codeMode?.availability.state).toBe("available");
+      expect(codeMode?.availability.detail).toContain("Available with zero MCP servers connected");
+    });
   });
 
   describe("determinism", () => {

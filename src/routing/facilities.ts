@@ -80,9 +80,20 @@ export type BashState =
 
 export interface ExecutionRoutingState {
   skills: SkillsState;
-  codeMode: { active: boolean };
+  codeMode: CodeModeState;
   toolCli: ToolCliState;
   bash: BashState;
+}
+
+/**
+ * Code mode needs the optional `isolated-vm` native addon. When that addon is
+ * absent the facility is genuinely unavailable, and `reason` carries the
+ * specific cause so the prompt can say *why* rather than just that it failed.
+ */
+export interface CodeModeState {
+  active: boolean;
+  /** Why code mode is inactive. Ignored when `active` is true. */
+  reason?: string;
 }
 
 function skillsAvailability(skills: SkillsState): FacilityAvailability {
@@ -103,12 +114,14 @@ function skillsAvailability(skills: SkillsState): FacilityAvailability {
   };
 }
 
-function codeModeAvailability(active: boolean): FacilityAvailability {
-  if (!active) {
+function codeModeAvailability(codeMode: CodeModeState): FacilityAvailability {
+  if (!codeMode.active) {
+    const cause = codeMode.reason?.trim();
     return {
       state: "unavailable",
-      detail:
-        "Code mode did not initialise this session, so code_execute and code_search cannot run.",
+      detail: cause
+        ? `Code mode is unavailable because ${cause}. code_execute and code_search cannot run; sandboxed execution is never downgraded to an in-process fallback. Route exact computation to bash or tool-cli instead.`
+        : "Code mode did not initialise this session, so code_execute and code_search cannot run.",
     };
   }
 
@@ -236,7 +249,7 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
         "Process access. There is no process, no require, no import, and no child process.",
         "Non-read-only MCP tools, which are refused inside the sandbox rather than prompted for.",
       ],
-      availability: codeModeAvailability(state.codeMode.active),
+      availability: codeModeAvailability(state.codeMode),
     },
     {
       id: "skills",
