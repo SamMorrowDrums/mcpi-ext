@@ -1,0 +1,474 @@
+#!/usr/bin/env node
+// Clean-room verification of the published tarball.
+//
+// Everything here runs against an *installed* copy in a temp directory, never
+// against the working tree. A test that imports "../src/index.js" proves the
+// source is correct; it cannot prove the tarball carries the files that source
+// needs, that the exports map resolves, or that a consumer can import it at all.
+// Those are exactly the failures that only appear after an immutable publish.
+
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const failures = [];
+const notes = [];
+
+function check(label, fn) {
+  try {
+    const detail = fn();
+    console.log(`  ok  ${label}${detail ? ` — ${detail}` : ""}`);
+  } catch (error) {
+    failures.push(label);
+    console.log(`FAIL  ${label}: ${error.message}`);
+  }
+}
+
+function run(command, args, options = {}) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    ...options,
+  });
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+console.log(`Node ${process.version}\n`);
+
+// ---------------------------------------------------------------------------
+// Build and pack
+// ---------------------------------------------------------------------------
+
+console.log("Building release tree...");
+run("node", ["--run", "build:release"], { cwd: repoRoot });
+
+const packDir = mkdtempSync(join(tmpdir(), "mcpi-ext-pack-"));
+const packJson = run("npm", ["pack", "--json", "--pack-destination", packDir], {
+  cwd: repoRoot,
+});
+const packed = JSON.parse(packJson)[0];
+const tarball = join(packDir, packed.filename);
+const packedPaths = packed.files.map((file) => file.path);
+
+console.log(`Packed ${packed.filename} — ${packed.entryCount} files, ${packed.size} bytes\n`);
+
+// ---------------------------------------------------------------------------
+// Tarball contents
+// ---------------------------------------------------------------------------
+
+check("tarball ships no test files", () => {
+  const leaked = packedPaths.filter((path) => /\.test\.(js|d\.ts)$/.test(path));
+  assert(leaked.length === 0, `found ${leaked.join(", ")}`);
+});
+
+check("tarball ships no fixture servers", () => {
+  const leaked = packedPaths.filter((path) => path.includes("test-servers/"));
+  assert(leaked.length === 0, `found ${leaked.join(", ")}`);
+});
+
+check("tarball ships no source maps", () => {
+  const leaked = packedPaths.filter((path) => path.endsWith(".map"));
+  assert(leaked.length === 0, `found ${leaked.join(", ")}`);
+});
+
+check("tarball ships the entry point, types, license, and readme", () => {
+  for (const required of ["dist/index.js", "dist/index.d.ts", "LICENSE", "README.md"]) {
+    assert(packedPaths.includes(required), `missing ${required}`);
+  }
+});
+
+check("published type declarations do not reference the optional addon", () => {
+  const declarations = packedPaths.filter((path) => path.endsWith(".d.ts"));
+  const offenders = declarations.filter((path) => {
+    const contents = readFileSync(join(repoRoot, path), "utf8");
+    return /from ["']isolated-vm["']/.test(contents);
+  });
+  assert(
+    offenders.length === 0,
+    `${offenders.join(", ")} would make consumer type-checking fail without the optional addon`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Clean-room install
+// ---------------------------------------------------------------------------
+
+const consumerDir = mkdtempSync(join(tmpdir(), "mcpi-ext-consumer-"));
+writeFileSync(
+  join(consumerDir, "package.json"),
+  `${JSON.stringify({ name: "consumer", private: true, type: "module", version: "0.0.0" }, null, 2)}\n`,
+);
+
+// The host is a genuine runtime dependency, not just a type-level one: the
+// skills code imports parseFrontmatter and stripFrontmatter as values. In real
+// use mcpi loads this extension and resolves those from its own tree, so the
+// clean room has to stand a host up to be a faithful simulation.
+//
+// The declared peer floor is published *after* this package, so npm's automatic
+// peer installation cannot satisfy it yet. --legacy-peer-deps skips that
+// resolution without weakening the declared contract, and we pin the host to
+// the version this repo develops against. release-check separately refuses to
+// publish while the floor is still missing from the registry.
+const hostSpec = `@sammorrowdrums/mcpi@${
+  JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).devDependencies[
+    "@sammorrowdrums/mcpi"
+  ]
+}`;
+
+console.log("\nInstalling tarball into a clean consumer project...");
+run("npm", ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", tarball, hostSpec], {
+  cwd: consumerDir,
+});
+
+const installedRoot = join(consumerDir, "node_modules", "@sammorrowdrums", "mcpi-ext");
+
+check("package resolves and exposes a default extension registrar", () => {
+  const out = run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import mod from "@sammorrowdrums/mcpi-ext";
+       if (typeof mod !== "function") throw new Error("default export is " + typeof mod);
+       process.stdout.write("ok");`,
+    ],
+    { cwd: consumerDir },
+  );
+  assert(out.trim() === "ok", out);
+});
+
+check("exports map blocks deep imports into internals", () => {
+  const blocked = [
+    "@sammorrowdrums/mcpi-ext/dist/mcp/policy.js",
+    "@sammorrowdrums/mcpi-ext/dist/code-mode/executor.js",
+    "@sammorrowdrums/mcpi-ext/dist/index.js",
+  ];
+  for (const specifier of blocked) {
+    let threw = false;
+    try {
+      run(
+        process.execPath,
+        ["--input-type=module", "-e", `await import(${JSON.stringify(specifier)});`],
+        { cwd: consumerDir },
+      );
+    } catch (error) {
+      threw = /ERR_PACKAGE_PATH_NOT_EXPORTED/.test(String(error.stderr ?? error.message));
+    }
+    assert(threw, `${specifier} is reachable and would become part of the public contract`);
+  }
+});
+
+check("package.json subpath stays reachable", () => {
+  const out = run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const { default: pkg } = await import("@sammorrowdrums/mcpi-ext/package.json", { with: { type: "json" } });
+       process.stdout.write(pkg.version);`,
+    ],
+    { cwd: consumerDir },
+  );
+  assert(out.trim() === packed.version, `resolved ${out.trim()}, expected ${packed.version}`);
+});
+
+check("tool-cli v1 is installed as a real dependency", () => {
+  const manifestPath = join(
+    consumerDir,
+    "node_modules",
+    "@sammorrowdrums",
+    "tool-cli",
+    "package.json",
+  );
+  assert(existsSync(manifestPath), "@sammorrowdrums/tool-cli is not installed");
+  const version = JSON.parse(readFileSync(manifestPath, "utf8")).version;
+  assert(version.startsWith("1."), `installed ${version}, expected a 1.x release`);
+  notes.push(`tool-cli ${version}`);
+  return version;
+});
+
+check("MCP client is installed at the exact pinned version", () => {
+  const manifestPath = join(
+    consumerDir,
+    "node_modules",
+    "@modelcontextprotocol",
+    "client",
+    "package.json",
+  );
+  assert(existsSync(manifestPath), "@modelcontextprotocol/client is not installed");
+  const version = JSON.parse(readFileSync(manifestPath, "utf8")).version;
+  assert(version === "2.0.0", `installed ${version}, expected exactly 2.0.0`);
+  return version;
+});
+
+// ---------------------------------------------------------------------------
+// Runtime behaviour against the installed copy
+// ---------------------------------------------------------------------------
+
+const harness = String.raw`
+import registerExtension from "@sammorrowdrums/mcpi-ext";
+
+const flags = JSON.parse(process.env.HARNESS_FLAGS ?? "{}");
+const tools = [];
+const handlers = new Map();
+const logs = [];
+const pi = {
+  registerTool: (tool) => tools.push(tool),
+  registerFlag: () => {},
+  getFlag: (name) => flags[name],
+  setEnv: () => {},
+  unsetEnv: () => {},
+  getActiveTools: () => ["bash"],
+  getAllTools: () => tools.map((tool) => ({ name: tool.name })),
+  on: (event, handler) => handlers.set(event, handler),
+};
+
+// The extension reports connection and discovery progress on stderr when no UI
+// is attached. That narration is the only public evidence of which discovery
+// contract was negotiated, so capture it rather than inspecting internals the
+// exports map deliberately hides.
+const stderrWrite = process.stderr.write.bind(process.stderr);
+process.stderr.write = (chunk, ...rest) => {
+  logs.push(String(chunk));
+  return stderrWrite(chunk, ...rest);
+};
+
+registerExtension(pi);
+
+const sessionStart = handlers.get("session_start");
+if (sessionStart) await sessionStart({}, { cwd: process.cwd(), hasUI: false });
+
+const beforeAgent = handlers.get("before_agent_start");
+const prompt = beforeAgent
+  ? (await beforeAgent({ systemPrompt: "" }))?.systemPrompt ?? ""
+  : "";
+
+const codeExecute = tools.find((tool) => tool.name === "code_execute");
+let execution = null;
+if (codeExecute && flags["skip-execute"] !== true) {
+  execution = await codeExecute.execute(
+    "smoke",
+    { code: "return [1, 2, 3].reduce((a, b) => a + b, 0);" },
+    undefined,
+    undefined,
+    {},
+  );
+}
+
+process.stdout.write(
+  "__MCPI_EXT_RESULT__" +
+    JSON.stringify({
+      toolNames: tools.map((tool) => tool.name),
+      prompt,
+      execution,
+      logs: logs.join(""),
+    }),
+);
+process.exit(0);
+`;
+
+function runHarness(env = {}, flags = {}) {
+  const harnessPath = join(consumerDir, `harness-${Math.random().toString(36).slice(2)}.mjs`);
+  writeFileSync(harnessPath, harness);
+  try {
+    const out = run(process.execPath, [harnessPath], {
+      cwd: consumerDir,
+      timeout: 90_000,
+      env: { ...process.env, HARNESS_FLAGS: JSON.stringify(flags), ...env },
+    });
+    // The MCP SDK writes capability warnings to stdout rather than stderr, so
+    // the payload is delimited instead of assumed to be the whole stream.
+    const marker = out.lastIndexOf("__MCPI_EXT_RESULT__");
+    assert(marker !== -1, `harness produced no result payload:\n${out.slice(0, 500)}`);
+    return JSON.parse(out.slice(marker + "__MCPI_EXT_RESULT__".length));
+  } finally {
+    rmSync(harnessPath, { force: true });
+  }
+}
+
+const withSandbox = runHarness();
+
+check("zero-server session registers the code tools and emits execution routing", () => {
+  assert(withSandbox.toolNames.includes("code_execute"), "code_execute was not registered");
+  assert(withSandbox.toolNames.includes("code_search"), "code_search was not registered");
+  assert(
+    withSandbox.prompt.includes("<execution_routing>"),
+    "execution routing section was not emitted with no MCP servers connected",
+  );
+  return `${withSandbox.toolNames.length} tools`;
+});
+
+const sandboxInstalled = existsSync(join(consumerDir, "node_modules", "isolated-vm"));
+
+check("code execution reflects the sandbox that is actually installed", () => {
+  const text = withSandbox.execution?.content?.[0]?.text ?? "";
+  if (sandboxInstalled) {
+    assert(text === "6", `expected the isolate to compute 6, got ${JSON.stringify(text)}`);
+    notes.push("isolated-vm installed; code execution verified end to end");
+    return "isolate executed";
+  }
+  assert(
+    withSandbox.execution?.details?.error === "sandbox_unavailable",
+    `expected sandbox_unavailable, got ${JSON.stringify(withSandbox.execution?.details)}`,
+  );
+  notes.push("isolated-vm absent on this platform; refusal path verified instead");
+  return "refused without a sandbox";
+});
+
+// ---------------------------------------------------------------------------
+// Degradation: the optional addon is gone
+// ---------------------------------------------------------------------------
+
+if (sandboxInstalled) {
+  console.log("\nRemoving the optional addon to verify degradation...");
+  await rm(join(consumerDir, "node_modules", "isolated-vm"), { recursive: true, force: true });
+  // Leave an empty directory behind: this reproduces a partially-installed or
+  // stripped addon, which fails at import rather than at resolution.
+  await mkdir(join(consumerDir, "node_modules", "isolated-vm"), { recursive: true });
+
+  const withoutSandbox = runHarness();
+
+  check("skills, tool-cli, and routing survive a missing sandbox", () => {
+    assert(
+      withoutSandbox.prompt.includes("<execution_routing>"),
+      "execution routing stopped being emitted when the addon disappeared",
+    );
+    assert(
+      withoutSandbox.toolNames.includes("load_skill"),
+      "load_skill was not registered without the addon",
+    );
+    return "extension still loads";
+  });
+
+  check("code mode reports itself unavailable with a specific reason", () => {
+    // The section renders facility titles, not ids, and each facility ends with
+    // an "Availability: <state> — <detail>" line. Read that line for the code
+    // mode block specifically rather than pattern-matching the whole section,
+    // which would happily pass on another facility's wording.
+    const heading = "### Code mode";
+    const start = withoutSandbox.prompt.indexOf(heading);
+    assert(start !== -1, "code mode facility is missing from the routing section entirely");
+    const block = withoutSandbox.prompt.slice(start);
+    const availability = /^Availability: (\S+) — (.+)$/m.exec(block);
+    assert(availability !== null, `no availability line found in:\n${block.slice(0, 400)}`);
+    assert(
+      availability[1] === "unavailable",
+      `code mode reported "${availability[1]}" while the addon was missing`,
+    );
+    assert(/because .+/.test(availability[2]), `availability gave no cause: ${availability[2]}`);
+    return availability[2].slice(0, 72);
+  });
+
+  check("code_execute refuses instead of falling back to node:vm", () => {
+    const details = withoutSandbox.execution?.details ?? {};
+    assert(
+      details.error === "sandbox_unavailable",
+      `expected sandbox_unavailable, got ${JSON.stringify(details)}`,
+    );
+    assert(
+      Array.isArray(details.alternatives) && details.alternatives.length > 0,
+      "refusal named no alternative execution surface",
+    );
+    const text = withoutSandbox.execution?.content?.[0]?.text ?? "";
+    assert(text !== "6", "code ran anyway — a node:vm fallback would produce this");
+    return details.alternatives.join(", ");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Discovery contracts, driven through the public entry point
+// ---------------------------------------------------------------------------
+//
+// The fixture servers deliberately do not ship in the tarball, so they run from
+// the repo's dev build and are reached the way a consumer reaches any MCP
+// server: over stdio, named in an mcp config. That keeps the assertion honest —
+// it exercises the installed package's discovery path against a server it has
+// no privileged relationship with.
+
+const fixtureRoot = join(repoRoot, "dist", "test-servers");
+const legacyFixture = join(fixtureRoot, "weather-stdio.js");
+const sepFixture = join(fixtureRoot, "skills-extension-stdio.js");
+
+if (!existsSync(legacyFixture) || !existsSync(sepFixture)) {
+  console.log("\nBuilding fixture servers for the discovery checks...");
+  run("npx", ["tsc"], { cwd: repoRoot, timeout: 300_000 });
+}
+
+console.log("\nExercising discovery contracts against the installed package...");
+
+const fixtureConfigPath = join(consumerDir, "mcp-servers.json");
+
+function withFixture(server, flags) {
+  writeFileSync(fixtureConfigPath, `${JSON.stringify({ mcpServers: server }, null, 2)}\n`, "utf8");
+  return runHarness({}, { "mcp-config": fixtureConfigPath, "skip-execute": true, ...flags });
+}
+
+const legacyServer = {
+  weather: { type: "stdio", command: process.execPath, args: [legacyFixture] },
+};
+const sepServer = {
+  skills: { type: "stdio", command: process.execPath, args: [sepFixture] },
+};
+
+check("installed package completes legacy skill:// discovery", () => {
+  const result = withFixture(legacyServer, {});
+  assert(
+    /1 server\(s\)/.test(result.logs),
+    `fixture server did not connect:\n${result.logs.slice(0, 500)}`,
+  );
+  assert(
+    /\b[1-9]\d* skill/i.test(result.logs),
+    `no skills were discovered over the legacy contract:\n${result.logs.slice(0, 500)}`,
+  );
+  assert(result.toolNames.includes("load_skill"), "load_skill was not registered");
+  assert(
+    !/io\.modelcontextprotocol\/skills/.test(result.logs),
+    "the draft SEP contract was negotiated without the gate",
+  );
+  return /(\d+ skill\(s\) discovered)/.exec(result.logs)?.[1] ?? "skills discovered";
+});
+
+check("installed package negotiates the draft SEP-2640 contract only when gated on", () => {
+  const enabled = withFixture(sepServer, { "mcp-skills-extension": true });
+  assert(
+    /1 server\(s\)/.test(enabled.logs),
+    `fixture server did not connect:\n${enabled.logs.slice(0, 500)}`,
+  );
+  assert(
+    /io\.modelcontextprotocol\/skills|skills extension|draft/i.test(enabled.logs),
+    `draft extension was not reported as negotiated:\n${enabled.logs.slice(0, 600)}`,
+  );
+  assert(
+    /\b[1-9]\d* skill/i.test(enabled.logs),
+    `no skills were discovered over the draft contract:\n${enabled.logs.slice(0, 600)}`,
+  );
+
+  // Same server, gate off. Shipping an unratified spec behind a flag is only
+  // meaningful if the flag actually withholds it.
+  const disabled = withFixture(sepServer, {});
+  assert(
+    !/io\.modelcontextprotocol\/skills/i.test(disabled.logs),
+    `draft extension negotiated with the gate off:\n${disabled.logs.slice(0, 600)}`,
+  );
+  return "gate honoured in both directions";
+});
+
+// ---------------------------------------------------------------------------
+
+rmSync(packDir, { recursive: true, force: true });
+rmSync(consumerDir, { recursive: true, force: true });
+
+if (notes.length > 0) console.log(`\n${notes.map((note) => `note: ${note}`).join("\n")}`);
+
+if (failures.length > 0) {
+  console.error(`\n${failures.length} package check(s) failed.`);
+  process.exit(1);
+}
+console.log("\nPackage verified.");
