@@ -94,8 +94,7 @@ afterEach(async () => {
 
 function extensionsOf(initialize: JsonRpcMessage): Record<string, unknown> {
   const capabilities = initialize.params?.["capabilities"] as
-    | { extensions?: Record<string, unknown> }
-    | undefined;
+    { extensions?: Record<string, unknown> } | undefined;
   return capabilities?.extensions ?? {};
 }
 

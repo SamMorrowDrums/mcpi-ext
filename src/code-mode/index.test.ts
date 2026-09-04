@@ -29,9 +29,10 @@ describe("CodeModeManager reliability", () => {
   });
 
   it("refuses code_search before isolate entry when no callable tools exist", async () => {
-    const sandboxExecutor = vi.fn(
-      async (): Promise<ExecuteResult> => ({ result: "unexpected", logs: [] }),
-    );
+    const sandboxExecutor = vi.fn(async (): Promise<ExecuteResult> => ({
+      result: "unexpected",
+      logs: [],
+    }));
     const codeMode = new CodeModeManager({ sandboxExecutor });
     initCodeMode(
       codeMode,
