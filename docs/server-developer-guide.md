@@ -489,6 +489,67 @@ it only into the server process. Never commit either file.
 
 ---
 
+## Running a custom server from a local image
+
+This section is for **contributors with a compatible server checkout in hand**, not for end users
+following the README Quick Start. Nothing here makes a custom image available to pull.
+
+The eight-skill GitHub reference server used to develop and test this client — 8 skills over a
+31-tool schema set — is **local-only**. It is not published to GHCR, the MCP Registry, or any other
+registry or public image tag, and there is no branch or SHA to fetch. It can only be produced from
+the exact compatible source checkout. If you do not have that checkout, this section will not help
+you; use the official server, which provides code mode and tool-cli but no skills.
+
+With the checkout, build and tag it locally:
+
+```sh
+cd /path/to/your/github-mcp-server-checkout
+docker build -t github-mcp-server-experimental:local .
+```
+
+Then reference that exact local tag in `mcp.json`. The skills extension is behind a server-side
+feature flag as well as mcpi-ext's own gate, so enable it on both sides. Credentials come from the
+same `chmod 600` env file pattern described above — the token is never written into `mcp.json`, and
+`args` are not shell-expanded, so the path must be absolute:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/home/you/.config/mcpi-ext/github-mcp.env",
+        "-e",
+        "GITHUB_FEATURES=skills_extension_draft",
+        "github-mcp-server-experimental:local",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+Check your checkout's own documentation for the feature-flag name and any other required setup — it
+is the server's contract, not this extension's, and it changes with the draft. `GITHUB_FEATURES` is
+passed with `-e` rather than placed in the env file because it is configuration, not a secret;
+keeping the two separate means the env file holds only the credential.
+
+Then run mcpi with the client-side gate on:
+
+```sh
+mcpi --mcp-config ~/.config/mcpi-ext/mcp.json --mcp-skills-extension
+```
+
+Both gates are required. With `--mcp-skills-extension` omitted, mcpi-ext never advertises the
+extension at `initialize`, so the server cannot negotiate it however it is built.
+
+---
+
 ## Checklist
 
 Before shipping your MCP server with progressive discovery support:

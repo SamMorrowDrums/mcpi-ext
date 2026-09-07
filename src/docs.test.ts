@@ -240,6 +240,78 @@ describe("server support claims", () => {
   });
 });
 
+describe("advanced local-image guidance stays local and stays out of the quick start", () => {
+  // A contributor with a compatible checkout can build the reference server
+  // themselves. That is legitimate, but it must never read as "a custom image
+  // exists somewhere you can pull", because none does.
+  const guide = docFiles.find((d) => d.name === "docs/server-developer-guide.md");
+  const guideBody = guide?.body ?? "";
+  const localImageTag = "github-mcp-server-experimental:local";
+
+  it("keeps the local build example in the contributor guide", () => {
+    expect(guide, "server-developer-guide.md is missing").toBeDefined();
+    expect(guideBody).toContain(`docker build -t ${localImageTag} .`);
+    expect(guideBody).toContain(localImageTag);
+  });
+
+  it("keeps the local build example out of the official-server quick start", () => {
+    // The quick start runs from its heading to the next top-level section.
+    const quickStart = /## Quick start([\s\S]*?)\n## /.exec(readme)?.[1] ?? "";
+    expect(quickStart).toBeTruthy();
+    expect(quickStart).not.toContain("docker build");
+    expect(quickStart).not.toContain("experimental");
+    expect(quickStart).not.toContain("GITHUB_FEATURES");
+    // The quick start still configures the official published image.
+    expect(quickStart).toContain("ghcr.io/github/github-mcp-server:latest");
+  });
+
+  it("never presents the custom image as a remote registry artifact", () => {
+    for (const doc of publicDocs) {
+      // No registry host may be prefixed onto the experimental image name.
+      expect(doc.body, `${doc.name} advertises a remote custom image`).not.toMatch(
+        /[\w.-]+\.[a-z]{2,}\/[\w./-]*github-mcp-server-experimental/,
+      );
+      expect(doc.body).not.toMatch(/docker pull[^\n]*experimental/);
+      // The experimental image, wherever named, carries the :local tag.
+      const experimentalRefs = doc.body.match(/github-mcp-server-experimental:[\w.-]+/g) ?? [];
+      for (const ref of experimentalRefs) {
+        expect(ref, `${doc.name} tags the custom image non-locally`).toBe(localImageTag);
+      }
+    }
+  });
+
+  it("states the reference build is local-only and not publicly distributed", () => {
+    expect(readme).toMatch(/local-only/);
+    expect(readme).toMatch(/not \*\*a public distribution\*\*|\*\*not a public distribution\*\*/);
+    expect(readme).toMatch(/GHCR|MCP Registry/);
+    expect(guideBody).toMatch(/local-only/);
+    // No claim that the exact source can be obtained.
+    expect(readme).toMatch(/no branch or SHA/i);
+  });
+
+  it("supplies credentials to the local image the same secure way", () => {
+    const jsonBlocks = [...guideBody.matchAll(/```json\n([\s\S]*?)```/g)].map((m) => m[1]);
+    const block = jsonBlocks.find((b) => b.includes("github-mcp-server-experimental"));
+    expect(block, "local image config block is missing").toBeTruthy();
+    expect(block).toContain('"--env-file"');
+    // Absolute path, because args are not shell-expanded.
+    expect(block).toMatch(/"\/[^"]*github-mcp\.env"/);
+    expect(block).not.toMatch(/~\/|\$HOME/);
+    // No credential inline, and no token smuggled in as a -e pair.
+    expect(block).not.toMatch(/gh[pousr]_[A-Za-z0-9]/);
+    expect(block).not.toMatch(/(TOKEN|PAT|SECRET|PASSWORD)\s*=\s*\S/i);
+  });
+
+  it("enables the draft feature flag only in the contributor guide", () => {
+    expect(guideBody).toContain("GITHUB_FEATURES=skills_extension_draft");
+    for (const doc of userFacingDocs) {
+      expect(doc.body, `${doc.name} leaks the server feature flag`).not.toContain(
+        "GITHUB_FEATURES",
+      );
+    }
+  });
+});
+
 describe("mechanisms, facilities, and degradation", () => {
   it("names the real tool call for each of the three mechanisms", () => {
     for (const call of ["load_skill", "code_execute", "code_search"]) {

@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.1] — Unreleased
+## [1.0.1] — 2026-09-07
 
 Documentation only. No runtime behaviour changes.
 
@@ -45,6 +45,12 @@ mechanisms are no longer numbered as tiers — the numbering read as a routing o
 was never implemented.
 
 ### Added
+
+Contributor guidance for building a compatible GitHub MCP server from a source checkout and
+tagging it locally (`github-mcp-server-experimental:local`), with the draft skills feature flag
+and the same `chmod 600` `--env-file` credential handling. It is deliberately outside the
+official-server Quick Start: the tested eight-skill build is local-only, is not published to GHCR
+or the MCP Registry, and cannot be reproduced from any public image.
 
 `src/docs.test.ts` asserts the documentation against the manifest, the registered CLI
 flags, the pinned SEP-2640 revision, and the negotiated protocol version, and rejects the

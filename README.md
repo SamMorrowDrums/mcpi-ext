@@ -250,10 +250,18 @@ The two are never mixed on one server. A server that declares the extension is s
 extension path alone, even when its listing is empty.
 
 The eight-skill GitHub reference implementation used to develop and test this client — 8 skills over
-a 31-tool schema set — is **not a public distribution**. It is not published to any registry or
-public image tag, and there is no branch or SHA you can pull. Treat it as the tested reference
-implementation pending upstream adoption and public distribution; the official server may implement
-skills in future, at which point they will work here with no change to this extension.
+a 31-tool schema set — is **not a public distribution**. It is not published to GHCR, the MCP
+Registry, or any other registry or public image tag, and there is no branch or SHA you can pull. It
+remains local-only and can only be produced from the exact compatible source checkout. Treat it as
+the tested reference implementation pending upstream adoption and public distribution; the official
+server may implement skills in future, at which point they will work here with no change to this
+extension.
+
+If you already have a compatible GitHub MCP server checkout, you can build and tag it locally and
+point `mcp.json` at that local tag — see
+[running a custom server from a local image](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/server-developer-guide.md#running-a-custom-server-from-a-local-image)
+in the developer guide. That path is for contributors with the source in hand; it does not make any
+custom image available to pull.
 
 To use skills today, point mcpi-ext at your own server implementing either contract. The
 [server developer guide](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/server-developer-guide.md)
