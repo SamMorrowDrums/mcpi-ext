@@ -101,19 +101,19 @@ For SEP-2640 skills the `skills-extension` source narrows this further: reads ar
 
 `McpClientManager` is the transport gateway beneath the policy — it owns connections and protocol negotiation, not authorization.
 
-### Tiered MCP Tool Access
+### MCP tool access mechanisms
 
-The extension provides three tiers for exposing MCP tools to the agent:
+The extension provides three mechanisms for exposing MCP tools to the agent:
 
-| Tier          | Mechanism                                                          | When Used                              |
-| ------------- | ------------------------------------------------------------------ | -------------------------------------- |
-| 1 — Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                |
-| 2 — tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills          |
-| 3 — Code Mode | search+execute, read-only tools only (refused, not prompted)       | Read-only tools with structured output |
+| Mechanism | Exposure                                                           | When Used                              |
+| --------- | ------------------------------------------------------------------ | -------------------------------------- |
+| Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                |
+| tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills          |
+| Code mode | search+execute, read-only tools only (refused, not prompted)       | Read-only tools with structured output |
 
-Tier 1 has two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills` and the gate is on.
+Skills have two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills` and the gate is on.
 
-The tier numbers name _exposure mechanisms_, not a routing order. Nothing tells the agent to try tier 1 before tier 2. Which surface an agent should use for a given task is decided by the execution-routing section below.
+These name _exposure mechanisms_, not a routing order, and the table is deliberately unnumbered so it cannot be read as one. Nothing tells the agent to try skills before tool-cli. Which surface an agent should use for a given task is decided by the execution-routing section below.
 
 ### Execution routing (`src/routing/`)
 

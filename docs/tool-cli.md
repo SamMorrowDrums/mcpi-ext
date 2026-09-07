@@ -1,4 +1,4 @@
-# Tier 2 — The Nuclear Football (tool-cli)
+# tool-cli
 
 `tool-cli` is a thin CLI binary that speaks authenticated tool-cli bridge protocol v1 over JSON-RPC 2.0 to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops.
 

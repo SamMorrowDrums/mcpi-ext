@@ -1,4 +1,4 @@
-# Tier 3 — Codey C. Maude (Code Mode)
+# Code mode
 
 Code Mode is always available for pure JavaScript computation, even when no MCP servers are configured. Its discovery catalog and generated type hints include every MCP tool, but host dispatch is allowed only when `annotations.readOnlyHint === true` and `annotations.destructiveHint !== true`.
 

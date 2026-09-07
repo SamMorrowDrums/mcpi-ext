@@ -2,19 +2,24 @@
 
 How to make your MCP server work with mcpi-ext's progressive discovery system. This guide covers skill resources, tool annotations, and output schemas -- the three things that determine how your tools surface to the agent.
 
-> **Context:** This implementation is part of an active proposal to add skills-as-groups to the MCP spec. See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for how mcpi implements deferred tool loading across providers.
+> **Context:** Skills reach a host by one of two contracts. The authoritative one is
+> [SEP-2640 "Skills Extension"](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640),
+> a **live Draft** on the MCP Extensions Track — open, unratified, and still changing. mcpi-ext pins
+> revision `753b9f2be43e07fdd070e535d75f190cff14beea` and keeps it **off by default** behind
+> `--mcp-skills-extension`. Legacy `skill://` resources remain supported as the compatibility
+> fallback for servers that declare no extension. See [skills.md](skills.md).
 
 ## Overview
 
-mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which of the three tiers your tools land in:
+mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which mechanisms your tools surface through:
 
-| What you provide                            | Tier                    | What happens                                                    |
-| ------------------------------------------- | ----------------------- | --------------------------------------------------------------- |
-| `skill://` resources with tool declarations | **Tier 1 -- Skills**    | Tools deferred until the model loads the skill                  |
-| Nothing special                             | **Tier 2 -- tool-cli**  | Tools discoverable via CLI progressive exploration              |
-| `readOnlyHint: true`                        | **Tier 3 -- Code Mode** | Tool callable from sandboxed JS; `outputSchema` improves typing |
+| What you provide                          | Mechanism     | What happens                                                    |
+| ----------------------------------------- | ------------- | --------------------------------------------------------------- |
+| Skills (SEP-2640 or `skill://` resources) | **Skills**    | Tools deferred until the model loads the skill                  |
+| Nothing special                           | **tool-cli**  | Tools discoverable via CLI progressive exploration              |
+| `readOnlyHint: true`                      | **Code mode** | Tool callable from sandboxed JS; `outputSchema` improves typing |
 
-These tiers are complementary. Every MCP tool appears in Code Mode discovery and type hints, while only explicitly read-only, non-destructive tools are callable there. A read-only tool gated behind a skill can therefore be available via Skills _and_ Code Mode.
+These mechanisms are complementary, and the table is not a ranking — nothing tries one before another. Every MCP tool appears in code mode discovery and type hints, while only explicitly read-only, non-destructive tools are callable there. A read-only tool gated behind a skill can therefore be available via Skills _and_ code mode.
 
 ---
 
@@ -34,9 +39,9 @@ Skills are the primary way to give the agent curated, workflow-aware access to y
 
 A skill resource is a markdown file with YAML frontmatter. The URI must follow the pattern `skill://<skill-name>/SKILL.md`.
 
-> **Frontmatter is evolving.** The [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) defines a new frontmatter schema using `metadata.io.modelcontextprotocol/tools` (space-separated tool names) that also supports prompts and resources. The current mcpi-ext implementation uses the `allowed-tools` YAML array format shown below. Both formats will be supported during the transition -- adopt the proposed format for new servers.
+> **Frontmatter differs by contract.** [SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) defines a frontmatter schema using `metadata.io.modelcontextprotocol/tools` (space-separated tool names) that also supports prompts and resources. The legacy `skill://` path uses the `allowed-tools` YAML array shown below. Both are supported: pick the one matching the contract your server declares, and never mix them on one server.
 
-**Current format** (mcpi-ext implementation):
+**Legacy `skill://` format** (used when your server declares no extension):
 
 ```markdown
 ---
@@ -57,7 +62,7 @@ Use the weather tools to look up conditions for any city.
 Always confirm the city name with the user before calling.
 ```
 
-**Proposed spec format** ([skills-as-groups](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13)):
+**SEP-2640 format** ([Draft](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)):
 
 ```markdown
 ---
@@ -186,7 +191,7 @@ Not every tool needs a skill. Leave tools ungated when:
 - They're useful across many workflows and don't need specialized instructions
 - There's only one tool and no workflow context to provide
 
-Ungated tools are always visible via tool-cli (Tier 2) and, if eligible, Code Mode (Tier 3).
+Ungated tools are always visible via tool-cli and, if eligible, code mode.
 
 ### Multiple skills per server
 
@@ -206,7 +211,7 @@ A tool can appear in multiple skills' `allowed-tools` lists -- it will be reveal
 
 ## Tool Annotations and Schemas for Code Mode
 
-Code Mode (Tier 3) lets the agent write JavaScript that chains tool calls in a V8 sandbox. Every MCP tool is discoverable, but host dispatch is allowed only when both permission conditions hold:
+Code mode lets the agent write JavaScript that chains tool calls in a V8 sandbox. Every MCP tool is discoverable, but host dispatch is allowed only when both permission conditions hold:
 
 1. **`readOnlyHint: true`** -- the tool does not modify its environment
 2. **`destructiveHint` is not `true`** -- contradictory destructive tools are refused
@@ -309,8 +314,8 @@ These hints are injected into the model's system prompt. The header reports tota
 
 A tool can be gated behind a skill _and_ callable from Code Mode. These are independent mechanisms:
 
-- The skill controls **when** the tool appears in the model's tool list (Tier 1)
-- Code Mode annotations control **whether** the tool is callable from sandboxed JavaScript (Tier 3)
+- The skill controls **when** the tool appears in the model's tool list
+- Code mode annotations control **whether** the tool is callable from sandboxed JavaScript
 
 Code Mode tools are always available -- they don't require `load_skill`. If you gate a Code Mode-eligible tool behind a skill, it will be available via Code Mode immediately, but won't appear as a standalone tool until the skill is loaded.
 
@@ -444,6 +449,107 @@ In this example:
 
 ---
 
+## Supplying credentials to a local server
+
+This section is for **contributors and local testing**, not for end users following the README
+Quick Start.
+
+MCP stdio servers do not inherit your shell environment. The MCP SDK spawns each one with a fixed
+safe set — `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` on POSIX (`APPDATA`, `PATH`,
+`USERPROFILE` and similar on Windows) — plus whatever the server entry declares explicitly. mcpi-ext
+additionally strips every `TOOL_CLI_*` variable so a child server can never inherit this session's
+bridge credentials. `mcp.json` performs no `${VAR}` expansion; values are used literally.
+
+So an exported `MY_TOKEN` will **not** reach your server, and you should not document `export` as if
+it does.
+
+For a containerised server, prefer Docker's `--env-file` with an absolute path to a `chmod 600`
+file, as the README does. For a server you run directly during development, a wrapper script keeps
+the secret out of `mcp.json`:
+
+```sh
+#!/bin/sh
+# ~/.local/bin/my-mcp-server-dev — chmod 700
+set -eu
+. "$HOME/.config/mcpi-ext/my-server.env"   # chmod 600, contains MY_TOKEN=...
+export MY_TOKEN
+exec /path/to/my-mcp-server "$@"
+```
+
+```json
+{
+  "mcpServers": {
+    "my-server": { "type": "stdio", "command": "/home/you/.local/bin/my-mcp-server-dev" }
+  }
+}
+```
+
+The wrapper runs with the restricted environment, reads the secret from a file it owns, and exports
+it only into the server process. Never commit either file.
+
+---
+
+## Running a custom server from a local image
+
+This section is for **contributors with a compatible server checkout in hand**, not for end users
+following the README Quick Start. Nothing here makes a custom image available to pull.
+
+The eight-skill GitHub reference server used to develop and test this client — 8 skills over a
+31-tool schema set — is **local-only**. It is not published to GHCR, the MCP Registry, or any other
+registry or public image tag, and there is no branch or SHA to fetch. It can only be produced from
+the exact compatible source checkout. If you do not have that checkout, this section will not help
+you; use the official server, which provides code mode and tool-cli but no skills.
+
+With the checkout, build and tag it locally:
+
+```sh
+cd /path/to/your/github-mcp-server-checkout
+docker build -t github-mcp-server-experimental:local .
+```
+
+Then reference that exact local tag in `mcp.json`. The skills extension is behind a server-side
+feature flag as well as mcpi-ext's own gate, so enable it on both sides. Credentials come from the
+same `chmod 600` env file pattern described above — the token is never written into `mcp.json`, and
+`args` are not shell-expanded, so the path must be absolute:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/home/you/.config/mcpi-ext/github-mcp.env",
+        "-e",
+        "GITHUB_FEATURES=skills_extension_draft",
+        "github-mcp-server-experimental:local",
+        "stdio"
+      ]
+    }
+  }
+}
+```
+
+Check your checkout's own documentation for the feature-flag name and any other required setup — it
+is the server's contract, not this extension's, and it changes with the draft. `GITHUB_FEATURES` is
+passed with `-e` rather than placed in the env file because it is configuration, not a secret;
+keeping the two separate means the env file holds only the credential.
+
+Then run mcpi with the client-side gate on:
+
+```sh
+mcpi --mcp-config ~/.config/mcpi-ext/mcp.json --mcp-skills-extension
+```
+
+Both gates are required. With `--mcp-skills-extension` omitted, mcpi-ext never advertises the
+extension at `initialize`, so the server cannot negotiate it however it is built.
+
+---
+
 ## Checklist
 
 Before shipping your MCP server with progressive discovery support:
@@ -457,14 +563,14 @@ Before shipping your MCP server with progressive discovery support:
 - [ ] Tools with typed output define `outputSchema` and return `structuredContent`
 - [ ] Schema properties have `.describe()` annotations for type hint generation
 - [ ] Tools are grouped into skills by user workflow, not API structure
+- [ ] Credentials are supplied by file or wrapper, never by assuming shell inheritance
 
 ---
 
 ## Further Reading
 
-- [skills-as-groups MCP spec proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) — the proposed spec addition for skill frontmatter with `metadata.io.modelcontextprotocol/*` keys
-- [Progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) — how mcpi implements deferred tool loading across Anthropic and OpenAI providers
-- [Skills mechanism (Tier 1)](skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement
-- [tool-cli (Tier 2)](tool-cli.md) — architecture, progressive discovery, shell composability
-- [Code Mode (Tier 3)](code-mode.md) — sandbox isolation, eligibility, tool dispatch
+- [SEP-2640 — Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) — the authoritative live Draft defining `skills/list`, `skills/get`, and the `metadata.io.modelcontextprotocol/*` frontmatter keys
+- [Skills](skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement
+- [tool-cli](tool-cli.md) — architecture, progressive discovery, shell composability
+- [Code mode](code-mode.md) — sandbox isolation, eligibility, tool dispatch
 - [Anthropic tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) — model-side deferred tool loading (pull model vs skill invocation's push model)
