@@ -1,22 +1,28 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { InMemoryTransport, type Client } from "@modelcontextprotocol/client";
 import { McpClientManager } from "../mcp/client-manager.js";
+import { McpPolicy } from "../mcp/policy.js";
+import { createWeatherServer } from "../test-servers/weather-server.js";
 import { SkillRegistry } from "./skill-registry.js";
 import { discoverSkillsFromServer } from "./discover.js";
 import { formatMcpSkillsForPrompt } from "./format.js";
 import { createLoadSkillTool } from "./load-skill-tool.js";
 
 /**
- * Integration test: connect to the test weather server via stdio,
+ * Integration test: connect to the test weather server in memory,
  * discover skills, load a skill, verify tool schemas in result, call a gated tool.
  */
 describe("skill integration (weather server)", () => {
-  const manager = new McpClientManager();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createWeatherServer();
+  const manager = new McpClientManager({ transportFactory: () => clientTransport });
   const registry = new SkillRegistry();
-  const enabledTools = new Set<string>();
+  const confirm = vi.fn().mockResolvedValue(true);
+  const policy = new McpPolicy({ gateway: manager, approvals: { confirm } });
   let client: Client;
 
   beforeAll(async () => {
+    await server.connect(serverTransport);
     await manager.connectAll({
       mcpServers: {
         "test-weather": {
@@ -33,7 +39,7 @@ describe("skill integration (weather server)", () => {
   });
 
   afterAll(async () => {
-    await manager.disconnectAll();
+    await Promise.all([manager.disconnectAll(), server.close()]);
   });
 
   it("connects and discovers tools", () => {
@@ -47,7 +53,7 @@ describe("skill integration (weather server)", () => {
   });
 
   it("discovers skill:// resources with frontmatter", async () => {
-    const skills = await discoverSkillsFromServer(client, "test-weather");
+    const skills = await discoverSkillsFromServer(policy, "test-weather");
 
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe("weather");
@@ -60,6 +66,7 @@ describe("skill integration (weather server)", () => {
     expect(skills[0].serverName).toBe("test-weather");
 
     registry.registerAll(skills);
+    policy.registerSkills(skills);
   });
 
   it("formats skills for system prompt", () => {
@@ -69,12 +76,10 @@ describe("skill integration (weather server)", () => {
     expect(prompt).toContain("load_skill");
   });
 
-  it("load_skill returns skill body and reports activated tools", async () => {
-    const tool = createLoadSkillTool({
-      registry,
-      mcpManager: manager,
-      enabledTools,
-    });
+  it("load_skill returns skill body and reports activated tools after approval", async () => {
+    const tool = createLoadSkillTool({ registry, policy });
+
+    expect(policy.isGated("check_weather_for_city")).toBe(true);
 
     const result = await tool.execute(
       "call-1",
@@ -94,9 +99,26 @@ describe("skill integration (weather server)", () => {
     expect(text.type).toBe("text");
     // Skill body should mention the tools
     expect("text" in text && text.text).toContain("check_weather_for_city");
-    // Tools should now be in enabledTools set
-    expect(enabledTools.has("check_weather_for_city")).toBe(true);
-    expect(enabledTools.has("check_weekly_forecast_for_city")).toBe(true);
+    // Activation required exactly one explicit approval.
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(policy.isGated("check_weather_for_city")).toBe(false);
+    expect(policy.isGated("check_weekly_forecast_for_city")).toBe(false);
+  });
+
+  it("reuses the approved grant instead of prompting again", async () => {
+    const tool = createLoadSkillTool({ registry, policy });
+
+    const result = await tool.execute(
+      "call-1b",
+      { name: "weather" },
+      undefined,
+      undefined,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      {} as any,
+    );
+
+    expect(result.details.error).toBeUndefined();
+    expect(confirm).toHaveBeenCalledTimes(1);
   });
 
   it("calls gated tools via MCP client", async () => {
@@ -124,11 +146,7 @@ describe("skill integration (weather server)", () => {
   });
 
   it("load_skill returns error for unknown skill", async () => {
-    const tool = createLoadSkillTool({
-      registry,
-      mcpManager: manager,
-      enabledTools,
-    });
+    const tool = createLoadSkillTool({ registry, policy });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await tool.execute("call-2", { name: "nope" }, undefined, undefined, {} as any);

@@ -1,23 +1,40 @@
+import type { BashState, ToolCliState } from "../routing/facilities.js";
+
 /**
- * Format system prompt section advising the agent when and how to use tool-cli.
+ * Usage documentation for tool-cli.
  *
- * Only included when MCP servers are connected. Tells the agent about
- * progressive discovery via tool-cli as an alternative to skill-based access.
+ * This is the "how", not the "when" — the `<execution_routing>` section decides
+ * which facility suits a task, and this section explains how to drive tool-cli
+ * once it has been chosen.
+ *
+ * Only emitted once the local RPC server has actually started. Advertising the
+ * commands before that would teach an agent an invocation it cannot perform.
+ * The routing section still reports tool-cli's availability either way, so
+ * nothing is silently omitted.
  */
-export function formatToolCliForPrompt(serverCount: number): string {
-  if (serverCount === 0) return "";
+export interface ToolCliPromptState {
+  /** Authenticated bridge state, including the verified v1 handshake metadata. */
+  toolCli: ToolCliState;
+  /** tool-cli is a shell program, so a registered bash tool is mandatory. */
+  bash: BashState;
+}
+
+export function formatToolCliForPrompt(state: ToolCliPromptState): string {
+  if (state.toolCli.kind !== "verified" || state.bash.kind !== "registered") return "";
+
+  const { bridgeInfo } = state.toolCli;
+  const upstreamServerCount = readUpstreamServerCount(bridgeInfo.upstreamMcp);
 
   return `
 
-<tool_cli>
-You have access to \`tool-cli\`, a CLI for discovering and calling MCP server tools progressively.
+<tool_cli_usage_docs>
+Use when you need to reach a specific MCP tool from the shell, or to discover which servers and
+tools exist before committing to an approach.
 
-Use tool-cli when:
-- No skill covers the task you need to do
-- You want to explore what tools are available on a server
-- You need ad-hoc access to an MCP tool without loading a full skill
-
-If a skill exists for the task, prefer the skill — it provides workflow instructions and curated tool access.
+\`tool-cli\` is a program, not a tool you can call. Invoke the bash tool with a command of the form
+\`tool-cli ...\`. Never emit \`<tool_cli...>\` markup, a pseudo-call, or any other text that imitates a
+tool invocation, and never write out what you expect a command would have printed — run it with the
+bash tool and use the real output.
 
 Discovery (progressive — only fetch what you need):
   tool-cli --help                            # List MCP servers with tool counts
@@ -27,6 +44,12 @@ Discovery (progressive — only fetch what you need):
 Calling tools:
   tool-cli <server> <tool> '{"key":"value"}' # Call a tool with JSON arguments
   tool-cli <server> <tool> '{}' --out /tmp/result.json  # Save large output to file
+
+Resources:
+  tool-cli resource list --server <server>
+  tool-cli resource templates --server <server>
+  tool-cli resource read --server <server> <uri>
+  tool-cli resource read --server <server> <uri> --out /tmp/resource.bin
 
 tool-cli outputs plain text or JSON. When a tool provides structured output (typed JSON),
 tool-cli returns it directly as JSON — use \`jq\` to query fields.
@@ -49,8 +72,25 @@ Chain calls, filter, and transform results using pipes and bash idioms:
   # Combine with standard tools
   tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
 
-Prefer piping and chaining over multiple separate tool calls when processing collections or filtering results.
+Because tool-cli runs inside a bash command, filtering, joining, or writing results to disk with
+ordinary programs is part of the same invocation — prefer one piped command over many separate
+calls when processing collections.
 Errors go to stderr with exit code 1 — use \`&&\` or \`set -e\` for safe chaining.
-${serverCount} MCP server(s) currently connected.
-</tool_cli>`;
+Verified bridge: ${bridgeInfo.serverImplementation.name}@${bridgeInfo.serverImplementation.version};
+protocol ${bridgeInfo.bridgeProtocol.name} v${bridgeInfo.bridgeProtocol.version}; authenticated bearer RPC;
+operations ${bridgeInfo.operations.join(", ")}.
+Verified capabilities: tool discovery=${bridgeInfo.capabilities.tools.discovery}, calls=${bridgeInfo.capabilities.tools.calls},
+schema validation=${bridgeInfo.capabilities.tools.inputSchemaValidation}; resource list=${bridgeInfo.capabilities.resources.list},
+templates=${bridgeInfo.capabilities.resources.templates}, read=${bridgeInfo.capabilities.resources.read};
+provider cancellation=${bridgeInfo.capabilities.cancellation.providerAbortSignal}.
+Upstream MCP summary: ${upstreamServerCount} server(s) reported by the verified bridge handshake.
+</tool_cli_usage_docs>`;
+}
+
+function readUpstreamServerCount(upstream: unknown): number | "unknown" {
+  if (upstream === null || typeof upstream !== "object" || Array.isArray(upstream)) {
+    return "unknown";
+  }
+  const count = Reflect.get(upstream, "serverCount");
+  return typeof count === "number" && Number.isInteger(count) && count >= 0 ? count : "unknown";
 }

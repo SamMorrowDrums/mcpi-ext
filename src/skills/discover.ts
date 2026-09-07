@@ -1,5 +1,5 @@
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { parseFrontmatter } from "@sammorrowdrums/mcpi";
+import type { McpPolicy } from "../mcp/policy.js";
 import type { McpSkillMetadata } from "./skill-registry.js";
 
 /**
@@ -7,18 +7,21 @@ import type { McpSkillMetadata } from "./skill-registry.js";
  *
  * Looks for resources with `skill://` URIs ending in `/SKILL.md`,
  * reads each one, and parses YAML frontmatter for skill metadata.
+ *
+ * All resource I/O goes through the shared policy boundary, so a server can
+ * only ever surface its own skill resources.
  */
 export async function discoverSkillsFromServer(
-  client: Client,
+  policy: McpPolicy,
   serverName: string,
   log: (msg: string) => void = console.error,
+  signal?: AbortSignal,
 ): Promise<McpSkillMetadata[]> {
   const skills: McpSkillMetadata[] = [];
 
-  let resources: { uri: string; name: string }[];
+  let skillResources: { uri: string; name?: string }[];
   try {
-    const result = await client.listResources();
-    resources = result.resources;
+    skillResources = await policy.listSkillResources(serverName, signal);
   } catch {
     log(
       `[skills] Server "${serverName}" does not support resources/list, skipping skill discovery`,
@@ -26,15 +29,16 @@ export async function discoverSkillsFromServer(
     return skills;
   }
 
-  const skillResources = resources.filter(
-    (r) => r.uri.startsWith("skill://") && r.uri.endsWith("/SKILL.md"),
-  );
-
   if (skillResources.length === 0) return skills;
 
   for (const resource of skillResources) {
     try {
-      const result = await client.readResource({ uri: resource.uri });
+      const result = await policy.readResource({
+        source: "skill-discovery",
+        serverName,
+        uri: resource.uri,
+        ...(signal ? { signal } : {}),
+      });
       const textContent = result.contents.find(
         (c): c is { uri: string; text: string } => "text" in c,
       );
@@ -70,7 +74,11 @@ export async function discoverSkillsFromServer(
     }
   }
 
-  return skills;
+  return skills.sort((left, right) => compareStrings(left.name, right.name));
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**

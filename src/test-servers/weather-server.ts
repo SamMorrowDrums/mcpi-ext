@@ -7,7 +7,7 @@
  * - check_weekly_forecast_for_city — 7-day forecast (gated by skill)
  * - echo — ungated baseline tool
  */
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 const SKILL_CONTENT = `---

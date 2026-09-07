@@ -1,36 +1,21 @@
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@sammorrowdrums/mcpi";
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { Type } from "typebox";
-import type { McpClientManager, McpTool } from "../mcp/index.js";
-
-/** Threshold in chars above which tool output is written to a tmp file. */
-const LARGE_OUTPUT_THRESHOLD = 10_000;
-
-interface McpToolProxyDetails {
-  serverName: string;
-  toolName: string;
-  error?: string;
-}
+import { renderTerminalCallToolResult } from "../mcp/call-tool-result.js";
+import type { McpClientManager, McpTool } from "../mcp/client-manager.js";
+import type { McpPolicy } from "../mcp/policy.js";
 
 /**
- * Register MCP tools as Pi tool proxies.
- *
- * Each registered tool forwards calls to the MCP server via `client.callTool()`.
- * Uses `Type.Unsafe()` to pass the MCP tool's original JSON Schema through
- * to Pi, preserving property names and types for the model.
+ * Register MCP tools as deferred mcpi proxies backed by the shared policy boundary.
  */
 export function registerMcpToolProxies(
   toolNames: string[],
-  mcpManager: McpClientManager,
+  manager: McpClientManager,
+  policy: McpPolicy,
   pi: ExtensionAPI,
 ): string[] {
   const registered: string[] = [];
-  const allTools = mcpManager.getTools();
-
-  // Check which tools are already registered to avoid double-registration
-  const existingTools = new Set(pi.getAllTools().map((t: { name: string }) => t.name));
+  const existingTools = new Set(pi.getAllTools().map((tool) => tool.name));
+  const toolsByName = new Map(manager.getTools().map((tool) => [tool.name, tool]));
 
   for (const name of toolNames) {
     if (existingTools.has(name)) {
@@ -38,106 +23,37 @@ export function registerMcpToolProxies(
       continue;
     }
 
-    const mcpTool = allTools.find((t) => t.name === name);
-    if (!mcpTool) continue;
-
-    pi.registerTool(createMcpToolProxy(mcpTool, mcpManager));
+    const tool = toolsByName.get(name);
+    if (!tool) continue;
+    pi.registerTool(createMcpToolProxy(policy, tool));
     registered.push(name);
   }
 
   return registered;
 }
 
-function createMcpToolProxy(mcpTool: McpTool, mcpManager: McpClientManager) {
-  // Pass through the MCP tool's JSON Schema directly via Type.Unsafe()
-  // This preserves the original property names and types for the model
-  const inputSchema = mcpTool.inputSchema;
-  const parameters = Type.Unsafe({
-    type: "object",
-    properties: (inputSchema.properties as Record<string, unknown>) ?? {},
-    required: (inputSchema.required as string[]) ?? [],
-  });
-
+function createMcpToolProxy(policy: McpPolicy, tool: McpTool) {
   return {
-    name: mcpTool.name,
-    label: mcpTool.name,
-    description: mcpTool.description ?? `MCP tool from ${mcpTool.serverName}`,
+    name: tool.name,
+    label: tool.name,
+    description: tool.description ?? `MCP tool from ${tool.serverName}`,
     deferred: true,
-    parameters,
-
+    parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      _signal: AbortSignal | undefined,
-      _onUpdate: undefined,
-      _ctx: ExtensionContext,
-    ): Promise<AgentToolResult<McpToolProxyDetails>> {
-      const client = mcpManager.getClient(mcpTool.serverName);
-      if (!client) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `MCP server "${mcpTool.serverName}" is not connected.`,
-            },
-          ],
-          details: {
-            serverName: mcpTool.serverName,
-            toolName: mcpTool.name,
-            error: "disconnected",
-          },
-        };
-      }
-
-      try {
-        const result = await client.callTool({
-          name: mcpTool.name,
-          arguments: params,
-        });
-
-        // Prefer structuredContent when available
-        let text: string;
-        if (result.structuredContent) {
-          text = JSON.stringify(result.structuredContent, null, 2);
-        } else if (Array.isArray(result.content)) {
-          text = result.content
-            .map((c) => {
-              if (typeof c === "object" && c !== null && "text" in c) {
-                return String((c as { text: unknown }).text);
-              }
-              return JSON.stringify(c);
-            })
-            .join("\n");
-        } else {
-          text = JSON.stringify(result);
-        }
-
-        // Write large outputs to tmp file to avoid bloating context
-        if (text.length > LARGE_OUTPUT_THRESHOLD) {
-          const tmpPath = join(tmpdir(), `mcp-${mcpTool.name}-${Date.now()}.json`);
-          writeFileSync(tmpPath, text, "utf-8");
-          text = `Output too large (${text.length} chars). Written to: ${tmpPath}`;
-        }
-
-        return {
-          content: [{ type: "text" as const, text }],
-          details: { serverName: mcpTool.serverName, toolName: mcpTool.name },
-        };
-      } catch (err) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `MCP tool "${mcpTool.name}" failed: ${(err as Error).message}`,
-            },
-          ],
-          details: {
-            serverName: mcpTool.serverName,
-            toolName: mcpTool.name,
-            error: (err as Error).message,
-          },
-        };
-      }
+      signal?: AbortSignal,
+      _onUpdate?: unknown,
+      _ctx?: ExtensionContext,
+    ) {
+      const terminal = await policy.callTool({
+        source: "proxy",
+        serverName: tool.serverName,
+        toolName: tool.name,
+        args: params,
+        ...(signal ? { signal } : {}),
+      });
+      return renderTerminalCallToolResult(terminal);
     },
   };
 }

@@ -64,9 +64,15 @@ try {
   const startResult = await server.start(console.log);
   token = startResult.token;
 
-  // --help: list servers
+  // --help: usage only. tool-cli v1 documents this as "show this help without
+  // connecting", so it must not reach the bridge or name any server.
   const help = await run("--help");
-  if (!help.includes("weather")) throw new Error("--help missing weather server");
+  if (!help.includes("Usage:")) throw new Error("--help missing usage");
+  if (help.includes("weather")) throw new Error("--help must not connect to servers");
+
+  // bare invocation: list servers
+  const servers = await run();
+  if (!servers.includes("weather")) throw new Error("server list missing weather");
 
   // <server>: list tools
   const tools = await run("weather");

@@ -1,49 +1,173 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
-import { getEligibleTools } from "./eligibility.js";
+import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
+import {
+  getCodeModeDiagnostics,
+  getCodeModeTools,
+  type CodeModeDiagnostics,
+  type CodeModeTool,
+} from "./eligibility.js";
 import type { ExecuteResult, ExecutorOptions } from "./executor.js";
-import { executeInSandbox } from "./executor.js";
+import { CodeModeDispatchError, executeInSandbox, type CodeModeErrorDetails } from "./executor.js";
+import { loadIsolatedVm } from "./isolated-vm.js";
 import { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 import { generateTypeHints } from "./type-hints.js";
 
-export { getEligibleTools, isEligibleForCodeMode } from "./eligibility.js";
-export type { ExecuteResult, ExecutorOptions } from "./executor.js";
-export { executeInSandbox, normalizeCode } from "./executor.js";
+export {
+  SYNTHESIZED_OUTPUT_SCHEMA,
+  getCodeModeDiagnostics,
+  getCodeModeTools,
+  getEligibleTools,
+  isEligibleForCodeMode,
+  toCodeModeTool,
+} from "./eligibility.js";
+export type {
+  CodeModeDiagnostics,
+  CodeModeRefusalReason,
+  CodeModeTool,
+  OutputSchemaProvenance,
+} from "./eligibility.js";
+export type { CodeModeErrorDetails, ExecuteResult, ExecutorOptions } from "./executor.js";
+export { SANDBOX_UNAVAILABLE_ERROR, executeInSandbox, normalizeCode } from "./executor.js";
+export {
+  loadIsolatedVm,
+  peekIsolatedVm,
+  resetIsolatedVmCacheForTests,
+  setIsolatedVmForTests,
+  type IsolatedVmLoad,
+  type IsolatedVmModule,
+} from "./isolated-vm.js";
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
 
 export interface CodeModeManagerOptions extends ExecutorOptions {
   /** Log function for status messages. */
   log?: (msg: string) => void;
+  /** Test seam for proving pre-isolate refusals. */
+  sandboxExecutor?: typeof executeInSandbox;
 }
 
+const NO_ELIGIBLE_TOOLS_ERROR: CodeModeErrorDetails = {
+  error: "no_eligible_tools",
+  message: "code_search has no callable read-only MCP tools to search.",
+  alternatives: ["code_execute", "tool-cli"],
+};
+
 /**
- * Orchestrates code mode: discovers eligible tools, generates type hints,
+ * Whether the sandbox backend can run code.
+ *
+ * `unknown` is a real state, not a synonym for unavailable: before the optional
+ * native addon has been probed we have not established anything, and reporting
+ * that honestly is better than guessing in either direction.
+ */
+export interface SandboxAvailability {
+  readonly state: "available" | "unavailable" | "unknown";
+  readonly reason: string;
+}
+
+const SANDBOX_UNPROBED: SandboxAvailability = {
+  state: "unknown",
+  reason: "the isolated-vm native addon has not been probed yet",
+};
+
+const SANDBOX_INJECTED: SandboxAvailability = {
+  state: "available",
+  reason: "a sandbox executor was supplied directly, bypassing the isolated-vm addon",
+};
+
+const SANDBOX_NATIVE: SandboxAvailability = {
+  state: "available",
+  reason: "the isolated-vm native addon loaded",
+};
+
+/**
+ * Orchestrates code mode: catalogs tools, generates type hints,
  * and executes model-generated code in a sandbox with tool dispatch.
  */
 export class CodeModeManager {
   private mcpManager: McpClientManager | null = null;
-  private eligibleTools: McpTool[] = [];
-  private typeHints = "";
-  private options: CodeModeManagerOptions;
+  private policy: McpPolicy | null = null;
+  private codeModeTools: CodeModeTool[] = [];
+  private diagnostics: CodeModeDiagnostics = getCodeModeDiagnostics([]);
+  private typeHints = generateTypeHints([]);
+  private readonly options: CodeModeManagerOptions;
+  private readonly sandboxExecutor: typeof executeInSandbox;
+  private log: ((msg: string) => void) | undefined;
+  private lastDiagnosticSummary = "";
+  private sandbox: SandboxAvailability;
+  private sandboxProbe: Promise<SandboxAvailability> | undefined;
 
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
+    this.sandboxExecutor = options.sandboxExecutor ?? executeInSandbox;
+    this.log = options.log;
+    // An injected executor is the sandbox. Probing the native addon in that
+    // case would report on a backend this manager will never call.
+    this.sandbox = options.sandboxExecutor ? SANDBOX_INJECTED : SANDBOX_UNPROBED;
   }
 
-  /** Initialize with MCP manager, discover eligible tools, generate type hints. */
-  initialize(mcpManager: McpClientManager): void {
+  /**
+   * Whether code mode should be advertised to the model.
+   *
+   * Only a *proven* unavailable sandbox switches this off. An unprobed backend
+   * stays active because `code_execute` is registered synchronously at load and
+   * returns a structured `sandbox_unavailable` error if it turns out it cannot
+   * run — a truthful refusal at call time beats hiding a facility that works.
+   */
+  get isActive(): boolean {
+    return this.sandbox.state !== "unavailable";
+  }
+
+  /** Current sandbox backend availability, without triggering a probe. */
+  getSandboxAvailability(): SandboxAvailability {
+    return this.sandbox;
+  }
+
+  /**
+   * Load the optional native addon once and cache the verdict.
+   *
+   * Safe to call from any lifecycle hook; concurrent callers share one probe.
+   */
+  async probeSandbox(): Promise<SandboxAvailability> {
+    if (this.sandbox.state !== "unknown") return this.sandbox;
+    this.sandboxProbe ??= loadIsolatedVm().then((load) => {
+      this.sandbox = load.available
+        ? SANDBOX_NATIVE
+        : { state: "unavailable", reason: load.reason };
+      if (!load.available) {
+        this.log?.(
+          `[code-mode] disabled: ${load.reason}. Skills, tool-cli, and routing are unaffected.`,
+        );
+      }
+      return this.sandbox;
+    });
+    return this.sandboxProbe;
+  }
+
+  /** Initialize with MCP manager and policy, catalog tools, and generate type hints. */
+  initialize(mcpManager: McpClientManager, policy: McpPolicy, log?: (msg: string) => void): void {
     this.mcpManager = mcpManager;
+    this.policy = policy;
+    this.log = log ?? this.log;
     this.refresh();
   }
 
-  /** Refresh eligible tools and type hints (call on tools/list_changed). */
+  /** Refresh the complete tool catalog and type hints (call on tools/list_changed). */
   refresh(): void {
-    if (!this.mcpManager) return;
-    this.eligibleTools = getEligibleTools(this.mcpManager);
-    this.typeHints = generateTypeHints(this.eligibleTools);
-    this.options.log?.(
-      `[code-mode] ${this.eligibleTools.length} eligible tool(s), ${this.typeHints.length} chars of type hints`,
-    );
+    this.codeModeTools = this.mcpManager ? getCodeModeTools(this.mcpManager) : [];
+    this.diagnostics = getCodeModeDiagnostics(this.codeModeTools);
+    this.typeHints = generateTypeHints(this.codeModeTools);
+
+    const summary =
+      `[code-mode] ${this.diagnostics.totalTools} tool(s): ` +
+      `${this.diagnostics.callableTools} callable, ${this.diagnostics.refusedTools} dispatch-refused; ` +
+      `output schemas: ${this.diagnostics.declaredOutputSchemas} declared, ` +
+      `${this.diagnostics.synthesizedOutputSchemas} synthesized, ` +
+      `${this.diagnostics.unavailableOutputSchemas} unavailable; ` +
+      `${this.typeHints.length} chars of type hints`;
+    if (summary !== this.lastDiagnosticSummary) {
+      this.log?.(summary);
+      this.lastDiagnosticSummary = summary;
+    }
   }
 
   /** Get the type hints string for injection into system prompt. */
@@ -53,21 +177,38 @@ export class CodeModeManager {
 
   /** Get eligible tools. */
   getEligibleTools(): McpTool[] {
-    return this.eligibleTools;
+    return this.codeModeTools.filter((entry) => entry.callable).map((entry) => entry.tool);
   }
 
-  /** Whether code mode has any eligible tools. */
-  get isActive(): boolean {
-    return this.eligibleTools.length > 0;
+  /** Get the complete client-internal catalog, including permission and schema provenance. */
+  getCatalogTools(): readonly CodeModeTool[] {
+    return this.codeModeTools;
+  }
+
+  getDiagnostics(): CodeModeDiagnostics {
+    return this.diagnostics;
   }
 
   /** Execute code in search mode (tool catalog queries). */
   async searchTools(code: string): Promise<ExecuteResult> {
+    this.refresh();
+    if (this.diagnostics.callableTools === 0) {
+      return {
+        result: undefined,
+        error: NO_ELIGIBLE_TOOLS_ERROR.message,
+        errorDetails: {
+          ...NO_ELIGIBLE_TOOLS_ERROR,
+          alternatives: [...(NO_ELIGIBLE_TOOLS_ERROR.alternatives ?? [])],
+        },
+        logs: [],
+      };
+    }
     return this.execute(code);
   }
 
   /** Execute code that chains MCP tool calls. */
   async executeCode(code: string): Promise<ExecuteResult> {
+    this.refresh();
     return this.execute(code);
   }
 
@@ -81,14 +222,15 @@ export class CodeModeManager {
 
   /** Format a system prompt section for code mode. */
   formatSystemPromptSection(): string {
-    if (!this.isActive) return "";
-
     return [
       "",
       "<code_mode>",
       "## Code mode",
       "",
-      "`code_execute` runs vanilla JavaScript in a sandboxed V8 isolate. Use it for:",
+      "Use when a task needs exact computation or control flow: math, aggregation, looping over",
+      "results, data transformation, or chaining several MCP tool calls with logic in between.",
+      "",
+      "`code_execute` runs vanilla JavaScript in a sandboxed V8 isolate. Concretely, that covers:",
       "",
       "1. **Arbitrary computation** — math, string manipulation, date arithmetic, data transformation,",
       "   or any calculation the user asks for. No MCP tools needed; plain JS works.",
@@ -96,21 +238,10 @@ export class CodeModeManager {
       "   many tool calls. Write a loop inside one `code_execute` instead of making many separate tool calls.",
       "3. **Pagination** — fetch batches in a loop until exhausted, then compute over the full dataset.",
       "",
-      "Use `code_search` first to discover what tools are available before writing execution code.",
+      "Use `code_search` first to discover which MCP tools are reachable from inside the sandbox.",
       "",
-      "**Code mode tools are always available — you do not need to call `load_skill` first.**",
+      "`code_search` and `code_execute` are always registered and never gated.",
       "",
-      "### Choosing the right approach",
-      "",
-      "- **Skill** (`load_skill`) — a curated workflow exists for this domain task (e.g., a GitHub skill for PR management).",
-      "- **tool-cli** — you need to discover what tools exist, or make a quick ad-hoc tool call.",
-      "- **Code mode** (`code_execute`) — you need computation: math, aggregation, looping over results,",
-      "  data transformation, or chaining multiple tool calls with logic in between.",
-      "",
-      "Pick based on what the task needs, not a fixed order. A calculation goes straight to code mode;",
-      "a single lookup goes to a skill or tool-cli; exploration starts with tool-cli or `code_search`.",
-      "",
-      "**If unsure what's available**, start with `code_search` or `tool-cli --help` to see what you have.",
       "After producing a result, verify it makes sense — run a quick sanity check or spot-check values.",
       "",
       "### How to write code",
@@ -153,56 +284,62 @@ export class CodeModeManager {
   }
 
   private async execute(code: string): Promise<ExecuteResult> {
-    if (!this.mcpManager) {
-      return { result: undefined, error: "Code mode not initialized", logs: [] };
-    }
-
-    // Refresh eligible tools in case MCP servers changed since initialization
-    this.refresh();
-
-    const toolNames = this.eligibleTools.map((t) => t.name);
+    const policy = this.policy;
+    const toolNames = this.codeModeTools.map((entry) => entry.tool.name);
 
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {
-      const tool = this.eligibleTools.find((t) => t.name === toolName);
-      if (!tool) {
+      const codeModeTool = this.codeModeTools.find((entry) => entry.tool.name === toolName);
+      if (!codeModeTool) {
         throw new Error(`Tool "${toolName}" not found in code mode eligible tools`);
       }
 
-      const client = this.mcpManager?.getClient(tool.serverName);
-      if (!client) {
-        throw new Error(`MCP server "${tool.serverName}" is not connected`);
+      if (!policy) {
+        throw new Error("Code mode MCP policy is not initialized");
       }
 
-      const result = await client.callTool({ name: toolName, arguments: args });
-
-      // Prefer structuredContent (typed output) over raw content
-      if (result.structuredContent) {
-        return result.structuredContent;
+      try {
+        const terminal = await policy.callTool({
+          source: "code-mode",
+          serverName: codeModeTool.tool.serverName,
+          toolName: codeModeTool.tool.name,
+          args,
+        });
+        return terminal.result;
+      } catch (error) {
+        throw toCodeModeDispatchError(error, codeModeTool);
       }
-
-      // Fall back to parsing text content
-      if (Array.isArray(result.content)) {
-        const textParts = result.content
-          .filter(
-            (c): c is { type: string; text: string } =>
-              typeof c === "object" && c !== null && "text" in c,
-          )
-          .map((c) => c.text);
-
-        const combined = textParts.join("\n");
-        try {
-          return JSON.parse(combined);
-        } catch {
-          return combined;
-        }
-      }
-
-      return result;
     };
 
-    return executeInSandbox(code, toolNames, dispatch, {
+    return this.sandboxExecutor(code, toolNames, dispatch, {
       memoryLimit: this.options.memoryLimit,
       timeoutMs: this.options.timeoutMs,
     });
   }
+}
+
+/**
+ * Translate a policy denial into Code Mode's structured dispatch error, keeping
+ * the catalog's refusal detail so the model learns why a tool was refused.
+ */
+function toCodeModeDispatchError(error: unknown, codeModeTool: CodeModeTool): unknown {
+  if (!(error instanceof McpPolicyError)) return error;
+
+  const isPermission = error.reason === "permission_denied";
+  return new CodeModeDispatchError({
+    error: isPermission ? "permission_denied" : error.reason,
+    message: error.message,
+    alternatives: [...error.alternatives],
+    toolName: codeModeTool.tool.name,
+    ...(isPermission ? { reason: formatRefusalReasons(codeModeTool) } : {}),
+  });
+}
+
+function formatRefusalReasons(codeModeTool: CodeModeTool): string {
+  return codeModeTool.refusalReasons
+    .map((reason) =>
+      reason === "destructive_hint"
+        ? "annotations.destructiveHint is true"
+        : "annotations.readOnlyHint is not true",
+    )
+    .join("; ");
 }

@@ -32,9 +32,33 @@ export const McpConfig = Type.Object({
   mcpServers: Type.Record(Type.String(), ServerConfig, {
     description: "Named MCP server configurations",
   }),
+  experimental: Type.Optional(
+    Type.Object(
+      {
+        skillsExtension: Type.Optional(
+          Type.Boolean({
+            description:
+              "Opt in to the DRAFT MCP skills extension (SEP-2640). Unratified and subject to change; off by default.",
+          }),
+        ),
+      },
+      { description: "Opt-in support for unratified MCP proposals" },
+    ),
+  ),
 });
 
 export type StdioServerConfig = Static<typeof StdioServerConfig>;
 export type RemoteServerConfig = Static<typeof RemoteServerConfig>;
 export type ServerConfig = Static<typeof ServerConfig>;
 export type McpConfig = Static<typeof McpConfig>;
+
+/**
+ * Whether the draft skills extension is enabled.
+ *
+ * Defaults to **off**. SEP-2640 is a draft: nothing here should start speaking
+ * it because a config file happened to omit a key, and a host that quietly
+ * enabled a proposal would make it indistinguishable from ratified support.
+ */
+export function isSkillsExtensionEnabled(config: Pick<McpConfig, "experimental">): boolean {
+  return config.experimental?.skillsExtension === true;
+}
