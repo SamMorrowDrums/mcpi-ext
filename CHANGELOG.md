@@ -5,7 +5,52 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — Unreleased
+## [1.0.1] — Unreleased
+
+Documentation only. No runtime behaviour changes.
+
+### Fixed
+
+#### The install instructions now match the shipped CLI
+
+The README led with a global install plus `--extension $(npm root -g)/…`. `mcpi install
+npm:@sammorrowdrums/mcpi-ext@1.0.1` is the supported path: mcpi records the package in
+`~/.config/mcpi/settings.json` and loads it on every run, so the flag is never needed.
+
+#### Credentials are no longer described as inherited from the shell
+
+An exported `GITHUB_PERSONAL_ACCESS_TOKEN` never reached a stdio MCP server. Children get
+the MCP SDK's default environment — on POSIX just `HOME`, `LOGNAME`, `PATH`, `SHELL`,
+`TERM`, `USER` — and `mcp.json` performs no `${VAR}` expansion. The Quick Start now uses a
+`chmod 600` env file passed to `docker run --env-file`, which Docker itself reads, and no
+token is ever written into `mcp.json`.
+
+#### Removed references to things that do not exist
+
+The `ghcr.io/github/github-mcp-server:skill-discovery` image tag was never published; the
+documented tag is `:latest`. The link to mcpi's progressive tool discovery document 404s —
+that repository has no `docs/` directory. The skills mechanism cited a stale
+`experimental-ext-grouping` mirror instead of the live SEP-2640 draft.
+
+#### Server support claims are now measured, not assumed
+
+The official GitHub MCP server does not declare `io.modelcontextprotocol/skills`, so it
+provides Code Mode and tool-cli but no skills. The README states this plainly and reports
+the tool counts it was measured against.
+
+### Changed
+
+Persona artwork and story framing were removed from the README and docs, and the
+mechanisms are no longer numbered as tiers — the numbering read as a routing order that
+was never implemented.
+
+### Added
+
+`src/docs.test.ts` asserts the documentation against the manifest, the registered CLI
+flags, the pinned SEP-2640 revision, and the negotiated protocol version, and rejects the
+stale strings listed above so they cannot return unnoticed.
+
+## [1.0.0] — 2026-09-07
 
 First stable release. The changes below are breaking relative to `0.2.1`; each one is
 listed with what moved and what to do about it. A step-by-step upgrade is in the

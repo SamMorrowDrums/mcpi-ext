@@ -1,204 +1,109 @@
 # mcpi-ext
 
-[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi)](https://www.npmjs.com/package/@sammorrowdrums/mcpi)
 [![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi-ext)](https://www.npmjs.com/package/@sammorrowdrums/mcpi-ext)
+[![npm](https://img.shields.io/npm/v/@sammorrowdrums/mcpi)](https://www.npmjs.com/package/@sammorrowdrums/mcpi)
 [![npm](https://img.shields.io/npm/v/@sammorrowdrums/tool-cli)](https://www.npmjs.com/package/@sammorrowdrums/tool-cli)
 
-> **Experimental.** This extension implements progressive MCP tool discovery via skills for [mcpi](https://github.com/SamMorrowDrums/mcpi) (an experimental pi fork). See the [skills-as-groups proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13) for the proposed MCP spec addition, and the [progressive tool discovery docs](https://github.com/SamMorrowDrums/mcpi/blob/main/docs/progressive-tool-discovery.md) for implementation details.
+An extension for [mcpi](https://github.com/SamMorrowDrums/mcpi) that gives an agent three ways to
+reach [MCP](https://modelcontextprotocol.io/) servers — **skills**, **tool-cli**, and **code mode** —
+behind a single authorization boundary, so every call is authorized, audited, and gated in one place.
+
+Each mechanism exists to spend only the context tokens a task actually needs. A large MCP server can
+publish hundreds of tools; loading all of their schemas into every request is expensive and degrades
+tool selection. These three mechanisms let the agent discover and call tools progressively instead.
+
+- **[Skills](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/skills.md)** — the server
+  publishes a documented workflow that unlocks a curated tool set on demand.
+- **[tool-cli](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/tool-cli.md)** — a shell
+  on-ramp for progressive discovery: servers → tools → schema → call.
+- **[Code mode](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/code-mode.md)** —
+  sandboxed JavaScript that chains read-only tool calls inside a V8 isolate.
+
+---
+
+## Quick start
+
+Verified against **mcpi 0.85.0** and **tool-cli 1.0.2** — the current releases, and also the
+minimum supported versions: mcpi-ext declares a peer floor of `@sammorrowdrums/mcpi >=0.85.0
+<1.0.0`, and requires `@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext `1.x`
+works; the commands below pin the current one.
+
+### 1. Check Node
+
+Node.js `>=22.13.0`. Node 22 and 24 are both covered by CI.
 
 ```sh
-npm install -g @sammorrowdrums/mcpi@latest @sammorrowdrums/mcpi-ext@latest @sammorrowdrums/tool-cli@latest
-mcpi --extension $(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js \
-  --mcp-config ~/.config/mcpi-ext/mcp.json
+node --version
 ```
 
-See [Quick Start](#quick-start) for MCP server configuration.
+### 2. Install mcpi and tool-cli globally
 
----
-
-![Three figures in a dark, Sandman-esque realm — The Skill Dealer, The Nuclear Football, and Codey C. Maude — standing before swirling constellations of MCP tool connections](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/banner.webp)
-
-> _They will tell you that MCP has a context problem. That the protocol gives too many tools, that the model drowns in schemas it doesn't need, that the cost of knowing everything is losing the ability to do anything well._
->
-> _They are wrong._
->
-> _MCP doesn't have a context problem. It has an imagination problem. The protocol already contains everything you need — `skill://` resources, tool annotations, `outputSchema`, progressive discovery. The pieces are all there, lying in the open like runes on a hillside. You just have to read them._
->
-> _What follows is the story of three who did._
-
----
-
-Building custom [MCP](https://modelcontextprotocol.io/) support as [mcpi](https://github.com/SamMorrowDrums/mcpi) extensions. This project implements **tiered progressive discovery** — three complementary strategies for exposing MCP tools to an AI agent, each paying only the context tokens it needs.
-
-| Tier          | Aspect                   | Mechanism                                           |
-| ------------- | ------------------------ | --------------------------------------------------- |
-| 1 — Skills    | **The Skill Dealer**     | `skill://` resources gate tools via `allowed-tools` |
-| 2 — tool-cli  | **The Nuclear Football** | CLI progressive discovery via shell                 |
-| 3 — Code Mode | **Codey C. Maude**       | Always-on sandboxed JS with read-only MCP dispatch  |
-
----
-
-## I. The Skill Dealer
-
-![A shadowy figure behind a table of glowing cards, each card inscribed with the name of an MCP tool](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/the-skill-dealer.webp)
-
-> _The Skill Dealer does not give you what you ask for. The Skill Dealer gives you what you need — and nothing more._
-
-MCP servers ship `skill://` resources — SKILL.md files declaring which tools a skill gates. The extension discovers skills on connection and registers their tools with `deferred: true`: present in the registry for dispatch but hidden from the model and the prompt. **Cache is preserved** — neither the tools array nor the system prompt ever changes.
-
-When the model calls `load_skill`, the skill's instructions arrive and its tools are unblocked. The model discovers tools from the skill body and can call them immediately. The MCP server itself declares how its tools should be discovered.
-
-Anthropic's [tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool) solves a similar problem from the model side -- deferring tool loading to avoid cache invalidation from large tool lists. But where tool search has the model _pull_ tools on demand, skill invocation _pushes_ them: when `load_skill` fires, the harness sends unsolicited tool definitions to the model API alongside the skill instructions. The model doesn't search for tools -- the right tools arrive because the skill declared them.
-
-📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/skills.md) — deferred gating, `defer_loading` provider support, `tool_call` hook enforcement.
-
-> _"What you do not need to know," said the Skill Dealer, shuffling the deck, "you will not be burdened with knowing."_
-
-![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/skills-enabling-mcp-tools.png)
-
----
-
-## II. The Nuclear Football
-
-![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/nuclear-mcp-football.webp)
-
-> _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
-
-[`tool-cli`](https://github.com/SamMorrowDrums/tool-cli) is a thin CLI binary that speaks authenticated bridge protocol v1 to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops. Discovery is progressive: server list → tool list → schema → call. The same policy-backed bridge lists and reads ordinary MCP resources, including binary `--out` files, while keeping `skill://` and SEP-2640-declared skill resources isolated behind `load_skill`.
-
-📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/tool-cli.md) — architecture, progressive discovery, shell composability.
-📦 [**Standalone package →**](https://github.com/SamMorrowDrums/tool-cli) — `ToolProvider` interface, server, and implementor guidance for other languages.
-
-This is the dual-lock design: the agent holds the briefcase -- reach to every server, every tool, every chain of commands. But the harness holds the launch authority. The HTTP layer isn't a separate service with its own auth; it runs inside the extension process. Every call routes back through `McpPolicy`, the shared authorization boundary, giving full observability and a single HITL choke point. Bestow executive control to the agent, but keep the safety in the infrastructure.
-
-> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself. And somewhere behind you, the harness is watching._
-
-![tool-cli in action — progressive discovery piped through grep](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/tool-cli-grep.png)
-
----
-
-## III. Codey C. Maude
-
-![A luminous figure composed of flowing code, sitting cross-legged in a V8 isolate bubble, reading structured data from floating JSON schemas](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/code-c-maude.webp)
-
-> _Codey does not ask permission. Codey does not need to. Everything Codey touches is explicitly read-only, and the sandbox cannot be escaped. Codey is safe by construction._
-
-Code Mode is always available for arithmetic, parsing, and deterministic transforms. It catalogs every MCP tool, but only dispatches tools that are explicitly **read-only** and non-destructive. Declared output schemas produce precise hints; read-only tools without one get a client-internal permissive survival schema with visible provenance. The model's JavaScript runs inside a memory- and time-limited V8 isolate with no filesystem, network, or process access.
-
-📖 [**How it works →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/code-mode.md) — sandbox isolation, catalog provenance, tool dispatch.
-
-> _"I can see everything," Codey said, eyes reflecting infinite JSON. "I just can't touch it. That's the point. That's why they trust me."_
-
-![Code Mode in action — chaining MCP tools in a V8 sandbox to build a histogram](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/code-mode-histogram.png)
-
----
-
-## Choosing an Execution Facility
-
-Whenever the extension loads it emits a single `<execution_routing>` prompt section describing the
-facilities available to the agent — **including when zero MCP servers are connected**. The section
-sorts facilities by task shape, not by rank: none is a default, none outranks another, and there is
-no sequence to try them in. Every facility states its own availability, so an unavailable one is
-listed with the reason rather than silently omitted.
-
-Three of the four facilities come from this extension; the fourth is the host's own shell, described
-alongside them because most real tasks need it.
-
-| Facility                             | Suits work that is…                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------- |
-| [Skills](#i-the-skill-dealer)        | a documented domain workflow — sequencing, conventions, and a curated tool set              |
-| [Code mode](#iii-codey-c-maude)      | exact computation or control flow, sandboxed with no filesystem, network, or process access |
-| [tool-cli](#ii-the-nuclear-football) | reaching a specific MCP tool, or discovering what exists — run through the host bash tool   |
-| bash + external programs             | touching the real machine: files, git, build tools, data pipelines, artifacts that persist  |
-
-**Skills** — when a curated workflow exists for the domain task. "Triage these 20 issues" means
-loading the triage skill, which supplies the right tools _plus_ the workflow instructions (dedup
-checks, labeling conventions, close criteria). Re-deriving that from raw tool calls is wasteful and
-error-prone. A skill enables the tools it declares only after the grant is approved.
-
-**Code mode** — when you need real computation across many calls: pagination loops, aggregation,
-joining results, math. 876 issues across 9 pages, counting labels per issue, summing into a
-histogram — that's a loop with state, and one sandbox execution does it. Available even with zero
-MCP servers connected, because pure computation needs no server.
-
-**tool-cli** — one-shot or exploratory MCP calls, especially when piping through Unix tools.
-`tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'` — one call, pipe to jq, done.
-Also the way to discover what's on a server you haven't used before. It is a program, not a tool:
-the agent invokes the bash tool with a `tool-cli ...` command. It is advertised as available only
-after bash is active and the local server completes an authenticated compatible v1 handshake;
-inherited credentials are masked and usage docs remain withheld on startup, timeout, auth, or
-major-version failure.
-
-**bash + external programs** — the substrate the other three lack. It is the only facility that can
-create, modify, or inspect files and artifacts, and the only one that runs the host's real programs.
-
-### Facilities compose
-
-tool-cli and bash compose especially closely: because tool-cli _is_ a program run with the bash
-tool, fetching MCP data and then filtering, joining, or writing it to disk with ordinary programs is
-a single bash command rather than two rival approaches.
-
-> _"Triage the backlog of github/github-mcp-server: find stale bugs older than 90 days with no recent activity, summarize patterns, and close obvious duplicates."_
-
-1. **Code mode** paginated all open bug issues, filtered by `updated < 90d ago`, grouped by label
-   and keyword to find clusters. Computation across many pages — this is what sandboxes are for.
-
-2. **tool-cli** spot-checked suspect issues. `tool-cli github get_issue '{"number":42}'` piped
-   through `jq` to eyeball specific fields. Quick, ad-hoc, composable.
-
-3. **A skill** (`triage-issues`) drove the actual closures — following the project's triage
-   workflow with correct labels, comment templates, and close reasons.
-
-4. **bash** wrote the resulting summary to a file in the repo, because none of the other three can
-   touch the filesystem.
-
----
-
-## The Architecture
-
-```mermaid
-flowchart TD
-    subgraph mcpi["mcpi (agent)"]
-        T1["load_skill\n(Tier 1 — Skills)"]
-        T2["tool-cli\n(Tier 2 — Football)"]
-        T3["code_search / code_execute\n(Tier 3 — Code Mode)"]
-        MCM["McpClientManager\n(split MCP v2 client — stdio & Streamable HTTP)"]
-        T1 --> MCM
-        T2 --> MCM
-        T3 --> MCM
-    end
-    MCM --> S1["MCP Server"]
-    MCM --> S2["MCP Server"]
-    MCM --> S3["MCP Server"]
-```
-
-The harness controls what the model sees. MCP servers just expose their tools and skills. The extension decides _when_ and _how_ to reveal them.
-
-### Every call flows through the harness
-
-All three tiers route MCP tool calls back through the extension process, and every one of them crosses the same authorization boundary: `McpPolicy`. Even when the model writes sandboxed JavaScript (Code Mode) or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by that one object. This means:
-
-- **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and Code Mode sandbox calls alike. Full observability without instrumentation.
-- **Human-in-the-loop happens at one point** — `McpPolicy` checks tool annotations (`readOnlyHint`, `destructiveHint`) and gates non-read-only calls through user confirmation, regardless of which tier initiated them. A tool unlocked by an approved skill grant is not re-prompted.
-- **Undiscovered and gated tools never reach upstream** — the policy verifies the tool exists in the discovered set and is not skill-gated before contacting the server, so naming a hidden tool over the authenticated RPC socket fails at the boundary.
-- **Resource operations use the same policy** — tool-cli can list templates and read ordinary text/binary resources, while every `skill://` URI and SEP-2640-declared resource remains isolated; skill reads are origin-bound, and a discovery pass cannot authorize a skill-load read.
-- **Every decision is audited** — allowed and denied operations alike are recorded with their source (`proxy`, `code-mode`, `tool-cli`, `skill-discovery`, `skill-load`).
-
-> _MCP doesn't have a context problem. It never did. It was just waiting for someone to imagine the right way to read the runes._
-
----
-
-## Quick Start
-
-### 1. Install
+`mcpi` and `tool-cli` are commands you run, so they belong on your `PATH`:
 
 ```sh
-npm install -g @sammorrowdrums/mcpi@latest @sammorrowdrums/mcpi-ext@latest @sammorrowdrums/tool-cli@latest
+npm install -g @sammorrowdrums/mcpi@0.85.0 @sammorrowdrums/tool-cli@1.0.2
 ```
 
-### 2. Configure MCP servers
+To track the newest releases instead of the pinned pair, use `@latest`:
 
-Create `~/.config/mcpi-ext/mcp.json`:
+```sh
+npm install -g @sammorrowdrums/mcpi@latest @sammorrowdrums/tool-cli@latest
+```
+
+### 3. Install the extension through mcpi
+
+Do **not** install mcpi-ext globally and point `--extension` at it by hand. mcpi manages extension
+packages itself, records them in its settings, and can update them later:
+
+```sh
+mcpi install npm:@sammorrowdrums/mcpi-ext
+```
+
+That takes the newest `1.x`, which is what most people want. To pin an exact version for a
+reproducible setup, name it — this page documents `1.0.1`:
+
+```sh
+mcpi install npm:@sammorrowdrums/mcpi-ext@1.0.1
+```
+
+Confirm it registered:
+
+```sh
+mcpi list
+```
+
+```
+User packages:
+  npm:@sammorrowdrums/mcpi-ext@1.0.1
+    ~/.cache/mcpi/npm/node_modules/@sammorrowdrums/mcpi-ext
+```
+
+`mcpi install` writes to `~/.config/mcpi/settings.json`. Add `-l` to install into the current
+project's `.mcpi/settings.json` instead. Once a package is listed there, mcpi loads it on every
+run — you never pass `--extension` for it again.
+
+### 4. Configure MCP servers
+
+Create `~/.config/mcpi-ext/mcp.json`. That is the default path; `--mcp-config <path>` overrides it,
+and a missing file is not an error — mcpi-ext simply starts with zero servers.
+
+Keep your token **out of this file**. Write it to a private env file instead, created with
+restrictive permissions from the start so the token is never briefly world-readable:
+
+```sh
+mkdir -p ~/.config/mcpi-ext
+chmod 700 ~/.config/mcpi-ext
+(umask 077 && gh auth token | sed 's/^/GITHUB_PERSONAL_ACCESS_TOKEN=/' > ~/.config/mcpi-ext/github-mcp.env)
+chmod 600 ~/.config/mcpi-ext/github-mcp.env
+ls -l ~/.config/mcpi-ext/github-mcp.env   # expect -rw-------
+```
+
+Substitute your own token for `gh auth token` if you are not using the GitHub CLI. The file is plain
+`KEY=VALUE` lines, read by Docker itself — never parsed by mcpi-ext.
+
+Then have Docker read it, substituting your real home directory for `/home/you` — arguments are
+passed to the process directly and are **not** shell-expanded, so `~` and `$HOME` will not work
+here:
 
 ```json
 {
@@ -210,24 +115,32 @@ Create `~/.config/mcpi-ext/mcp.json`:
         "run",
         "--rm",
         "-i",
-        "-e",
-        "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server:skill-discovery",
+        "--env-file",
+        "/home/you/.config/mcpi-ext/github-mcp.env",
+        "ghcr.io/github/github-mcp-server:latest",
         "stdio"
-      ],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "xxx"
-      }
+      ]
     }
   }
 }
 ```
 
-Replace `xxx` with your [GitHub personal access token](https://github.com/settings/tokens). See [github/github-mcp-server](https://github.com/github/github-mcp-server) for the standard server.
+> **Why not just `export` the token?** MCP stdio servers do not inherit your shell environment. The
+> MCP SDK spawns them with a fixed safe set — `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` on
+> POSIX — plus whatever the server entry declares explicitly. An exported
+> `GITHUB_PERSONAL_ACCESS_TOKEN` never reaches the server. `mcp.json` also performs no `${VAR}`
+> expansion: values are used literally. `--env-file` is therefore the way to supply a secret without
+> writing it into `mcp.json`, and it keeps the token in one `chmod 600` file you can rotate.
+>
+> An `"env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "..." }` block does work, but it puts a live
+> credential in a config file that is easy to copy, sync, or commit by accident.
+>
+> **Not using Docker?** A server you run directly gets the same restricted environment, so it cannot
+> read an exported token either. Supply credentials through whatever mechanism that server already
+> supports for reading a secret from a file. If you need a wrapper script for local development, see
+> the [server developer guide](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/server-developer-guide.md#supplying-credentials-to-a-local-server).
 
-> **Note:** The `skill-discovery` tag includes experimental `skill://` resources that enable Tier 1 progressive discovery. The standard `ghcr.io/github/github-mcp-server` image works too — tool-cli (Tier 2) and Code Mode (Tier 3) function with any MCP server, but skill-gated tool activation requires `skill://` resources.
-
-You can add more servers — both `stdio` (spawns a process) and `remote` (Streamable HTTP) are supported:
+Both `stdio` (spawns a process) and `remote` (Streamable HTTP) servers are supported:
 
 ```json
 {
@@ -236,42 +149,323 @@ You can add more servers — both `stdio` (spawns a process) and `remote` (Strea
     "my-remote-server": {
       "type": "remote",
       "url": "https://my-mcp-server.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer xxx"
-      }
+      "headers": { "Authorization": "Bearer ..." }
     }
   }
 }
 ```
 
-### Protocol compatibility and defaults
+A `stdio` entry takes `command`, optional `args`, `env`, and `cwd`. A `remote` entry takes `url` and
+optional `headers`. Any other shape is rejected at startup with the offending path.
 
-mcpi-ext uses `@modelcontextprotocol/client@2.0.0` in automatic version-negotiation
-mode. It first probes the released `2026-07-28` protocol with `server/discover`, then
-falls back to the legacy `initialize` handshake when a server does not support the
-modern era. The connection log reports the negotiated era.
-
-- Tool and skill-resource lists follow cursors automatically, with a 64-page safety
-  limit.
-- Results without a server-provided `ttlMs` are immediately stale
-  (`defaultCacheTtlMs: 0`). Explicit server cache hints are still honored in the
-  SDK's in-memory cache; mcpi-ext does not configure a persistent or shared cache.
-- Tool-list change handling is enabled. On modern servers the SDK may open a
-  `subscriptions/listen` stream when the capability is advertised; legacy servers
-  continue to use list-changed notifications. General subscription management,
-  durable subscription resume, and live skill-resource refresh are not exposed.
-- Modern `input_required` flows support explicit form input, decline, and cancel in
-  interactive mcpi sessions. Headless and URL elicitation fail with an actionable
-  error rather than approving automatically.
-
-### 3. Run
+### 5. Run
 
 ```sh
-mcpi --extension $(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js \
-  --mcp-config ~/.config/mcpi-ext/mcp.json
+mcpi --provider github-copilot --model claude-opus-5 \
+  --mcp-config ~/.config/mcpi-ext/mcp.json \
+  --mcp-skills-extension
 ```
 
-### Local development
+`--mcp-config` and `--mcp-skills-extension` are registered by mcpi-ext, so they exist only once the
+extension is installed. `--mcp-skills-extension` is **opt-in** and off by default; see
+[Skills support](#skills-support) before enabling it. Drop it unless you are talking to a server that
+implements the draft.
+
+### 6. Authenticate the model provider
+
+Providers are authenticated inside mcpi, not through this extension. On first run, use the `/login`
+slash command:
+
+```
+/login github-copilot
+```
+
+`/login` opens mcpi's provider authentication flow — OAuth where the provider supports it, otherwise
+an API key prompt — and stores the credential for later sessions. Run bare `/login` to pick a
+provider from a list. If a session later reports an expired credential, mcpi tells you to run
+`/login <provider>` again. `github-copilot` defaults to the `claude-opus-5` model, so
+`--model claude-opus-5` above is explicit rather than required.
+
+### Upgrading from pi or from mcpi before 0.85
+
+mcpi 0.85.0 no longer reads the legacy `~/.pi/agent` directory, and it **refuses to start** while
+that directory exists rather than silently ignoring your history:
+
+```
+Error: mcpi no longer reads legacy pi config paths.
+```
+
+Nothing is moved for you. Migrate by hand:
+
+| Legacy                  | New                                                                |
+| ----------------------- | ------------------------------------------------------------------ |
+| `~/.pi/agent`           | `~/.local/state/mcpi` (sessions in `~/.local/state/mcpi/sessions`) |
+| package / binary caches | recreate under `~/.cache/mcpi`                                     |
+
+Caches are disposable — delete rather than move them. Alternatively set `MCPI_CODING_AGENT_DIR` to an
+already-migrated directory. Settings live at `~/.config/mcpi/settings.json`; mcpi-ext's own MCP
+config is separate, at `~/.config/mcpi-ext/mcp.json`.
+
+---
+
+## What your MCP server actually gives you
+
+The three mechanisms have different requirements. Only one of them depends on the server, so it is
+worth being precise about which you get.
+
+| Mechanism     | Requires                                              | Works with the official GitHub MCP server? |
+| ------------- | ----------------------------------------------------- | ------------------------------------------ |
+| **tool-cli**  | any MCP server                                        | **Yes**                                    |
+| **Code mode** | tools annotated `readOnlyHint: true`, not destructive | **Yes**, for the read-only subset          |
+| **Skills**    | a server that publishes skills (see below)            | **No** — it publishes none today           |
+
+Measured against `ghcr.io/github/github-mcp-server:latest` (server `v1.12.0`, protocol `2026-07-28`)
+with the default toolset: **45 tools**, of which **26** are read-only and non-destructive and so
+dispatchable from code mode. None declare an `outputSchema`, so code mode gives each one a permissive
+internal survival schema and an `unknown` return type. The server does **not** declare the
+`io.modelcontextprotocol/skills` extension, so it contributes **no skills** — mcpi-ext logs the
+negotiation result and falls back to legacy `skill://` discovery, which also finds none.
+
+> **Image tags.** Use `ghcr.io/github/github-mcp-server:latest`. A `skill-discovery` tag was
+> referenced by earlier revisions of this document; **it does not exist** on the registry. Published
+> tags are `latest`, `main`, `nightly`, and `v0.1.0`. The trailing `stdio` argument above is correct
+> for `:latest`, which has an entrypoint; `:v0.1.0` has none and already includes `stdio` in its
+> command, so passing it again fails to start.
+
+### Skills support
+
+Skills require an MCP server that publishes them by one of two contracts:
+
+1. **[SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)** — the
+   server declares the `io.modelcontextprotocol/skills` extension and serves `skills/list`. This is
+   a **live Draft** on the MCP Extensions Track: open, unratified, and still changing. mcpi-ext pins
+   revision `753b9f2be43e07fdd070e535d75f190cff14beea` and is gated **off** by default, which is why
+   `--mcp-skills-extension` (or `{"experimental": {"skillsExtension": true}}` in `mcp.json`) is
+   required to enable it. With the gate off, the extension is never advertised at `initialize`, so
+   no server can negotiate it.
+2. **Legacy `skill://` resources** — the server lists `skill://` URIs among its resources. This is
+   the compatibility fallback, used only when a server declares no extension.
+
+The two are never mixed on one server. A server that declares the extension is served by the
+extension path alone, even when its listing is empty.
+
+The eight-skill GitHub reference implementation used to develop and test this client — 8 skills over
+a 31-tool schema set — is **not a public distribution**. It is not published to any registry or
+public image tag, and there is no branch or SHA you can pull. Treat it as the tested reference
+implementation pending upstream adoption and public distribution; the official server may implement
+skills in future, at which point they will work here with no change to this extension.
+
+To use skills today, point mcpi-ext at your own server implementing either contract. The
+[server developer guide](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/server-developer-guide.md)
+covers what to publish.
+
+---
+
+## Verifying your install
+
+Three prompts, one per mechanism. Each names the tool call you should actually see in the agent's
+transcript — if you see prose describing a call instead of the call itself, the mechanism is not
+working.
+
+### Code mode — works with zero MCP servers
+
+> Using code mode, compute the number of days between 2026-01-01 and 2026-09-07.
+
+Expect a **`code_execute`** tool call returning `249`. This needs no MCP server at all, so it is the
+fastest check that the extension loaded. If it reports code mode unavailable, see
+[isolated-vm](#code-mode-needs-isolated-vm).
+
+With servers connected, exercise MCP dispatch:
+
+> Using code mode, list the open issues on github/github-mcp-server and count how many carry each
+> label.
+
+Expect **`code_search`** (finding dispatchable tools) then **`code_execute`** looping over paginated
+results.
+
+### tool-cli — works with any MCP server
+
+> Use tool-cli to list the MCP servers available, then show the schema for the GitHub server's
+> `search_repositories` tool.
+
+Expect **`bash`** tool calls running `tool-cli` — for example `tool-cli --help`, then
+`tool-cli github`, then `tool-cli github search_repositories`. There is no `tool-cli` entry in the
+agent's tool registry: it is a program invoked through mcpi's bash tool. A response containing
+`<tool_cli>` markup, or a transcript of a command that no bash call ran, is a hallucination.
+
+### Skills — needs a server that publishes them
+
+> List the skills available, then load the one for issue triage.
+
+Expect a **`load_skill`** tool call. Loading prompts you to approve the skill's tool grant; the
+declared tools stay locked until you approve. With no skills discovered, the agent should tell you
+so — the routing section reports skills as unavailable with the reason rather than omitting them.
+
+### Confirming what loaded
+
+At startup mcpi-ext reports connected servers and discovered tool counts, and — when
+`--mcp-skills-extension` is on — logs the pinned draft revision and the per-server negotiation
+result. It always emits an `<execution_routing>` prompt section stating each facility's availability
+and, when unavailable, why.
+
+---
+
+## Four facilities, three MCP mechanisms
+
+Skills, tool-cli, and code mode are the three ways this extension reaches MCP. The
+`<execution_routing>` section describes a **fourth** facility alongside them — the host's own
+**bash** tool — because most real tasks need it and mis-routing to a sandbox that cannot write files
+is a common failure.
+
+bash is not an MCP mechanism. It is the substrate: the only facility that can create, modify, or
+inspect files, run the host's real programs, and leave artifacts behind. It is also how tool-cli is
+invoked, which is why the two compose so closely — fetching MCP data and then filtering it with `jq`
+or writing it to disk is one bash command, not two rival approaches.
+
+| Facility  | Suits work that is…                                                                         |
+| --------- | ------------------------------------------------------------------------------------------- |
+| bash      | touching the real machine: files, git, build tools, data pipelines, artifacts that persist  |
+| Code mode | exact computation or control flow, sandboxed with no filesystem, network, or process access |
+| Skills    | a documented domain workflow — sequencing, conventions, and a curated tool set              |
+| tool-cli  | reaching a specific MCP tool, or discovering what exists — run through the host bash tool   |
+
+The section sorts facilities **by task shape, not by rank**. None is a default, none outranks
+another, and there is no order to try them in. The list is alphabetical by identifier purely so the
+emitted bytes stay stable between turns and never invalidate the prompt cache.
+
+Every facility states its own availability. An unavailable one is listed **with its reason** rather
+than silently dropped, and "we could not tell" is reported as `unknown` rather than collapsed into
+"absent".
+
+### With zero MCP servers connected
+
+The extension still loads and still emits `<execution_routing>`. Code mode remains available, because
+pure computation needs no server. Skills report as unavailable with the reason that none were
+discovered. tool-cli starts its bridge but has no upstream to reach. Nothing errors, and a missing
+`mcp.json` is treated as an empty server list rather than a failure.
+
+### Code mode needs isolated-vm
+
+Code mode uses the optional [`isolated-vm`](https://github.com/laverdet/isolated-vm) native addon. It
+ships prebuilt binaries for Linux (x64, arm64), macOS (Apple Silicon), and Windows (x64), so the
+usual install is a download. Where no prebuild matches — Intel macOS, for instance — npm compiles it
+from source and needs a C++ toolchain.
+
+If the addon is unavailable for any reason, **installation still succeeds and the extension still
+loads**. Code mode reports itself unavailable with the specific cause, and skills, tool-cli, and
+execution routing continue to work. Code mode never falls back to `node:vm`: that would silently
+downgrade an isolate boundary to same-process execution and hand sandboxed code the host realm.
+
+To skip the addon deliberately: `npm install --omit=optional`.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph mcpi["mcpi (agent)"]
+        LS["load_skill<br/>(skills)"]
+        BASH["bash → tool-cli<br/>(tool-cli)"]
+        CM["code_search / code_execute<br/>(code mode)"]
+    end
+    LS --> POL["McpPolicy<br/>(authorization boundary)"]
+    BASH --> POL
+    CM --> POL
+    POL --> MCM["McpClientManager<br/>(MCP client — stdio &amp; Streamable HTTP)"]
+    MCM --> S1["MCP Server"]
+    MCM --> S2["MCP Server"]
+```
+
+All three mechanisms route back through the extension process, and every one of them crosses the same
+authorization boundary — `McpPolicy` — exactly once. Even when the model writes sandboxed JavaScript
+or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by that one object.
+
+- **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and code mode
+  sandbox calls alike. Full observability without instrumentation.
+- **Human-in-the-loop happens at one point.** `McpPolicy` reads tool annotations and gates
+  non-read-only calls through user confirmation, whichever mechanism initiated them. A tool unlocked
+  by an approved skill grant is not re-prompted.
+- **Code mode is refused, not prompted.** A non-read-only tool called from the sandbox is denied
+  outright rather than escalated to a confirmation. Visibility is not authority.
+- **Undiscovered and gated tools never reach upstream.** The policy verifies the tool exists in the
+  discovered set and is not skill-gated _before_ contacting the server, so naming a hidden tool over
+  the authenticated bridge socket fails at the boundary.
+- **Resource reads use the same policy.** tool-cli can list templates and read ordinary text and
+  binary resources, while every `skill://` URI and SEP-2640-declared skill resource stays isolated.
+  Skill reads are origin-bound, and a discovery pass cannot authorize a skill-load read.
+- **Every decision is audited** — allowed and denied alike, recorded with the source that made it
+  (`proxy`, `code-mode`, `tool-cli`, `skill-discovery`, `skill-load`, `skills-extension`).
+
+### Skills never execute anything
+
+Nothing in a skill is executed. A SKILL.md body is content, not commands: helper code and
+instructions telling the host to run something are text the model reads, never actions the extension
+performs. A skill's declared tools stay **inert until you approve the grant**, and the grant is bound
+to the server, the resource URI, and a hash of the tool list — so a server that widens `allowed-tools`
+or rotates its content after approval is re-prompted rather than inheriting the old answer.
+
+### tool-cli bridge credentials are session-scoped
+
+tool-cli reaches the extension over an authenticated local bridge, not a shared service. On
+`session_start` the bridge binds a **random port** and generates a fresh **32-byte session token**;
+both are torn down on `session_shutdown`. `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` are exposed to the
+agent's bash environment **only after** an authenticated, compatible bridge-v1 handshake succeeds —
+inherited values are masked until then, and startup, auth, timeout, or major-version failures
+withhold the usage docs entirely and report an actionable reason.
+
+Stdio MCP child servers are spawned with the SDK's safe environment plus their explicit
+configuration, with every `TOOL_CLI_*` variable stripped — so a child server cannot inherit this
+session's bridge credentials, even when mcpi was started from another mcpi session.
+
+### Protocol and defaults
+
+mcpi-ext uses `@modelcontextprotocol/client@2.0.0` in automatic version-negotiation mode. It probes
+the released **`2026-07-28`** protocol with `server/discover`, then falls back to the legacy
+`initialize` handshake for servers that predate it. The connection log reports the negotiated era.
+
+- Tool and skill-resource lists follow cursors automatically, with a 64-page safety limit.
+- Results without a server-provided `ttlMs` are immediately stale (`defaultCacheTtlMs: 0`). Explicit
+  server cache hints are honoured in the SDK's in-memory cache; no persistent or shared cache is
+  configured.
+- Tool-list change handling is enabled. Modern servers may use a `subscriptions/listen` stream where
+  advertised; legacy servers use list-changed notifications. Durable subscription resume and live
+  skill-resource refresh are not exposed.
+- Modern `input_required` flows support explicit form input, decline, and cancel in interactive
+  sessions. Headless and URL elicitation fail with an actionable error rather than auto-approving.
+
+---
+
+## Documentation
+
+- [Skills](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/skills.md) — deferred gating,
+  the two discovery contracts, SEP-2640 integrity model, approval binding.
+- [tool-cli](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/tool-cli.md) — bridge
+  architecture, progressive discovery, resources, shell composability.
+- [Code mode](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/code-mode.md) — sandbox
+  isolation, catalog provenance, dispatch eligibility.
+- [Server developer guide](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/server-developer-guide.md)
+  — what to publish so your MCP server works well with all three mechanisms.
+- [Releasing](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/releasing.md) — trusted
+  publishing and release preflight.
+- [AGENTS.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/AGENTS.md) — contributor tooling,
+  dev loop, and architecture detail.
+- [DECISIONS.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/DECISIONS.md) — the decision
+  log behind these mechanisms.
+
+---
+
+## Screenshots
+
+![Skills enabling MCP tools — the model loads a skill and gains access to gated tools](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/skills-enabling-mcp-tools.png)
+
+![tool-cli in action — progressive discovery piped through grep](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/tool-cli-grep.png)
+
+![Code mode in action — chaining MCP tools in a V8 sandbox to build a histogram](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/code-mode-histogram.png)
+
+---
+
+## Local development
 
 ```sh
 git clone https://github.com/SamMorrowDrums/mcpi-ext.git
@@ -281,57 +475,40 @@ npm run build
 npm test
 ```
 
-Then run with your local build:
+Run mcpi against your local build with `--extension`, which loads a file directly and bypasses the
+settings-managed package above. This is the one case where `--extension` is the right tool:
 
 ```sh
 mcpi --extension ./dist/index.js --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
 
-See [AGENTS.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/AGENTS.md) for full tooling docs, dev loop, and architecture details.
-
-## Project Structure
+### Project structure
 
 ```
 src/
   index.ts             Extension entry point (lifecycle hooks, wiring)
   mcp/                 MCP client management (connections, discovery) + McpPolicy
   routing/             Execution-facility descriptors, prompt section, host seam
-  skills/              Skill registry, discovery, gating, tool proxies
+  skills/              Skill registry, discovery, gating, tool proxies, SEP-2640
   tool-cli/            tool-cli RPC server, provider, bridge handshake, prompt
   code-mode/           V8 sandbox executor, lazy isolated-vm adapter, type hints
   test-servers/        Test MCP servers (weather, echo, skills fixtures)
-docs/                  Detailed mechanism documentation (incl. releasing.md)
-images/                Banner, character art, and screenshots
+docs/                  Mechanism documentation
+images/                Screenshots
 scripts/               Integration, smoke, and release-check scripts
 tsconfig.json          Development build (compiles tests and fixture servers)
 tsconfig.build.json    Published build (no tests, fixtures, or source maps)
 ```
 
-## Requirements
-
-Node.js `>=22.13.0`. Node 22 and 24 are both covered by CI.
-
-Code Mode needs the optional [`isolated-vm`](https://github.com/laverdet/isolated-vm)
-native addon. It ships prebuilt binaries for Linux (x64, arm64), macOS
-(Apple Silicon), and Windows (x64), so the usual install is a download rather than a
-compile. Where no prebuild matches — Intel macOS, for instance — npm compiles it from
-source and needs a C++ toolchain.
-
-If the addon is unavailable for any reason, installation still succeeds and the
-extension still loads. Code Mode reports itself unavailable with the specific cause,
-and skills, tool-cli, and execution routing continue to work. Code Mode never falls
-back to `node:vm`: that would silently downgrade an isolate boundary to same-process
-execution and hand sandboxed code the host realm.
-
-To skip the addon deliberately, install with `npm install --omit=optional`.
+See [AGENTS.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/AGENTS.md) for the full dev loop.
 
 ## Releasing
 
-Published to npm by [`.github/workflows/publish.yml`](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/.github/workflows/publish.yml)
-using npm trusted publishing — a GitHub Release triggers it, OIDC authenticates it,
-and no `NPM_TOKEN` exists anywhere in this repository.
-
-📖 [**Release process →**](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/releasing.md) — trusted-publisher setup, cutting a release, and what the workflow refuses to do.
+Published to npm by
+[`.github/workflows/publish.yml`](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/.github/workflows/publish.yml)
+using npm trusted publishing — a GitHub Release triggers it, OIDC authenticates it, and no
+`NPM_TOKEN` exists anywhere in this repository. See
+[docs/releasing.md](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/releasing.md).
 
 ## License
 

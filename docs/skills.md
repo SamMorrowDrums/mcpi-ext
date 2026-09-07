@@ -1,4 +1,4 @@
-# Tier 1 — The Skill Dealer
+# Skills
 
 MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools with `deferred: true`.
 
@@ -122,7 +122,6 @@ Nothing in a skill is executed. Helper code and host-execution instructions in a
 
 ## See also
 
-- [SEP-2640 — skills extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) (Draft)
-- [skills-as-groups MCP spec proposal](https://github.com/modelcontextprotocol/experimental-ext-grouping/pull/13)
+- [SEP-2640 — Skills Extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) — the authoritative live Draft this client targets
 - [DECISIONS.md #008](../DECISIONS.md) — cache-safe progressive tool disclosure
 - [DECISIONS.md #016](../DECISIONS.md) — draft-gated SEP-2640 client
