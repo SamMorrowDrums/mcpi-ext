@@ -45,6 +45,23 @@ check("license file", () => {
   ok("LICENSE present");
 });
 
+check("managed extension manifest", () => {
+  const extensions = pkg.pi?.extensions;
+  if (
+    !Array.isArray(extensions) ||
+    extensions.length !== 1 ||
+    extensions[0] !== "./dist/index.js"
+  ) {
+    throw new Error(
+      `pi.extensions must declare exactly "./dist/index.js", found ${JSON.stringify(extensions)}`,
+    );
+  }
+  if (!existsSync(join(root, extensions[0]))) {
+    throw new Error(`${extensions[0]} does not exist in the release build`);
+  }
+  ok("managed package declares ./dist/index.js");
+});
+
 check("pinned dependencies", () => {
   const deps = pkg.dependencies ?? {};
   if (deps["@modelcontextprotocol/client"] !== "2.0.0") {
@@ -66,7 +83,14 @@ check("pinned dependencies", () => {
   if (!pkg.optionalDependencies?.["isolated-vm"]) {
     throw new Error("isolated-vm is missing from optionalDependencies");
   }
-  ok("dependency contracts intact (MCP client 2.0.0, tool-cli v1, isolated-vm optional)");
+  if (deps.yaml !== "2.9.0") {
+    throw new Error(
+      `yaml must stay pinned to the vendored helper's tested version, found ${deps.yaml}`,
+    );
+  }
+  ok(
+    "dependency contracts intact (MCP client 2.0.0, tool-cli v1, yaml 2.9.0, isolated-vm optional)",
+  );
 });
 
 check("packed contents", () => {

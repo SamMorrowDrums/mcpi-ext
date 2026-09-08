@@ -8,13 +8,15 @@
 // Those are exactly the failures that only appear after an immutable publish.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const packageManifest = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+const PUBLIC_MCPI_VERSION = "0.85.1";
 const failures = [];
 const notes = [];
 
@@ -38,6 +40,43 @@ function run(command, args, options = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function createIsolatedUserEnvironment(root) {
+  const home = join(root, "home");
+  const xdgConfig = join(root, "xdg-config");
+  const xdgCache = join(root, "xdg-cache");
+  const xdgData = join(root, "xdg-data");
+  const xdgState = join(root, "xdg-state");
+  const npmCache = join(root, "npm-cache");
+  const npmUserConfig = join(root, "npmrc");
+
+  for (const dir of [home, xdgConfig, xdgCache, xdgData, xdgState, npmCache]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(npmUserConfig, "", "utf8");
+
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^npm_config_/i.test(key) || /^MCPI_/.test(key) || /^PI_/.test(key)) {
+      delete env[key];
+    }
+  }
+  delete env.NODE_OPTIONS;
+  Object.assign(env, {
+    HOME: home,
+    XDG_CONFIG_HOME: xdgConfig,
+    XDG_CACHE_HOME: xdgCache,
+    XDG_DATA_HOME: xdgData,
+    XDG_STATE_HOME: xdgState,
+    NODE_PATH: "",
+    GIT_TERMINAL_PROMPT: "0",
+    npm_config_cache: npmCache,
+    npm_config_userconfig: npmUserConfig,
+    npm_config_registry: "https://registry.npmjs.org/",
+  });
+
+  return { env, xdgConfig, xdgCache };
 }
 
 console.log(`Node ${process.version}\n`);
@@ -84,6 +123,25 @@ check("tarball ships the entry point, types, license, and readme", () => {
   }
 });
 
+check("package declares its managed extension entry point", () => {
+  assert(
+    JSON.stringify(packageManifest.pi?.extensions) === JSON.stringify(["./dist/index.js"]),
+    `pi.extensions is ${JSON.stringify(packageManifest.pi?.extensions)}`,
+  );
+});
+
+check("published JavaScript has no runtime reference to the mcpi peer", () => {
+  const offenders = packedPaths
+    .filter((path) => path.endsWith(".js"))
+    .filter((path) =>
+      /["']@sammorrowdrums\/mcpi["']/.test(readFileSync(join(repoRoot, path), "utf8")),
+    );
+  assert(
+    offenders.length === 0,
+    `${offenders.join(", ")} still references @sammorrowdrums/mcpi at runtime`,
+  );
+});
+
 check("published type declarations do not reference the optional addon", () => {
   const declarations = packedPaths.filter((path) => path.endsWith(".d.ts"));
   const offenders = declarations.filter((path) => {
@@ -106,24 +164,11 @@ writeFileSync(
   `${JSON.stringify({ name: "consumer", private: true, type: "module", version: "0.0.0" }, null, 2)}\n`,
 );
 
-// The host is a genuine runtime dependency, not just a type-level one: the
-// skills code imports parseFrontmatter and stripFrontmatter as values. In real
-// use mcpi loads this extension and resolves those from its own tree, so the
-// clean room has to stand a host up to be a faithful simulation.
-//
-// The declared peer floor is published *after* this package, so npm's automatic
-// peer installation cannot satisfy it yet. --legacy-peer-deps skips that
-// resolution without weakening the declared contract, and we pin the host to
-// the version this repo develops against. release-check separately refuses to
-// publish while the floor is still missing from the registry.
-const hostSpec = `@sammorrowdrums/mcpi@${
-  JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).devDependencies[
-    "@sammorrowdrums/mcpi"
-  ]
-}`;
-
-console.log("\nInstalling tarball into a clean consumer project...");
-run("npm", ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", tarball, hostSpec], {
+// Managed mcpi installs deliberately omit peers so they cannot create a second
+// host instance. The tarball therefore has to import successfully with the peer
+// absent, not merely when a conventional consumer lets npm auto-install it.
+console.log("\nInstalling tarball without its peer into a clean consumer project...");
+run("npm", ["install", "--legacy-peer-deps", "--no-audit", "--no-fund", tarball], {
   cwd: consumerDir,
 });
 
@@ -142,6 +187,11 @@ check("package resolves and exposes a default extension registrar", () => {
     { cwd: consumerDir },
   );
   assert(out.trim() === "ok", out);
+});
+
+check("clean consumer contains no duplicate mcpi host", () => {
+  const peerPath = join(consumerDir, "node_modules", "@sammorrowdrums", "mcpi");
+  assert(!existsSync(peerPath), `peer was installed at ${peerPath}`);
 });
 
 check("exports map blocks deep imports into internals", () => {
@@ -461,9 +511,140 @@ check("installed package negotiates the draft SEP-2640 contract only when gated 
 });
 
 // ---------------------------------------------------------------------------
+// Real managed install through the current public mcpi
+// ---------------------------------------------------------------------------
+
+console.log(`\nExercising public mcpi ${PUBLIC_MCPI_VERSION} managed installation...`);
+
+const managedDir = mkdtempSync(join(tmpdir(), "mcpi-ext-managed-"));
+const cleanCwd = join(managedDir, "clean-cwd");
+const hostPrefix = join(managedDir, "host-prefix");
+mkdirSync(cleanCwd, { recursive: true });
+mkdirSync(hostPrefix, { recursive: true });
+
+const { env: managedEnv, xdgConfig, xdgCache } = createIsolatedUserEnvironment(managedDir);
+const offlineManagedEnv = {
+  ...managedEnv,
+  MCPI_OFFLINE: "1",
+  MCPI_SKIP_VERSION_CHECK: "1",
+};
+
+run(
+  "npm",
+  [
+    "install",
+    "--global",
+    "--prefix",
+    hostPrefix,
+    "--no-audit",
+    "--no-fund",
+    `@sammorrowdrums/mcpi@${PUBLIC_MCPI_VERSION}`,
+  ],
+  { cwd: cleanCwd, env: managedEnv, timeout: 300_000 },
+);
+
+const mcpiBin =
+  process.platform === "win32" ? join(hostPrefix, "mcpi.cmd") : join(hostPrefix, "bin", "mcpi");
+const installedMcpiVersion = run(mcpiBin, ["--version"], {
+  cwd: cleanCwd,
+  env: offlineManagedEnv,
+}).trim();
+assert(
+  installedMcpiVersion === PUBLIC_MCPI_VERSION,
+  `installed mcpi ${installedMcpiVersion}, expected ${PUBLIC_MCPI_VERSION}`,
+);
+
+const managedSource = `npm:@sammorrowdrums/mcpi-ext@file:${tarball}`;
+run(mcpiBin, ["install", managedSource], {
+  cwd: cleanCwd,
+  env: managedEnv,
+  timeout: 300_000,
+});
+
+const managedRoot = join(xdgCache, "mcpi", "npm", "node_modules", "@sammorrowdrums", "mcpi-ext");
+const managedPeer = join(xdgCache, "mcpi", "npm", "node_modules", "@sammorrowdrums", "mcpi");
+
+check("mcpi list records the tarball and resolves its managed path", () => {
+  const list = run(mcpiBin, ["list"], { cwd: cleanCwd, env: offlineManagedEnv });
+  assert(list.includes(managedSource), `list omitted ${managedSource}:\n${list}`);
+  assert(list.includes(managedRoot), `list omitted managed path ${managedRoot}:\n${list}`);
+
+  const settingsPath = join(xdgConfig, "mcpi", "settings.json");
+  assert(existsSync(settingsPath), `settings were not written to ${settingsPath}`);
+  assert(
+    readFileSync(settingsPath, "utf8").includes(managedSource),
+    "settings do not contain the installed package source",
+  );
+});
+
+check("managed entry imports directly with no workspace or peer resolution", () => {
+  const entry = join(managedRoot, "dist", "index.js");
+  assert(existsSync(entry), `managed entry is missing at ${entry}`);
+  assert(!existsSync(managedPeer), `managed root contains a duplicate host at ${managedPeer}`);
+
+  const out = run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const mod = await import(${JSON.stringify(pathToFileURL(entry).href)});
+       if (typeof mod.default !== "function") throw new Error("default export is " + typeof mod.default);
+       process.stdout.write("ok");`,
+    ],
+    { cwd: cleanCwd, env: managedEnv },
+  );
+  assert(out.trim() === "ok", out);
+});
+
+check("managed extension registers both flags in public mcpi help", () => {
+  const help = run(mcpiBin, ["--offline", "--help"], {
+    cwd: cleanCwd,
+    env: offlineManagedEnv,
+    timeout: 90_000,
+  });
+  assert(help.includes("--mcp-config <value>"), "--mcp-config is absent from help");
+  assert(help.includes("--mcp-skills-extension"), "--mcp-skills-extension is absent from help");
+});
+
+check("public mcpi completes a zero-server Code Mode startup through managed flags", () => {
+  const emptyConfig = join(managedDir, "empty-mcp.json");
+  writeFileSync(emptyConfig, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`, "utf8");
+
+  const output = run(
+    mcpiBin,
+    [
+      "--offline",
+      "--mode",
+      "rpc",
+      "--no-session",
+      "--mcp-config",
+      emptyConfig,
+      "--mcp-skills-extension",
+    ],
+    {
+      cwd: cleanCwd,
+      env: offlineManagedEnv,
+      input: '{"id":"state","type":"get_state"}\n',
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 90_000,
+    },
+  );
+
+  assert(output.includes('"message":"mcpi-ext loaded"'), "session_start did not run");
+  assert(/\[code-mode\] 0 tool\(s\)/.test(output), "zero-server Code Mode did not initialize");
+  assert(
+    output.includes('"command":"get_state","success":true'),
+    `RPC session did not reach a usable state:\n${output.slice(0, 800)}`,
+  );
+  assert(!output.includes('"type":"extension_error"'), `extension error reported:\n${output}`);
+  return `mcpi ${installedMcpiVersion}`;
+});
+
+// ---------------------------------------------------------------------------
 
 rmSync(packDir, { recursive: true, force: true });
 rmSync(consumerDir, { recursive: true, force: true });
+rmSync(managedDir, { recursive: true, force: true });
 
 if (notes.length > 0) console.log(`\n${notes.map((note) => `note: ${note}`).join("\n")}`);
 
