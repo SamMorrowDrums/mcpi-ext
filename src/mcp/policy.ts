@@ -34,9 +34,7 @@ export type McpResourceSource = "skill-discovery" | "skill-load" | "skills-exten
 export type McpPolicyDenialReason =
   | "server_not_connected"
   | "tool_not_discovered"
-  | "tool_gated"
   | "invalid_arguments"
-  | "permission_denied"
   | "approval_declined"
   | "approval_unavailable"
   | "cancelled"
@@ -78,7 +76,7 @@ export class McpPolicyError extends Error {
   }
 }
 
-export type McpApprovalOutcome = "granted" | "reused" | "declined" | "unavailable";
+export type McpApprovalOutcome = "granted" | "declined" | "unavailable";
 
 export interface McpAuditRecord {
   readonly id: string;
@@ -88,7 +86,7 @@ export interface McpAuditRecord {
     | "resource"
     | "resource-list"
     | "resource-templates"
-    | "skill-grant"
+    | "skill-reference"
     | "skill-list"
     | "skill-get"
     | "skill-directory";
@@ -103,12 +101,15 @@ export interface McpAuditRecord {
 
 /** Describes a pending confirmation so hosts can render an accurate prompt. */
 export interface McpApprovalRequest {
-  readonly kind: "tool-call" | "skill-grant";
+  /**
+   * Always a tool call. Approval is an *execution* decision: nothing in this
+   * host prompts to make a schema visible, so there is no discovery- or
+   * activation-shaped approval to describe.
+   */
+  readonly kind: "tool-call";
   readonly source: McpCallSource;
   readonly serverName: string;
-  readonly toolName?: string;
-  readonly skillName?: string;
-  readonly grantedTools?: readonly string[];
+  readonly toolName: string;
   readonly title: string;
   readonly message: string;
   readonly signal?: AbortSignal;
@@ -199,24 +200,40 @@ export interface McpPolicySkill {
   readonly name: string;
   readonly uri: string;
   readonly serverName: string;
-  readonly allowedTools: readonly string[];
   /**
-   * A digest over the exact content this grant covers, when the origin can
+   * The tool definitions this skill references, so activating it reveals their
+   * schemas on the direct proxy surface.
+   *
+   * This list is an *exposure* set, never an authorization set. It decides
+   * which schemas the model can read, and nothing else: it does not grant the
+   * right to execute anything, and a tool absent from every skill is still
+   * callable from every surface.
+   */
+  readonly referencedTools: readonly string[];
+  /**
+   * A digest over the exact content this reference covers, when the origin can
    * supply one (SEP-2640 servers can; the legacy `skill://` convention cannot).
    *
-   * Folding it into the grant key is what makes an approval content-bound: if a
-   * later listing rotates a digest, adds a file, or drops one, the key changes,
-   * the prior approval no longer matches, and the user is asked again rather
-   * than having yesterday's consent silently applied to today's bytes.
+   * Folding it into the activation key is what keeps activation content-bound:
+   * if a later listing rotates a digest, adds a file, or drops one, the key
+   * changes, and the newly published definition set is what activates rather
+   * than yesterday's. It decides *which definitions* are revealed, never
+   * whether anything may run.
    */
   readonly contentFingerprint?: string;
 }
 
-export type SkillGrantOutcome =
-  | { readonly status: "granted"; readonly activatedTools: readonly string[] }
-  | { readonly status: "reused"; readonly activatedTools: readonly string[] }
-  | { readonly status: "declined"; readonly message: string }
-  | { readonly status: "unavailable"; readonly message: string };
+/**
+ * The result of activating a skill's tool-definition references.
+ *
+ * There is no declined or unavailable case, because no user decision is
+ * involved: revealing a schema is a context-engineering act, not an execution
+ * one. `reactivated` means this exact origin + content set had already been
+ * activated this session, so the model has seen these definitions before.
+ */
+export type SkillReferenceOutcome =
+  | { readonly status: "activated"; readonly referencedTools: readonly string[] }
+  | { readonly status: "reactivated"; readonly referencedTools: readonly string[] };
 
 export interface McpPolicyOptions {
   gateway: McpPolicyGateway;
@@ -232,12 +249,24 @@ const NUL = "\u0000";
 /**
  * The single MCP policy and dispatch boundary.
  *
- * Every execution path — deferred/direct proxy tools, Code Mode dispatch,
- * tool-cli provider RPC, and skill resource reads — crosses this class exactly
- * once per operation. Discovery, gating, argument validation, permission
- * semantics, approval, cancellation, and audit all happen here, and nothing
- * reaches an MCP server without passing through `dispatchToolCall` /
- * `dispatchResourceRead` below.
+ * Every execution path — direct proxy tools, Code Mode dispatch, tool-cli
+ * provider RPC, and skill resource reads — crosses this class exactly once per
+ * operation. Discovery, argument validation, permission semantics, approval,
+ * cancellation, and audit all happen here, and nothing reaches an MCP server
+ * without passing through `callTool` / `readResource` below.
+ *
+ * Two things this class deliberately keeps apart:
+ *
+ * - **Exposure** — which tool *definitions* the direct proxy surface shows the
+ *   model. Skills drive this, and only this. A deferred definition is a hidden
+ *   schema, not a withheld capability, so exposure never refuses a call.
+ * - **Authorization** — whether an operation may execute. Driven by the
+ *   server's own per-tool annotations at dispatch time, identically for every
+ *   source. Code Mode, tool-cli, and the proxy get the same answer.
+ *
+ * Resource reads are the one place origin binding *is* authorization: skill
+ * content carries workflow instructions, so a `skill://` URI stays owned by the
+ * server that advertised it and inaccessible through the shell bridge.
  */
 export class McpPolicy {
   private readonly gateway: McpPolicyGateway;
@@ -245,12 +274,18 @@ export class McpPolicy {
   private readonly auditLimit: number;
   private readonly onAudit: ((record: McpAuditRecord) => void) | undefined;
 
-  /** Tools that require an approved skill grant before any path may call them. */
-  private readonly gatedTools = new Map<string, Set<string>>();
-  /** Tools unlocked by an approved, activated skill grant. */
-  private readonly enabledTools = new Set<string>();
-  /** Approved skill grant keys, bound to server origin plus grant content. */
-  private readonly approvedGrants = new Set<string>();
+  /**
+   * Tools whose direct proxy definition is deferred until a skill referencing
+   * them is activated, mapped to the skills that reference them.
+   *
+   * Purely a context-visibility index. Nothing here is consulted when deciding
+   * whether a call may execute.
+   */
+  private readonly deferredTools = new Map<string, Set<string>>();
+  /** Tool definitions revealed by an activated skill reference. */
+  private readonly referencedTools = new Set<string>();
+  /** Activated skill reference keys, bound to server origin plus content. */
+  private readonly activatedReferences = new Set<string>();
   /** Skill URIs registered per server origin, for `skill-load` authorization. */
   private readonly skillUrisByServer = new Map<string, Set<string>>();
   /** URIs a server itself listed in the current discovery pass. */
@@ -277,15 +312,20 @@ export class McpPolicy {
   // Registration
   // ---------------------------------------------------------------------------
 
-  /** Register discovered skills so their tools are gated and their URIs bound. */
+  /**
+   * Register discovered skills so the definitions they reference start deferred
+   * on the direct proxy surface, and bind their URIs for `skill-load` reads.
+   *
+   * Registration changes what the model can *see*. It never changes what any
+   * surface may call.
+   */
   registerSkills(skills: readonly McpPolicySkill[]): void {
     for (const skill of skills) {
-      const key = skillGrantKey(skill);
-      for (const tool of skill.allowedTools) {
-        let owners = this.gatedTools.get(tool);
+      for (const tool of skill.referencedTools) {
+        let owners = this.deferredTools.get(tool);
         if (!owners) {
           owners = new Set<string>();
-          this.gatedTools.set(tool, owners);
+          this.deferredTools.set(tool, owners);
         }
         owners.add(skill.name);
       }
@@ -296,8 +336,6 @@ export class McpPolicy {
         this.skillUrisByServer.set(skill.serverName, uris);
       }
       uris.add(skill.uri);
-      // Registration alone never approves; `key` is only recomputed on activation.
-      void key;
     }
   }
 
@@ -319,25 +357,34 @@ export class McpPolicy {
     );
   }
 
-  /** Every tool name currently gated behind an unapproved skill grant. */
-  getGatedToolNames(): string[] {
-    return [...this.gatedTools.keys()].filter((name) => !this.enabledTools.has(name)).sort();
+  /**
+   * Tool definitions currently deferred on the direct proxy surface — declared
+   * to the model API for grammar and dispatch, but with their schemas withheld
+   * from the prompt until a skill references them.
+   */
+  getDeferredToolNames(): string[] {
+    return [...this.deferredTools.keys()].filter((name) => !this.referencedTools.has(name)).sort();
   }
 
-  /** Skills that gate `toolName`, for actionable block messages. */
-  getGatingSkills(toolName: string): string[] {
-    return [...(this.gatedTools.get(toolName) ?? [])].sort();
+  /** Skills whose activation would reveal `toolName`'s schema. */
+  getReferencingSkills(toolName: string): string[] {
+    return [...(this.deferredTools.get(toolName) ?? [])].sort();
   }
 
-  /** True when a tool is discovered but still requires an approved skill grant. */
-  isGated(toolName: string): boolean {
-    return this.gatedTools.has(toolName) && !this.enabledTools.has(toolName);
+  /**
+   * True when a tool's direct proxy definition is still deferred.
+   *
+   * A visibility question only. Callers must not use it to decide whether a
+   * call may proceed — `callTool` deliberately does not consult it.
+   */
+  isDeferred(toolName: string): boolean {
+    return this.deferredTools.has(toolName) && !this.referencedTools.has(toolName);
   }
 
   reset(): void {
-    this.gatedTools.clear();
-    this.enabledTools.clear();
-    this.approvedGrants.clear();
+    this.deferredTools.clear();
+    this.referencedTools.clear();
+    this.activatedReferences.clear();
     this.skillUrisByServer.clear();
     this.discoveredUrisByServer.clear();
     this.extensionResourceUris.clear();
@@ -345,7 +392,7 @@ export class McpPolicy {
   }
 
   // ---------------------------------------------------------------------------
-  // Visibility (what tool-cli and other discovery surfaces may see)
+  // Discovery (what every non-proxy surface may see)
   // ---------------------------------------------------------------------------
 
   getVisibleServers(): string[] {
@@ -353,112 +400,86 @@ export class McpPolicy {
   }
 
   /**
-   * The exact discovered schema set a discovery surface may see. Gated tools
-   * are omitted entirely, so a surface cannot learn a hidden tool's name or
-   * schema and then try to call it.
+   * Every discovered tool on a server.
+   *
+   * Code Mode and tool-cli discover independently of skills: their whole
+   * purpose is the case where no skill fires, so filtering this by skill
+   * references would make the investigative and reductive surfaces unusable in
+   * exactly the sessions they exist for. Deferral shapes the *prompt*, not the
+   * catalogue these surfaces read.
    */
-  getVisibleTools(serverName: string): McpTool[] {
-    return this.gateway.getToolsForServer(serverName).filter((tool) => !this.isGated(tool.name));
+  getDiscoverableTools(serverName: string): McpTool[] {
+    return this.gateway.getToolsForServer(serverName);
   }
 
   // ---------------------------------------------------------------------------
-  // Skill grants
+  // Skill references (exposure activation)
   // ---------------------------------------------------------------------------
 
   /**
-   * Activate an MCP-origin skill's `allowed-tools` grant.
+   * Activate a skill's tool-definition references.
    *
-   * The grant is origin- and content-bound: the key covers the server name, the
-   * skill URI, and a digest of the exact tool list being granted. A previously
-   * approved identical grant is reused without re-prompting, so no path ever
-   * asks the user twice for the same authority. Declined, cancelled, and
-   * unavailable outcomes all leave the tools gated.
+   * This reveals schemas; it grants nothing. There is no prompt, because
+   * approval belongs at execution: the user is asked when a non-read-only tool
+   * actually runs, whichever surface ran it, and asking here as well would both
+   * charge for authority that was never conferred and put a human gate in the
+   * one path designed to be zero-latency and cache-preserving.
+   *
+   * The activation key still covers server origin, skill URI, and a digest of
+   * the exact referenced set, so a rotated listing is recognised as a distinct
+   * activation rather than silently inheriting the previous one. That binding
+   * decides *which definitions* are revealed — never whether anything may run.
    */
-  async activateSkillGrant(
-    skill: McpPolicySkill,
-    signal?: AbortSignal,
-  ): Promise<SkillGrantOutcome> {
-    if (skill.allowedTools.length === 0) {
-      return { status: "granted", activatedTools: [] };
+  activateSkillReference(skill: McpPolicySkill): SkillReferenceOutcome {
+    // Only names that resolve to a real discovered tool are revealed. A skill
+    // may name tools its server never exposed, or name one twice; the host
+    // expects plain, already-registered names in activation order with no
+    // duplicates, and an unknown name would be silently dropped downstream
+    // anyway. Filtering here keeps `details` and the host's activation list
+    // describing the same thing.
+    const known = this.discoveredToolNames();
+    const referenced: string[] = [];
+    const seen = new Set<string>();
+    for (const tool of skill.referencedTools) {
+      if (seen.has(tool) || !known.has(tool)) continue;
+      seen.add(tool);
+      referenced.push(tool);
     }
 
-    const key = skillGrantKey(skill);
-    if (this.approvedGrants.has(key)) {
-      this.enableTools(skill.allowedTools);
-      this.record({
-        source: "skill-load",
-        operation: "skill-grant",
-        serverName: skill.serverName,
-        uri: skill.uri,
-        decision: "allowed",
-        approval: "reused",
-      });
-      return { status: "reused", activatedTools: [...skill.allowedTools] };
+    if (referenced.length === 0) {
+      return { status: "activated", referencedTools: [] };
     }
 
-    if (signal?.aborted) {
-      this.record({
-        source: "skill-load",
-        operation: "skill-grant",
-        serverName: skill.serverName,
-        uri: skill.uri,
-        decision: "denied",
-        reason: "cancelled",
-        approval: "unavailable",
-      });
-      return {
-        status: "unavailable",
-        message: `Loading skill "${skill.name}" was cancelled before its tool grant could be approved. No tools were activated.`,
-      };
+    const key = skillReferenceKey(skill);
+    const alreadyActivated = this.activatedReferences.has(key);
+    this.activatedReferences.add(key);
+    for (const tool of referenced) {
+      this.referencedTools.add(tool);
     }
 
-    const granted = await this.requestApproval({
-      kind: "skill-grant",
-      source: "proxy",
-      serverName: skill.serverName,
-      skillName: skill.name,
-      grantedTools: [...skill.allowedTools],
-      title: `Activate MCP skill "${skill.name}"?`,
-      message:
-        `MCP server "${skill.serverName}" offers skill "${skill.name}" (${skill.uri}).\n` +
-        `Approving activates these tools for this session:\n` +
-        skill.allowedTools.map((tool) => `  - ${tool}`).join("\n"),
-      ...(signal !== undefined ? { signal } : {}),
-    });
-
-    if (granted === true) {
-      this.approvedGrants.add(key);
-      this.enableTools(skill.allowedTools);
-      this.record({
-        source: "skill-load",
-        operation: "skill-grant",
-        serverName: skill.serverName,
-        uri: skill.uri,
-        decision: "allowed",
-        approval: "granted",
-      });
-      return { status: "granted", activatedTools: [...skill.allowedTools] };
-    }
-
-    const approval: McpApprovalOutcome = granted === false ? "declined" : "unavailable";
     this.record({
       source: "skill-load",
-      operation: "skill-grant",
+      operation: "skill-reference",
       serverName: skill.serverName,
       uri: skill.uri,
-      decision: "denied",
-      reason: granted === false ? "approval_declined" : "approval_unavailable",
-      approval,
+      decision: "allowed",
     });
 
-    const toolList = skill.allowedTools.join(", ");
     return {
-      status: approval,
-      message:
-        granted === false
-          ? `Activation of skill "${skill.name}" was declined, so its tools (${toolList}) remain unavailable. Call load_skill again and approve the prompt to activate them.`
-          : `Activation of skill "${skill.name}" needs explicit approval, but no interactive confirmation was available, so its tools (${toolList}) remain unavailable. Run this session interactively and call load_skill again to approve.`,
+      status: alreadyActivated ? "reactivated" : "activated",
+      referencedTools: referenced,
     };
+  }
+
+  /** Every tool name currently discoverable across all connected servers. */
+  private discoveredToolNames(): Set<string> {
+    const names = new Set<string>();
+    for (const server of this.gateway.getConnectedServers()) {
+      for (const tool of this.gateway.getToolsForServer(server)) {
+        names.add(tool.name);
+      }
+    }
+    return names;
   }
 
   // ---------------------------------------------------------------------------
@@ -468,6 +489,11 @@ export class McpPolicy {
   /**
    * Authorize and dispatch a tool call. Every execution path funnels here, and
    * upstream is reached only after all checks below pass.
+   *
+   * Notably absent: any consultation of skill references. A deferred definition
+   * is a hidden schema, not a withheld capability, so a tool no skill has
+   * revealed is still callable — by the model whose grammar still contains it,
+   * by a Code Mode script, and by tool-cli.
    */
   async callTool(request: McpToolCallRequest): Promise<TerminalCallToolResult> {
     const { source, serverName, toolName, args, signal } = request;
@@ -509,17 +535,6 @@ export class McpPolicy {
       );
     }
 
-    // Gating check: applies to every source, so no surface can bypass a skill
-    // grant by naming a tool it was never shown.
-    if (this.isGated(toolName)) {
-      const skills = this.getGatingSkills(toolName);
-      throw deny(
-        "tool_gated",
-        `Tool "${toolName}" requires an approved skill grant first. Call load_skill with one of: ${skills.join(", ") || "(none)"}`,
-        ["load_skill"],
-      );
-    }
-
     const invalid = validateToolArguments(tool.inputSchema, args);
     if (invalid) {
       throw deny(
@@ -532,25 +547,13 @@ export class McpPolicy {
       throw deny("cancelled", `Call to "${toolName}" was cancelled before dispatch.`);
     }
 
-    // Permission semantics. Code Mode keeps its strict read-only contract; the
-    // interactive paths use the same annotations to drive HITL.
+    // Permission semantics: the server's own annotations, at dispatch, for
+    // every source alike. A read-only tool runs unasked; anything else asks the
+    // user — including from line 47 of a running Code Mode script, which is
+    // precisely the question routing through the harness makes askable.
     const readOnly = isReadOnlyToolCall(tool);
-    // A tool activated by an approved skill grant is already covered by that
-    // approval, so it must not prompt again on every call.
-    const grantCovered = this.enabledTools.has(toolName);
     let approval: McpApprovalOutcome | undefined;
-    if (source === "code-mode") {
-      if (!readOnly) {
-        throw deny(
-          "permission_denied",
-          `Tool "${toolName}" is visible for discovery but cannot be called from Code Mode. ` +
-            "Use load_skill or tool-cli through the host's permission-aware path.",
-          ["load_skill", "tool-cli"],
-        );
-      }
-    } else if (!readOnly && grantCovered) {
-      approval = "reused";
-    } else if (!readOnly) {
+    if (!readOnly) {
       const approved = await this.requestApproval({
         kind: "tool-call",
         source,
@@ -967,12 +970,6 @@ export class McpPolicy {
   // Internals
   // ---------------------------------------------------------------------------
 
-  private enableTools(tools: readonly string[]): void {
-    for (const tool of tools) {
-      this.enabledTools.add(tool);
-    }
-  }
-
   private allowedReadUris(
     source: Exclude<McpResourceSource, "tool-cli">,
     serverName: string,
@@ -1124,11 +1121,12 @@ function extensionResourceKey(serverName: string, skillUri: string): string {
   return `${serverName}${NUL}${skillUri}`;
 }
 
-function skillGrantKey(skill: McpPolicySkill): string {
-  const tools = [...skill.allowedTools].sort().join(" ");
+function skillReferenceKey(skill: McpPolicySkill): string {
+  const tools = [...skill.referencedTools].sort().join(" ");
   const digest = createHash("sha256").update(tools).digest("hex").slice(0, 32);
-  // The fingerprint participates in the key so rotated content revokes approval.
-  // Legacy skills have none; they degrade to the previous origin+URI+tools key.
+  // The fingerprint participates in the key so a rotated resource set is a
+  // distinct activation rather than a silent reuse of the previous definitions.
+  // Legacy skills have none; they degrade to the origin+URI+tools key.
   return [skill.serverName, skill.uri, digest, skill.contentFingerprint ?? ""].join(NUL);
 }
 

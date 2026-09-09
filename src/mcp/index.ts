@@ -20,7 +20,7 @@ export {
   type McpResourceReadRequest,
   type McpResourceSource,
   type McpToolCallRequest,
-  type SkillGrantOutcome,
+  type SkillReferenceOutcome,
 } from "./policy.js";
 export { McpiHostApproval } from "./host-approval.js";
 export { noSkillsExtensionGateway } from "./gateway-defaults.js";
