@@ -71,7 +71,7 @@ export function createCodeSearchTool(manager: CodeModeManager) {
     name: "code_search",
     label: "Code Search",
     description:
-      "Discover all available MCP tools by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info. Type hints identify which tools Code Mode can call; non-read-only tools remain discovery-only.",
+      "Discover all available MCP tools by writing JavaScript. Use `codemode.listTools()` to list tools and `codemode.describeTools(names)` for type info. The whole catalogue is searchable, whether or not any skill has been loaded; type hints say which tools run unattended and which pause for approval.",
     parameters: CodeInput,
 
     async execute(
@@ -91,16 +91,18 @@ export function createCodeSearchTool(manager: CodeModeManager) {
 /**
  * Create the `code_execute` tool for chaining tool calls.
  *
- * The model writes JavaScript that calls read-only MCP tools via
- * the `codemode` namespace (e.g. `codemode.search_docs({ query: 'test' })`).
- * Code runs in a sandbox with no access to filesystem, network, or Node.js APIs.
+ * The model writes JavaScript that calls MCP tools via the `codemode` namespace
+ * (e.g. `codemode.search_docs({ query: 'test' })`). Read-only tools run
+ * unattended; a write or destructive tool pauses the script for user approval
+ * before the call reaches the server. Code runs in a sandbox with no access to
+ * filesystem, network, or Node.js APIs.
  */
 export function createCodeExecuteTool(manager: CodeModeManager) {
   return {
     name: "code_execute",
     label: "Code Execute",
     description:
-      "Execute JavaScript that chains read-only MCP tool calls for computation over data. Use when you need to aggregate, filter, loop, or transform results across multiple tool calls. Access tools via `codemode.toolName(args)`. Runs in a sandbox — no filesystem, network, or Node.js API access.",
+      "Execute JavaScript that chains MCP tool calls for computation over data. Use when you need to aggregate, filter, loop, or transform results across multiple tool calls. Access tools via `codemode.toolName(args)`. Read-only tools run unattended; write or destructive tools pause for user approval mid-script. Runs in a sandbox — no filesystem, network, or Node.js API access.",
     parameters: CodeInput,
 
     async execute(

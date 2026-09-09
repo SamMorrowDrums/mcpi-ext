@@ -16,13 +16,13 @@ export {
   SYNTHESIZED_OUTPUT_SCHEMA,
   getCodeModeDiagnostics,
   getCodeModeTools,
-  getEligibleTools,
-  isEligibleForCodeMode,
+  getUnattendedTools,
+  runsUnattendedInCodeMode,
   toCodeModeTool,
 } from "./eligibility.js";
 export type {
+  CodeModeApprovalReason,
   CodeModeDiagnostics,
-  CodeModeRefusalReason,
   CodeModeTool,
   OutputSchemaProvenance,
 } from "./eligibility.js";
@@ -46,9 +46,9 @@ export interface CodeModeManagerOptions extends ExecutorOptions {
   sandboxExecutor?: typeof executeInSandbox;
 }
 
-const NO_ELIGIBLE_TOOLS_ERROR: CodeModeErrorDetails = {
-  error: "no_eligible_tools",
-  message: "code_search has no callable read-only MCP tools to search.",
+const NO_TOOLS_ERROR: CodeModeErrorDetails = {
+  error: "no_tools",
+  message: "code_search has no discovered MCP tools to search.",
   alternatives: ["code_execute", "tool-cli"],
 };
 
@@ -159,7 +159,7 @@ export class CodeModeManager {
 
     const summary =
       `[code-mode] ${this.diagnostics.totalTools} tool(s): ` +
-      `${this.diagnostics.callableTools} callable, ${this.diagnostics.refusedTools} dispatch-refused; ` +
+      `${this.diagnostics.unattendedTools} unattended, ${this.diagnostics.approvalGatedTools} approval-gated; ` +
       `output schemas: ${this.diagnostics.declaredOutputSchemas} declared, ` +
       `${this.diagnostics.synthesizedOutputSchemas} synthesized, ` +
       `${this.diagnostics.unavailableOutputSchemas} unavailable; ` +
@@ -175,12 +175,12 @@ export class CodeModeManager {
     return this.typeHints;
   }
 
-  /** Get eligible tools. */
-  getEligibleTools(): McpTool[] {
-    return this.codeModeTools.filter((entry) => entry.callable).map((entry) => entry.tool);
+  /** Tools that dispatch from the sandbox without a human approval prompt. */
+  getUnattendedTools(): McpTool[] {
+    return this.codeModeTools.filter((entry) => entry.runsUnattended).map((entry) => entry.tool);
   }
 
-  /** Get the complete client-internal catalog, including permission and schema provenance. */
+  /** Get the complete client-internal catalog, including approval and schema provenance. */
   getCatalogTools(): readonly CodeModeTool[] {
     return this.codeModeTools;
   }
@@ -192,13 +192,13 @@ export class CodeModeManager {
   /** Execute code in search mode (tool catalog queries). */
   async searchTools(code: string): Promise<ExecuteResult> {
     this.refresh();
-    if (this.diagnostics.callableTools === 0) {
+    if (this.diagnostics.totalTools === 0) {
       return {
         result: undefined,
-        error: NO_ELIGIBLE_TOOLS_ERROR.message,
+        error: NO_TOOLS_ERROR.message,
         errorDetails: {
-          ...NO_ELIGIBLE_TOOLS_ERROR,
-          alternatives: [...(NO_ELIGIBLE_TOOLS_ERROR.alternatives ?? [])],
+          ...NO_TOOLS_ERROR,
+          alternatives: [...(NO_TOOLS_ERROR.alternatives ?? [])],
         },
         logs: [],
       };
@@ -290,7 +290,7 @@ export class CodeModeManager {
     const dispatch = async (toolName: string, args: Record<string, unknown>) => {
       const codeModeTool = this.codeModeTools.find((entry) => entry.tool.name === toolName);
       if (!codeModeTool) {
-        throw new Error(`Tool "${toolName}" not found in code mode eligible tools`);
+        throw new Error(`Tool "${toolName}" not found in the code mode tool catalog`);
       }
 
       if (!policy) {
@@ -298,6 +298,9 @@ export class CodeModeManager {
       }
 
       try {
+        // The sandbox never reaches a server itself. The call is made here, in
+        // the harness, which is what makes a mid-script approval prompt
+        // possible at all: the script awaits while the user decides.
         const terminal = await policy.callTool({
           source: "code-mode",
           serverName: codeModeTool.tool.serverName,
@@ -318,24 +321,28 @@ export class CodeModeManager {
 }
 
 /**
- * Translate a policy denial into Code Mode's structured dispatch error, keeping
- * the catalog's refusal detail so the model learns why a tool was refused.
+ * Translate a policy denial into Code Mode's structured dispatch error.
+ *
+ * A declined approval is the interesting case: the script asked to do something
+ * the user said no to, so the error names the annotations that made it ask,
+ * rather than implying the tool was never reachable.
  */
 function toCodeModeDispatchError(error: unknown, codeModeTool: CodeModeTool): unknown {
   if (!(error instanceof McpPolicyError)) return error;
 
-  const isPermission = error.reason === "permission_denied";
+  const approvalRefused =
+    error.reason === "approval_declined" || error.reason === "approval_unavailable";
   return new CodeModeDispatchError({
-    error: isPermission ? "permission_denied" : error.reason,
+    error: error.reason,
     message: error.message,
     alternatives: [...error.alternatives],
     toolName: codeModeTool.tool.name,
-    ...(isPermission ? { reason: formatRefusalReasons(codeModeTool) } : {}),
+    ...(approvalRefused ? { reason: formatApprovalReasons(codeModeTool) } : {}),
   });
 }
 
-function formatRefusalReasons(codeModeTool: CodeModeTool): string {
-  return codeModeTool.refusalReasons
+function formatApprovalReasons(codeModeTool: CodeModeTool): string {
+  return codeModeTool.approvalReasons
     .map((reason) =>
       reason === "destructive_hint"
         ? "annotations.destructiveHint is true"
