@@ -18,14 +18,19 @@ export interface PolicyToolProviderOptions {
 /**
  * Bridge the shared MCP policy boundary to tool-cli's `ToolProvider` interface.
  *
- * tool-cli's RPC server derives `listTools` and `describeTool` from
- * `getTools`, so restricting discovery here restricts what the CLI can learn.
- * More importantly, `callTool` does not check membership against the
- * discovered set before forwarding, which means a caller can name a tool the
- * CLI never advertised. Routing every call back through {@link McpPolicy}
- * closes that gap: the same dispatcher that gates the proxy and Code Mode
- * paths re-authorizes each RPC call, so naming a hidden tool is refused before
- * the upstream server is contacted.
+ * tool-cli discovers and invokes independently of skills. Its designated job is
+ * the investigative case where no skill fires, so its catalogue is the full
+ * discovered tool set: narrowing it by skill references would disable the
+ * facility in exactly the sessions it exists for.
+ *
+ * Independent discovery is not unmediated dispatch. tool-cli's RPC server
+ * derives `listTools` and `describeTool` from `getTools`, but `callTool` does
+ * not check membership against the discovered set before forwarding, which
+ * means a caller can name a tool the CLI never advertised. Routing every call
+ * back through {@link McpPolicy} closes that gap: the same dispatcher that
+ * serves the proxy and Code Mode paths re-authorizes each RPC call, so an
+ * undiscovered tool is refused and a non-read-only one prompts before the
+ * upstream server is contacted.
  */
 export function createPolicyToolProvider(
   policy: McpPolicy,
@@ -33,7 +38,7 @@ export function createPolicyToolProvider(
 ): ToolProvider {
   const provider: ToolProvider = {
     getServerNames: () => policy.getVisibleServers(),
-    getTools: (server) => policy.getVisibleTools(server).map(toToolInfo),
+    getTools: (server) => policy.getDiscoverableTools(server).map(toToolInfo),
     async callTool(server, tool, args, context) {
       const terminal = await policy.callTool({
         source: "tool-cli",
