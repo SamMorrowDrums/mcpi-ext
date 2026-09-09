@@ -241,13 +241,12 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       provides: [
         "code_execute, which runs vanilla JavaScript in a sandboxed V8 isolate and returns the value you return.",
         "code_search, which queries the MCP tool catalogue so you can find dispatchable tools before writing code.",
-        "Read-only MCP tools dispatched from inside the sandbox through the codemode namespace, so one execution can loop over many calls.",
+        "MCP tools dispatched from inside the sandbox through the codemode namespace, so one execution can loop over many calls. Read-only tools run unattended; a write or destructive tool pauses mid-script for your approval and continues with the value it returns.",
       ],
       doesNotProvide: [
         "Filesystem access. There is no fs, no file read or write, and no path the isolate can reach.",
         "Network access. There is no fetch, no sockets, and no outbound request of any kind.",
         "Process access. There is no process, no require, no import, and no child process.",
-        "Non-read-only MCP tools, which are refused inside the sandbox rather than prompted for.",
       ],
       availability: codeModeAvailability(state.codeMode),
     },
@@ -255,15 +254,14 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "skills",
       title: "Skills (load_skill)",
       useWhen:
-        "Use when the task is a domain workflow an MCP server has already documented — a named procedure with its own sequencing, conventions, and curated tool set, such as a triage runbook or a release checklist.",
+        "Use when the task is a domain workflow an MCP server has already documented — a named procedure with its own sequencing, conventions, and curated tool set, such as a triage runbook or a release checklist. Reach for a skill because the procedure is what you need, not because a tool it names happens to exist.",
       provides: [
         "Workflow guidance authored by the server: the skill body, loaded on demand by name with load_skill.",
-        "The specific tools that skill declares, enabled only after you approve the grant.",
+        "The full schemas of the tool definitions that skill references, revealed in the transcript when it loads.",
       ],
       doesNotProvide: [
         "Computation, filesystem access, or shell access.",
-        "Authority over tools the skill did not declare; loading a skill never widens access beyond its approved list.",
-        "Anything at all before approval — a declined or unavailable approval leaves every gated tool locked.",
+        "Any change to what may execute. Loading a skill reveals schemas; it grants nothing, and the tools it omits stay just as reachable as they were.",
       ],
       availability: skillsAvailability(state.skills),
     },
