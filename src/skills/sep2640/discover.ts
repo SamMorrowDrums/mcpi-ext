@@ -61,7 +61,7 @@ export async function discoverSkillsViaExtension(
       description: frontmatterDescription(entry) ?? "",
       uri: entry.uri,
       serverName,
-      allowedTools: parseAllowedTools(entry.frontmatter),
+      referencedTools: parseReferencedTools(entry.frontmatter),
       origin: "sep2640",
       contentFingerprint: fingerprint,
     });
@@ -94,17 +94,19 @@ function listedResourceUris(entry: SkillEntry): string[] {
 }
 
 /**
- * Read `allowed-tools` from verbatim SEP-2640 frontmatter.
+ * Read the tool names a SEP-2640 skill references from its verbatim frontmatter.
  *
  * Only the spec-defined `allowed-tools` key is honoured here. The extension
  * reserves the `io.modelcontextprotocol/` metadata prefix but defines no keys
  * under it, so the legacy path's `io.modelcontextprotocol/tools` lookup is not
  * repeated on this contract.
  *
- * These names stay inert until the user approves the grant: parsing them is not
- * activating them.
+ * Despite the key's name, this is read as a *reference* list, not an
+ * authorization list: it selects which deferred definitions become visible when
+ * the skill is loaded. It confers no execution authority, and the tools it
+ * names were already dispatchable subject to their own annotations.
  */
-function parseAllowedTools(frontmatter: Record<string, unknown>): string[] {
+function parseReferencedTools(frontmatter: Record<string, unknown>): string[] {
   const declared = frontmatter["allowed-tools"];
   if (Array.isArray(declared)) {
     return declared.filter((value): value is string => typeof value === "string");

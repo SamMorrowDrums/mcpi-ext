@@ -26,10 +26,13 @@ export function formatMcpSkillsForPrompt(skills: McpSkillMetadata[]): string {
   const lines = [
     "",
     "",
-    "Use when a task matches one of the domain workflows these MCP skills document.",
+    "Use when a task matches one of the domain workflows these MCP skills document — that is,",
+    "when the server's own procedure is what you need, not merely when its tools would be useful.",
     "Call load_skill with the skill's name to read its instructions before working through it.",
-    "MCP tools are deferred — registered for dispatch but not described in this prompt. A skill's",
-    "declared tools are enabled only after you approve its grant; declining leaves them locked.",
+    "load_skill returns the skill body and reveals the full schemas of the tool definitions it",
+    "references. It asks you nothing and authorizes nothing: the tools a skill names were already",
+    "dispatchable, and the ones it omits still are. Approval, where a tool needs it, happens when",
+    "that tool runs.",
     "",
     "<available_mcp_skills>",
   ];
