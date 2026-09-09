@@ -62,8 +62,14 @@ export type DiscoveryQuery = Static<typeof DiscoveryInput>;
 const CodeInput = Type.Object({
   code: Type.String({
     description:
-      "JavaScript to execute. Call tools with `await codemode.call('server/tool', args)`. Discover inside the sandbox with `codemode.browse()`, `codemode.search(q)`, `codemode.describe([refs])`. Always `return` your final result. No filesystem, network, or Node.js APIs.",
+      "JavaScript to execute. Call tools with `await codemode.call('server', 'tool', args)`. Discover inside the sandbox with `codemode.browse()`, `codemode.search(q)`, `codemode.describe([refs])`. Always `return` your final result. No filesystem, network, or Node.js APIs.",
   }),
+  snapshotId: Type.Optional(
+    Type.String({
+      description:
+        "The snapshotId from the code_search response you based this code on. Supply it to be told if the catalog changed since, instead of calling against parameters that may have moved.",
+    }),
+  ),
 });
 
 type CodeInputType = Static<typeof CodeInput>;
@@ -187,7 +193,7 @@ export function createCodeExecuteTool(manager: CodeModeManager) {
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<CodeModeToolDetails>> {
       const start = performance.now();
-      const result = await manager.executeCode(params.code, signal);
+      const result = await manager.executeCode(params.code, signal, params.snapshotId);
       return formatResult(result, Math.round(performance.now() - start), "Code execution error");
     },
   };

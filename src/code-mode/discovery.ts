@@ -69,7 +69,12 @@ export interface SearchResult {
 export interface DescribeResult {
   readonly op: "describe";
   readonly snapshotId: string;
-  readonly signatures: readonly { readonly ref: string; readonly signature: string }[];
+  readonly signatures: readonly {
+    readonly ref: string;
+    readonly signature: string;
+    /** The schema this signature was rendered from, so a later call can detect drift. */
+    readonly schemaHash: string;
+  }[];
   readonly unresolved: readonly DiscoveryError[];
   readonly truncated: boolean;
 }
@@ -230,7 +235,7 @@ export function describeTools(
   const truncated = refs.length > DESCRIBE_BATCH_MAX;
   const requested = refs.slice(0, DESCRIBE_BATCH_MAX);
 
-  const signatures: { ref: string; signature: string }[] = [];
+  const signatures: { ref: string; signature: string; schemaHash: string }[] = [];
   const unresolved: DiscoveryError[] = [];
 
   for (const reference of requested) {
@@ -246,6 +251,7 @@ export function describeTools(
     signatures.push({
       ref: resolved.entry.ref,
       signature: renderCompactSignature(resolved.entry),
+      schemaHash: resolved.entry.schemaHash,
     });
   }
 

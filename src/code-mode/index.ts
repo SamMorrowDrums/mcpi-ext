@@ -1,7 +1,14 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
 import { CODE_MODE_ERRORS, MAX_CHILD_CALLS, MAX_CONCURRENT_READS_PER_SERVER } from "./budgets.js";
-import { buildCatalogSnapshot, resolveTool, type CatalogSnapshot } from "./catalog.js";
+import {
+  buildCatalogSnapshot,
+  resolveIdentity,
+  resolveTool,
+  type CatalogSnapshot,
+  type ServerTrust,
+  type ServerTrustConfig,
+} from "./catalog.js";
 import {
   browseNamespaces,
   describeTools as describeFromCatalog,
@@ -15,7 +22,13 @@ import {
   type CodeModeTool,
 } from "./eligibility.js";
 import type { ExecuteResult, ExecutorOptions } from "./executor.js";
-import { CodeModeDispatchError, executeInSandbox, type CodeModeErrorDetails } from "./executor.js";
+import {
+  CodeModeDispatchError,
+  executeInSandbox,
+  type CodeModeErrorDetails,
+  type RunProvenance,
+  type ToolTarget,
+} from "./executor.js";
 import { loadIsolatedVm } from "./isolated-vm.js";
 import type { OperatorNamespaces } from "./namespaces.js";
 import { renderPromptSection } from "./prompt.js";
@@ -47,6 +60,7 @@ export type {
   SandboxRequest,
 } from "./executor.js";
 export { SANDBOX_UNAVAILABLE_ERROR, executeInSandbox, normalizeCode } from "./executor.js";
+export type { RunProvenance } from "./executor.js";
 export {
   loadIsolatedVm,
   peekIsolatedVm,
@@ -58,12 +72,18 @@ export {
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
 export {
+  DEFAULT_SERVER_TRUST,
   buildCatalogSnapshot,
   canonicalRef,
+  identityKey,
+  resolveIdentity,
   resolveTool,
   toolEffect,
   type CatalogEntry,
   type CatalogSnapshot,
+  type ServerTrust,
+  type ServerTrustConfig,
+  type ToolIdentity,
 } from "./catalog.js";
 export { CODE_MODE_ERRORS, type CodeModeErrorCode } from "./budgets.js";
 export { renderNamespaceBlock, renderPromptSection, hashNamespaceBlock } from "./prompt.js";
@@ -79,6 +99,8 @@ export interface CodeModeManagerOptions extends ExecutorOptions {
   sandboxExecutor?: typeof executeInSandbox;
   /** Operator-curated namespace declarations, keyed by server name. */
   namespaces?: OperatorNamespaces;
+  /** Operator-declared trust levels, keyed by server name. */
+  trust?: ServerTrustConfig;
 }
 
 /**
@@ -127,6 +149,8 @@ export class CodeModeManager {
   private lastDiagnosticSummary = "";
   private sandbox: SandboxAvailability;
   private sandboxProbe: Promise<SandboxAvailability> | undefined;
+  private operatorNamespaces: OperatorNamespaces | undefined;
+  private serverTrust: ServerTrustConfig | undefined;
 
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
@@ -135,6 +159,8 @@ export class CodeModeManager {
     // An injected executor is the sandbox. Probing the native addon in that
     // case would report on a backend this manager will never call.
     this.sandbox = options.sandboxExecutor ? SANDBOX_INJECTED : SANDBOX_UNPROBED;
+    this.operatorNamespaces = options.namespaces;
+    this.serverTrust = options.trust;
   }
 
   /**
@@ -175,6 +201,19 @@ export class CodeModeManager {
     return this.sandboxProbe;
   }
 
+  /**
+   * Supply operator-curated namespaces, which rank below server-declared
+   * metadata and above the server-only fallback. Call before `initialize`.
+   */
+  configureNamespaces(namespaces: OperatorNamespaces | undefined): void {
+    this.operatorNamespaces = namespaces;
+  }
+
+  /** Supply operator-declared server trust levels. Call before `initialize`. */
+  configureTrust(trust: ServerTrustConfig | undefined): void {
+    this.serverTrust = trust;
+  }
+
   /** Initialize with MCP manager and policy, and build the first snapshot. */
   initialize(mcpManager: McpClientManager, policy: McpPolicy, log?: (msg: string) => void): void {
     this.mcpManager = mcpManager;
@@ -198,7 +237,8 @@ export class CodeModeManager {
 
     const previous = this.snapshot.snapshotId;
     this.snapshot = buildCatalogSnapshot(this.codeModeTools, {
-      ...(this.options.namespaces ? { operator: this.options.namespaces } : {}),
+      ...(this.operatorNamespaces ? { operator: this.operatorNamespaces } : {}),
+      ...(this.serverTrust ? { trust: this.serverTrust } : {}),
     });
 
     if (this.pinnedSnapshotId && this.snapshot.snapshotId !== previous) {
@@ -281,9 +321,13 @@ export class CodeModeManager {
    *
    * Never reaches an MCP server.
    */
-  discover(operation: string, payload: Record<string, unknown> = {}): unknown {
-    this.refresh();
-    const snapshot = this.snapshot;
+  discover(
+    operation: string,
+    payload: Record<string, unknown> = {},
+    pinned?: CatalogSnapshot,
+  ): unknown {
+    if (!pinned) this.refresh();
+    const snapshot = pinned ?? this.snapshot;
 
     switch (operation) {
       case "browse": {
@@ -306,7 +350,9 @@ export class CodeModeManager {
           : [];
         const result = describeFromCatalog(snapshot, refs);
         if ("signatures" in result) {
-          this.telemetry.recordDescribe(result.signatures.map((entry) => entry.ref));
+          this.telemetry.recordDescribe(
+            result.signatures.map((entry) => ({ ref: entry.ref, schemaHash: entry.schemaHash })),
+          );
         }
         return result;
       }
@@ -318,14 +364,43 @@ export class CodeModeManager {
     }
   }
 
-  /** Execute code that chains MCP tool calls. */
-  async executeCode(code: string, signal?: AbortSignal): Promise<ExecuteResult> {
+  /**
+   * Execute code that chains MCP tool calls.
+   *
+   * `expectedSnapshotId` pins the run to the catalog the model actually looked
+   * at. Describing a tool in one turn and calling it in the next is otherwise a
+   * race: the schema can change in between, and the call would be made against
+   * a shape nobody checked. Supplying it turns that into a refusal before the
+   * isolate starts; omitting it captures whatever is current.
+   */
+  async executeCode(
+    code: string,
+    signal?: AbortSignal,
+    expectedSnapshotId?: string,
+  ): Promise<ExecuteResult> {
     this.refresh();
+
+    if (expectedSnapshotId && expectedSnapshotId !== this.snapshot.snapshotId) {
+      const message =
+        `The catalog changed since snapshot ${expectedSnapshotId.slice(0, 12)} ` +
+        `(now ${this.snapshot.snapshotId.slice(0, 12)}). Re-run code_search and check the ` +
+        "parameters you depend on before executing.";
+      return {
+        result: undefined,
+        error: message,
+        errorDetails: { error: CODE_MODE_ERRORS.STALE_SNAPSHOT, message },
+        logs: [],
+      };
+    }
+
     return this.execute(code, signal);
   }
 
   private async execute(code: string, signal?: AbortSignal): Promise<ExecuteResult> {
     const policy = this.policy;
+    // Captured once. Every discovery, binding, and dispatch in this run reads
+    // this exact catalog, so the run is internally consistent even if a server
+    // reconnects underneath it.
     const snapshot = this.snapshot;
 
     const aliases: Record<string, string> = {};
@@ -335,7 +410,13 @@ export class CodeModeManager {
     const readSlots = new Map<string, number>();
     const writeQueue = { chain: Promise.resolve() };
 
-    const dispatch = async (reference: string, args: Record<string, unknown>) => {
+    // Coarse run-level provenance. Recorded before dispatch so that a write
+    // is judged against everything the run had already read, not against
+    // whatever happened to complete first.
+    const readServers = new Map<string, ServerTrust>();
+    let attemptedWrite = false;
+
+    const dispatch = async (target: ToolTarget, args: Record<string, unknown>) => {
       if (signal?.aborted) throw cancelled();
 
       childCalls += 1;
@@ -346,7 +427,12 @@ export class CodeModeManager {
         });
       }
 
-      const resolved = resolveTool(snapshot, reference);
+      // Authority comes from the structured identity where the script gave
+      // one. A ref is resolved through the catalog, never parsed into one.
+      const resolved =
+        target.kind === "identity"
+          ? resolveIdentity(snapshot, target)
+          : resolveTool(snapshot, target.ref);
       if (!resolved.ok) {
         throw new CodeModeDispatchError({
           error: resolved.error,
@@ -358,7 +444,24 @@ export class CodeModeManager {
       const entry = resolved.entry;
       if (!policy) throw new Error("Code mode MCP policy is not initialized");
 
+      // Described in an earlier turn, changed since. The model's arguments were
+      // shaped against something that no longer exists, so retrying the same
+      // call cannot succeed — say what happened and send it back to describe.
+      const describedHash = this.telemetry.describedSchemaHash(entry.ref);
+      if (describedHash !== undefined && describedHash !== entry.schemaHash) {
+        throw new CodeModeDispatchError({
+          error: CODE_MODE_ERRORS.SCHEMA_CHANGED,
+          message:
+            `The schema for ${entry.ref} changed since you described it. ` +
+            "Call code_search with op=describe for this tool and rebuild the arguments; " +
+            "re-running the same call will fail the same way.",
+        });
+      }
+
       this.telemetry.recordCall(entry.ref);
+
+      if (entry.effect === "read") readServers.set(entry.serverName, entry.trust);
+      else attemptedWrite = true;
 
       const call = async () => {
         try {
@@ -399,10 +502,13 @@ export class CodeModeManager {
       }
     };
 
+    // Discovery inside an execution reads the snapshot dispatch resolves
+    // against. Refreshing here would let a script describe a tool from one
+    // catalog and call into another.
     const discover = (operation: string, payload: Record<string, unknown>) =>
-      Promise.resolve(this.discover(operation, payload));
+      Promise.resolve(this.discover(operation, payload, snapshot));
 
-    return this.sandboxExecutor({
+    const result = await this.sandboxExecutor({
       code,
       aliases,
       dispatch,
@@ -411,7 +517,26 @@ export class CodeModeManager {
       ...(this.options.memoryLimit !== undefined ? { memoryLimit: this.options.memoryLimit } : {}),
       ...(this.options.timeoutMs !== undefined ? { timeoutMs: this.options.timeoutMs } : {}),
     });
+
+    return { ...result, provenance: summarizeProvenance(readServers, attemptedWrite) };
   }
+}
+
+const TRUST_ORDER: readonly ServerTrust[] = ["untrusted", "reviewed", "managed"];
+
+function summarizeProvenance(
+  readServers: ReadonlyMap<string, ServerTrust>,
+  attemptedWrite: boolean,
+): RunProvenance {
+  let lowest: ServerTrust = "managed";
+  for (const trust of readServers.values()) {
+    if (TRUST_ORDER.indexOf(trust) < TRUST_ORDER.indexOf(lowest)) lowest = trust;
+  }
+  return {
+    readServers: [...readServers.keys()].sort((left, right) => (left < right ? -1 : 1)),
+    lowestTrust: readServers.size === 0 ? "none" : lowest,
+    attemptedWrite,
+  };
 }
 
 function readOptions(payload: Record<string, unknown>) {

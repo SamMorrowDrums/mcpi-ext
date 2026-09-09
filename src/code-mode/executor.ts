@@ -7,6 +7,26 @@ export interface ExecuteResult {
   error?: string;
   errorDetails?: CodeModeErrorDetails;
   logs: string[];
+  /** What this run read before it wrote anything. Set by the manager. */
+  provenance?: RunProvenance;
+}
+
+/**
+ * Coarse, run-level record of where a run's data came from.
+ *
+ * A script that reads from an unvetted server and then writes somewhere is the
+ * shape of a prompt-injection laundering step, and the person approving the
+ * write is the only one who can judge it. Run-level rather than per-value: it
+ * over-approximates, which is the safe direction, and it is cheap enough to
+ * always be correct. Per-value taint can refine it later.
+ */
+export interface RunProvenance {
+  /** Servers read from before the first side effect, sorted. */
+  readonly readServers: readonly string[];
+  /** The least-vetted trust level among those servers. */
+  readonly lowestTrust: string;
+  /** Whether a side-effecting call was attempted at all. */
+  readonly attemptedWrite: boolean;
 }
 
 export interface CodeModeErrorDetails {
@@ -25,8 +45,22 @@ export class CodeModeDispatchError extends Error {
   }
 }
 
-/** Invoke an MCP tool by canonical `server/tool` reference. */
-export type ToolDispatchFn = (reference: string, args: Record<string, unknown>) => Promise<unknown>;
+/**
+ * What a script is asking to call.
+ *
+ * `identity` is the authority form: two separate strings that no tool name can
+ * merge. `ref` exists because a model writing code will type a ref, and it
+ * resolves through the catalog rather than through string parsing.
+ */
+export type ToolTarget =
+  | { readonly kind: "identity"; readonly serverName: string; readonly toolName: string }
+  | { readonly kind: "ref"; readonly ref: string };
+
+/** Invoke an MCP tool. */
+export type ToolDispatchFn = (
+  target: ToolTarget,
+  args: Record<string, unknown>,
+) => Promise<unknown>;
 
 /** Answer a catalog query. Never reaches an MCP server. */
 export type DiscoverFn = (operation: string, payload: Record<string, unknown>) => Promise<unknown>;
@@ -148,10 +182,11 @@ async function runInIsolate(
   });
   await jail.set("__log", logCallback);
 
-  const dispatchRef = new ivm.Reference(async (reference: string, argsJson: string) => {
+  const dispatchRef = new ivm.Reference(async (targetJson: string, argsJson: string) => {
     const args = JSON.parse(argsJson) as Record<string, unknown>;
+    const target = JSON.parse(targetJson) as ToolTarget;
     try {
-      const result = await request.dispatch(reference, args);
+      const result = await request.dispatch(target, args);
       return JSON.stringify({ ok: true, value: result === undefined ? null : result });
     } catch (error) {
       if (error instanceof CodeModeDispatchError) {
@@ -179,7 +214,7 @@ async function runInIsolate(
   const aliasEntries = Object.entries(request.aliases)
     .map(
       ([alias, reference]) =>
-        `    ${alias}: async (args) => __callTool(${JSON.stringify(reference)}, args)`,
+        `    ${alias}: async (args) => __callRef(${JSON.stringify(reference)}, args)`,
     )
     .join(",\n");
 
@@ -188,14 +223,15 @@ async function runInIsolate(
   const wrappedCode = `
     (async () => {
       const console = { log: (...args) => __log(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) };
-      const __callTool = async (ref, args) => {
-        const r = await __dispatch.apply(undefined, [ref, JSON.stringify(args ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
+      const __callTool = async (target, args) => {
+        const r = await __dispatch.apply(undefined, [JSON.stringify(target), JSON.stringify(args ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
         const response = JSON.parse(r);
         if (!response.ok) {
           throw new Error(${JSON.stringify(STRUCTURED_ERROR_PREFIX)} + JSON.stringify(response.error));
         }
         return response.value;
       };
+      const __callRef = async (ref, args) => __callTool({ kind: "ref", ref: String(ref) }, args);
       const __ask = async (op, payload) => {
         const r = await __discover.apply(undefined, [op, JSON.stringify(payload ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
         const response = JSON.parse(r);
@@ -214,8 +250,11 @@ ${INSPECT_SOURCE}
         searchTools: async (query, options) => __ask("search", { ...(options ?? {}), query }),
         describe: async (refs) => __ask("describe", { refs: Array.isArray(refs) ? refs : [refs] }),
         describeTools: async (refs) => __ask("describe", { refs: Array.isArray(refs) ? refs : [refs] }),
-        call: async (server, tool, args) => __callTool(server + "/" + tool, args),
-        callRef: async (ref, args) => __callTool(ref, args),
+        call: async (server, tool, args) =>
+          typeof tool === "string"
+            ? __callTool({ kind: "identity", serverName: String(server), toolName: tool }, args)
+            : __callRef(String(server), tool),
+        callRef: async (ref, args) => __callRef(ref, args),
         inspect: (value, options) => __inspect(value, options),
 ${aliasEntries}
       };

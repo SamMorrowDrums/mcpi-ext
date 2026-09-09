@@ -230,6 +230,8 @@ export default function (pi: ExtensionAPI) {
         };
       }
       // Code execution remains available even when no MCP servers or callable tools exist.
+      codeModeManager.configureNamespaces(config.namespaces);
+      codeModeManager.configureTrust(config.trust);
       codeModeManager.initialize(mcpManager, policy, log);
       // Probe the optional native sandbox backend once, so routing can state
       // plainly whether code mode can run rather than assuming it can.

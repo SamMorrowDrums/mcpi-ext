@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CodeModeDispatchError, executeInSandbox, normalizeCode } from "./executor.js";
-import type { DiscoverFn, ToolDispatchFn } from "./executor.js";
+import type { DiscoverFn, ToolDispatchFn, ToolTarget } from "./executor.js";
 
 describe("normalizeCode", () => {
   it("strips markdown code fences", () => {
@@ -79,9 +79,9 @@ describe("executeInSandbox", () => {
   });
 
   it("calls tools by canonical ref", async () => {
-    const dispatched: { ref: string; args: Record<string, unknown> }[] = [];
-    const dispatch: ToolDispatchFn = (ref, args) => {
-      dispatched.push({ ref, args });
+    const dispatched: { target: ToolTarget; args: Record<string, unknown> }[] = [];
+    const dispatch: ToolDispatchFn = (target, args) => {
+      dispatched.push({ target, args });
       return Promise.resolve({ results: ["doc1", "doc2"] });
     };
 
@@ -92,13 +92,20 @@ describe("executeInSandbox", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toEqual({ results: ["doc1", "doc2"] });
-    expect(dispatched).toEqual([{ ref: "docs/search_docs", args: { query: "test" } }]);
+    // Server and tool stay separate all the way to the host, so no tool name
+    // can merge itself into another server's address.
+    expect(dispatched).toEqual([
+      {
+        target: { kind: "identity", serverName: "docs", toolName: "search_docs" },
+        args: { query: "test" },
+      },
+    ]);
   });
 
   it("exposes unambiguous aliases that dispatch to canonical refs", async () => {
-    const dispatched: string[] = [];
-    const dispatch: ToolDispatchFn = (ref) => {
-      dispatched.push(ref);
+    const dispatched: ToolTarget[] = [];
+    const dispatch: ToolDispatchFn = (target) => {
+      dispatched.push(target);
       return Promise.resolve({ ok: true });
     };
 
@@ -108,7 +115,7 @@ describe("executeInSandbox", () => {
     });
 
     expect(result.error).toBeUndefined();
-    expect(dispatched).toEqual(["github/list-repos"]);
+    expect(dispatched).toEqual([{ kind: "ref", ref: "github/list-repos" }]);
   });
 
   it("surfaces structured dispatch errors without turning them into success", async () => {
@@ -144,11 +151,11 @@ describe("executeInSandbox", () => {
 
   it("chains multiple tool calls", async () => {
     const calls: string[] = [];
-    const dispatch: ToolDispatchFn = (ref, args) => {
-      calls.push(ref);
-      if (ref === "s/list_items") return Promise.resolve({ items: ["a", "b", "c"] });
-      if (ref === "s/get_details")
-        return Promise.resolve({ detail: `info for ${String(args.id)}` });
+    const dispatch: ToolDispatchFn = (target, args) => {
+      const name = target.kind === "identity" ? target.toolName : target.ref;
+      calls.push(name);
+      if (name === "list_items") return Promise.resolve({ items: ["a", "b", "c"] });
+      if (name === "get_details") return Promise.resolve({ detail: `info for ${String(args.id)}` });
       return Promise.resolve({});
     };
 
@@ -166,7 +173,7 @@ describe("executeInSandbox", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toEqual(["info for a", "info for b", "info for c"]);
-    expect(calls).toEqual(["s/list_items", "s/get_details", "s/get_details", "s/get_details"]);
+    expect(calls).toEqual(["list_items", "get_details", "get_details", "get_details"]);
   });
 
   it("prevents imports", async () => {

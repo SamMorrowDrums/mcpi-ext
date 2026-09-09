@@ -13,6 +13,20 @@ import {
 export type ToolEffect = "read" | "write" | "unknown";
 
 /**
+ * The authority form of a tool's identity.
+ *
+ * Structured on purpose. `ref` is display and input syntax; it is built by
+ * joining two attacker-influenced strings with `/`, so it cannot be the thing
+ * a permission decision is made against. A server that names a tool `b/c`
+ * produces the same `a/b/c` ref as server `a/b`'s tool `c`, and parsing that
+ * back into a server and a tool is a guess.
+ */
+export interface ToolIdentity {
+  readonly serverName: string;
+  readonly toolName: string;
+}
+
+/**
  * One tool in the Code Mode catalog, under its canonical identity.
  *
  * `ref` is the authority form and is always unique. `alias` is a convenience
@@ -32,12 +46,39 @@ export interface CatalogEntry {
    * first — a wrong answer that looks like a right one.
    */
   readonly alias?: string;
-  /** SHA-256 over the declared input and output schema. */
+  /** SHA-256 over the declared input and output schema. The execution contract. */
   readonly schemaHash: string;
+  /**
+   * SHA-256 over everything about this tool the model can see.
+   *
+   * Broader than `schemaHash` on purpose. A server can leave every schema
+   * untouched and rewrite a description into an instruction, and a digest over
+   * the execution contract alone would call that the same tool. This covers
+   * identity, title, description, both schemas, annotations, and declared
+   * metadata, so any change to the model-visible bytes moves the snapshot and
+   * invalidates approvals keyed to it.
+   */
+  readonly definitionDigest: string;
   readonly effect: ToolEffect;
+  /** Operator-declared trust in the server that published this tool. */
+  readonly trust: ServerTrust;
   readonly tool: McpTool;
   readonly entry: CodeModeTool;
 }
+
+/**
+ * How far an operator has vetted a server.
+ *
+ * Defaults to `untrusted`, because a server nobody has reviewed is exactly
+ * that, and a default that assumed otherwise would silently upgrade every
+ * newly added server.
+ */
+export type ServerTrust = "untrusted" | "reviewed" | "managed";
+
+export const DEFAULT_SERVER_TRUST: ServerTrust = "untrusted";
+
+/** Operator-declared trust levels, keyed by server name. */
+export type ServerTrustConfig = Readonly<Record<string, ServerTrust>>;
 
 /**
  * An immutable view of the catalog at a point in time.
@@ -53,11 +94,17 @@ export interface CatalogSnapshot {
   readonly entries: readonly CatalogEntry[];
   readonly byRef: ReadonlyMap<string, CatalogEntry>;
   readonly byAlias: ReadonlyMap<string, CatalogEntry>;
+  /** Exact `(serverName, toolName)` lookup. The only unambiguous index. */
+  readonly byIdentity: ReadonlyMap<string, CatalogEntry>;
   /** Tool names published by more than one server. */
   readonly ambiguous: ReadonlyMap<string, readonly CatalogEntry[]>;
+  /** Refs that two distinct identities both render to, and so cannot resolve. */
+  readonly collidingRefs: ReadonlySet<string>;
 }
 
-export type BuildCatalogOptions = DeriveNamespacesOptions;
+export interface BuildCatalogOptions extends DeriveNamespacesOptions {
+  readonly trust?: ServerTrustConfig;
+}
 
 /** Build a snapshot from the client-internal Code Mode catalog. */
 export function buildCatalogSnapshot(
@@ -87,14 +134,29 @@ export function buildCatalogSnapshot(
         ref: canonicalRef(tool.serverName, tool.name),
         ...(unique ? { alias: sanitizeIdentifier(tool.name) } : {}),
         schemaHash: hashSchemas(entry),
+        definitionDigest: hashDefinition(entry, namespace),
         effect: toolEffect(tool),
+        trust: options.trust?.[tool.serverName] ?? DEFAULT_SERVER_TRUST,
         tool,
         entry,
       } satisfies CatalogEntry;
     })
     .sort((left, right) => compareStrings(left.ref, right.ref));
 
-  const byRef = new Map(entries.map((entry) => [entry.ref, entry]));
+  const byIdentity = new Map(
+    entries.map((entry) => [identityKey(entry.serverName, entry.toolName), entry]),
+  );
+
+  // Two distinct identities can render the same ref when a tool name contains
+  // the separator. Neither is allowed to win: the loser would be silently
+  // impersonated by whichever sorted first.
+  const byRef = new Map<string, CatalogEntry>();
+  const collidingRefs = new Set<string>();
+  for (const entry of entries) {
+    if (byRef.has(entry.ref)) collidingRefs.add(entry.ref);
+    else byRef.set(entry.ref, entry);
+  }
+  for (const ref of collidingRefs) byRef.delete(ref);
   const byAlias = new Map<string, CatalogEntry>();
   const aliasCollisions = new Set<string>();
   for (const entry of entries) {
@@ -124,7 +186,33 @@ export function buildCatalogSnapshot(
     entries,
     byRef,
     byAlias,
+    byIdentity,
     ambiguous,
+    collidingRefs,
+  };
+}
+
+/**
+ * A collision-free key for an identity.
+ *
+ * Length-prefixing the server name means no tool name can forge a different
+ * server's key, which `${server}/${tool}` cannot promise.
+ */
+export function identityKey(serverName: string, toolName: string): string {
+  return `${String(serverName.length)}:${serverName}/${toolName}`;
+}
+
+/**
+ * Resolve a structured identity. No parsing, no guessing — an exact lookup
+ * against the catalog, which is what a dispatch decision needs.
+ */
+export function resolveIdentity(snapshot: CatalogSnapshot, identity: ToolIdentity): ResolveResult {
+  const entry = snapshot.byIdentity.get(identityKey(identity.serverName, identity.toolName));
+  if (entry) return { ok: true, entry };
+  return {
+    ok: false,
+    error: "unknown_tool",
+    message: `No tool "${identity.toolName}" on server "${identity.serverName}". Use code_search to find it.`,
   };
 }
 
@@ -159,6 +247,21 @@ export function resolveTool(snapshot: CatalogSnapshot, reference: string): Resol
   const trimmed = reference.trim();
   if (!trimmed) {
     return { ok: false, error: "unknown_tool", message: "Tool reference is empty." };
+  }
+
+  if (snapshot.collidingRefs.has(trimmed)) {
+    const candidates = snapshot.entries
+      .filter((entry) => entry.ref === trimmed)
+      .map((entry) => `${entry.serverName} :: ${entry.toolName}`)
+      .sort(compareStrings);
+    return {
+      ok: false,
+      error: "ambiguous_tool",
+      message:
+        `"${trimmed}" renders from ${String(candidates.length)} different tools, so it cannot ` +
+        `identify one. Call by structured identity instead: ${candidates.join(", ")}.`,
+      candidates,
+    };
   }
 
   const direct = snapshot.byRef.get(trimmed);
@@ -229,6 +332,32 @@ export function sanitizeIdentifier(name: string): string {
   return /^[0-9]/.test(replaced) ? `_${replaced}` : replaced;
 }
 
+/**
+ * Hash every byte of a tool the model is ever shown.
+ *
+ * Descriptions are included because they are instructions in practice: a
+ * server that rewrites one has changed what the model will do without changing
+ * anything the execution contract notices.
+ */
+function hashDefinition(entry: CodeModeTool, namespace: string): string {
+  const tool = entry.tool;
+  return sha256(
+    canonicalJson({
+      serverName: tool.serverName,
+      toolName: tool.name,
+      namespace,
+      title: tool.title ?? null,
+      description: tool.description ?? null,
+      inputSchema: tool.inputSchema ?? null,
+      outputSchema: entry.outputSchema ?? null,
+      provenance: entry.outputSchemaProvenance,
+      annotations: tool.annotations ?? null,
+      meta: tool._meta ?? null,
+      callable: entry.callable,
+    }),
+  );
+}
+
 function hashSchemas(entry: CodeModeTool): string {
   return sha256(
     canonicalJson({
@@ -248,7 +377,9 @@ function hashSchemas(entry: CodeModeTool): string {
 function computeSnapshotId(entries: readonly CatalogEntry[]): string {
   const lines = entries
     .map(
-      (entry) => `${entry.serverName}\t${entry.namespace}\t${entry.toolName}\t${entry.schemaHash}`,
+      (entry) =>
+        `${entry.serverName}\t${entry.namespace}\t${entry.toolName}\t${entry.schemaHash}\t` +
+        `${entry.definitionDigest}\t${entry.effect}\t${entry.trust}\t${String(entry.entry.callable)}`,
     )
     .sort(compareStrings);
   return sha256(lines.join("\n"));
