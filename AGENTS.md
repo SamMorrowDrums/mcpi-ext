@@ -43,7 +43,8 @@ src/
   routing/             Execution-facility descriptors, prompt section, host registration seam
   skills/              Skill registry, discovery, gating, tool proxies
   tool-cli/            tool-cli RPC server, client, CLI binary, prompt
-  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, eligibility, type hints
+  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, eligibility, canonical
+                       catalog, structured discovery, pinned namespace prompt
   test-servers/        Test MCP servers (weather, echo)
 dist/                  Compiled output (gitignored)
 scripts/               Integration, smoke, and release-check scripts
@@ -119,6 +120,8 @@ The extension provides three mechanisms for exposing MCP tools to the agent:
 All three see the same catalogue. Deferral is a statement about which definitions the _model_ has been shown on the direct surface; it is not a restriction on what may run, and Code Mode and tool-cli discover and call every tool regardless of skill state.
 
 Skills have two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills`.
+
+Code Mode's prompt cost is fixed rather than proportional to the catalog. A declaration-only namespace block is rendered once at session start and never re-rendered; exact schemas are fetched on demand through `code_search`, whose results land in the conversation rather than in the model's tool definitions. Namespaces come only from declared sources — server `_meta` or operator config in `mcp.json` — never inferred from tool names, because a bad inference cached in a prompt prefix is permanent while a bad search result costs one turn. Skill gating never filters this catalog: it decides what may be _called_, and a query returns byte-identical hits and ranking before and after a skill is activated.
 
 These name _exposure mechanisms_, not a routing order, and the table is deliberately unnumbered so it cannot be read as one. Nothing tells the agent to try skills before tool-cli. Which surface an agent should use for a given task is decided by the execution-routing section below.
 
