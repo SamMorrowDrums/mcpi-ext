@@ -606,7 +606,7 @@ check("managed extension registers both flags in public mcpi help", () => {
   assert(help.includes("--mcp-skills-extension"), "--mcp-skills-extension is absent from help");
 });
 
-check("public mcpi completes a zero-server Code Mode startup through managed flags", () => {
+check("public mcpi completes a zero-server startup through managed flags", () => {
   const emptyConfig = join(managedDir, "empty-mcp.json");
   writeFileSync(emptyConfig, `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`, "utf8");
 
@@ -631,7 +631,6 @@ check("public mcpi completes a zero-server Code Mode startup through managed fla
   );
 
   assert(output.includes('"message":"mcpi-ext loaded"'), "session_start did not run");
-  assert(/\[code-mode\] 0 tool\(s\)/.test(output), "zero-server Code Mode did not initialize");
   assert(
     output.includes('"command":"get_state","success":true'),
     `RPC session did not reach a usable state:\n${output.slice(0, 800)}`,

@@ -41,6 +41,30 @@ describe("frontmatter helpers", () => {
     expect(parseFrontmatter(content)).toEqual({ frontmatter: {}, body: content });
   });
 
+  it("requires opening and closing delimiters to be standalone lines", () => {
+    const invalidOpening = "---not-frontmatter\nname: weather\n---\nbody";
+    const invalidClosing = "---\nname: weather\n---not-a-delimiter\nbody";
+
+    expect(parseFrontmatter(invalidOpening)).toEqual({
+      frontmatter: {},
+      body: invalidOpening,
+    });
+    expect(parseFrontmatter(invalidClosing)).toEqual({
+      frontmatter: {},
+      body: invalidClosing,
+    });
+  });
+
+  it.each(["value", "42", "- item"])(
+    "coerces a non-object YAML root to an empty map: %s",
+    (yaml) => {
+      expect(parseFrontmatter(`---\n${yaml}\n---\nbody`)).toEqual({
+        frontmatter: {},
+        body: "body",
+      });
+    },
+  );
+
   it("uses the same parser for stripping frontmatter", () => {
     expect(stripFrontmatter("---\nname: weather\n---\n\nUse get_weather.\n")).toBe(
       "Use get_weather.",
