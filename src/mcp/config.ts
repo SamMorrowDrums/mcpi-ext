@@ -53,12 +53,20 @@ export type ServerConfig = Static<typeof ServerConfig>;
 export type McpConfig = Static<typeof McpConfig>;
 
 /**
- * Whether the draft skills extension is enabled.
+ * Whether the draft skills extension is negotiated with servers that declare it.
  *
- * Defaults to **off**. SEP-2640 is a draft: nothing here should start speaking
- * it because a config file happened to omit a key, and a host that quietly
- * enabled a proposal would make it indistinguishable from ratified support.
+ * Defaults to **on**. Progressive discovery is the product: a server that
+ * declares `io.modelcontextprotocol/skills` has asked to be discovered
+ * progressively, and requiring the user to also pass a flag makes the default
+ * experience the degraded one. Negotiation stays strictly opt-in *per server* —
+ * the policy re-reads each server's declared settings before every extension
+ * request, so a server that never declared the extension is never spoken to in
+ * it, whatever this returns.
+ *
+ * SEP-2640 is still a draft, so the opt-out is explicit
+ * (`experimental.skillsExtension: false`, or `--no-mcp-skills-extension`) and
+ * the draft status is surfaced as a diagnostic whenever it is in use.
  */
 export function isSkillsExtensionEnabled(config: Pick<McpConfig, "experimental">): boolean {
-  return config.experimental?.skillsExtension === true;
+  return config.experimental?.skillsExtension !== false;
 }
