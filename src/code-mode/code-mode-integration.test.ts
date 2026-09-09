@@ -52,26 +52,27 @@ describe("code mode integration (weather server)", () => {
     });
   });
 
-  it("generates type hints for eligible tools", () => {
-    const hints = codeMode.getTypeHints();
-    expect(hints).toContain("declare const codemode");
-    expect(hints).toContain("check_weather_for_city");
-    expect(hints).toContain("check_weekly_forecast_for_city");
-    expect(hints).toContain("echo");
-    expect(hints).toContain("listTools");
-    expect(hints).toContain("Output schemas: 3 declared, 0 synthesized, 0 unavailable");
+  it("pins a namespace-only prompt section that names no individual tool", () => {
+    const section = codeMode.formatSystemPromptSection();
+
+    // The released build injected every tool signature here every turn.
+    for (const name of ["check_weather_for_city", "check_weekly_forecast_for_city"]) {
+      expect(section).not.toContain(name);
+    }
+    expect(section).not.toContain("declare const codemode");
+    expect(section).toContain("code_search");
   });
 
   it("reports as active", () => {
     expect(codeMode.isActive).toBe(true);
   });
 
-  it("generates system prompt section", () => {
+  it("generates a system prompt section that is byte-identical across turns", () => {
     const section = codeMode.formatSystemPromptSection();
     expect(section).toContain("<code_mode>");
     expect(section).toContain("code_search");
     expect(section).toContain("code_execute");
-    expect(section).toContain("declare const codemode");
+    expect(codeMode.formatSystemPromptSection()).toBe(section);
   });
 
   it("executes code that calls a single tool", async () => {
@@ -110,16 +111,22 @@ describe("code mode integration (weather server)", () => {
     ]);
   });
 
-  it("executes code that uses listTools", async () => {
+  it("executes code that discovers tools from inside the sandbox", async () => {
     const result = await codeMode.executeCode(`
-      const tools = await codemode.listTools();
-      return tools.sort();
+      const { namespaces } = await codemode.browse();
+      const listed = await codemode.list({ namespace: namespaces[0].ref });
+      return listed.tools.map((tool) => tool.ref).sort();
     `);
 
     expect(result.error).toBeUndefined();
-    const names = result.result as string[];
-    expect(names).toContain("check_weather_for_city");
-    expect(names).toContain("echo");
+    const refs = result.result as string[];
+    expect(refs.some((ref) => ref.endsWith("/check_weather_for_city"))).toBe(true);
+    expect(refs.some((ref) => ref.endsWith("/echo"))).toBe(true);
+  });
+
+  it("refuses an unfiltered list instead of dumping the whole catalog", () => {
+    const refused = codeMode.discover("list", {}) as { error: string };
+    expect(refused.error).toBe("invalid_arguments");
   });
 
   it("executes code that calls echo tool", async () => {
@@ -148,13 +155,10 @@ describe("code mode integration (weather server)", () => {
     });
   });
 
-  it("search mode works for tool discovery", async () => {
-    const result = await codeMode.searchTools(`
-      const tools = await codemode.listTools();
-      return tools;
-    `);
+  it("discovers tools without executing code", () => {
+    const listed = codeMode.discover("list", { effect: "read" }) as { tools: { ref: string }[] };
 
-    expect(result.error).toBeUndefined();
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(listed.tools.length).toBeGreaterThan(0);
+    expect(listed.tools.some((tool) => tool.ref.endsWith("/echo"))).toBe(true);
   });
 });

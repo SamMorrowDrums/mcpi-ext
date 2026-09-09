@@ -234,6 +234,9 @@ export default function (pi: ExtensionAPI) {
       // Probe the optional native sandbox backend once, so routing can state
       // plainly whether code mode can run rather than assuming it can.
       await codeModeManager.probeSandbox();
+      // Freeze the prompt section for the session. Servers that connect later
+      // are reachable through code_search, but the prompt bytes never move.
+      codeModeManager.pinPromptSnapshot();
     } catch (err) {
       withholdToolCliCredentials(pi);
       await rpcServer.stop();
@@ -286,7 +289,6 @@ export default function (pi: ExtensionAPI) {
     extra += formatToolCliForPrompt({ toolCli: toolCliState, bash: bashState });
 
     if (codeModeManager.isActive) {
-      codeModeManager.refresh();
       extra += codeModeManager.formatSystemPromptSection();
     }
 

@@ -28,7 +28,7 @@ describe("CodeModeManager reliability", () => {
     expect(codeMode.isActive).toBe(true);
   });
 
-  it("searches a catalogue of write tools instead of refusing before isolate entry", async () => {
+  it("answers discovery without entering the sandbox", async () => {
     const sandboxExecutor = vi.fn(async (): Promise<ExecuteResult> => ({
       result: ["write_records"],
       logs: [],
@@ -36,7 +36,29 @@ describe("CodeModeManager reliability", () => {
     const codeMode = new CodeModeManager({ sandboxExecutor });
     initCodeMode(
       codeMode,
+      [makeTool("write_records", { annotations: { readOnlyHint: false } })],
+      vi.fn(),
+    );
+
+    const { codeSearch } = codeMode.createTools();
+    const result = await codeSearch.execute(
+      "discover",
+      { op: "search", query: "records" },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect(sandboxExecutor).not.toHaveBeenCalled();
+  });
+
+  it("indexes every tool for discovery, including tools it will not be allowed to call", () => {
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
       [
+        makeTool("read_records", { annotations: { readOnlyHint: true } }),
         makeTool("write_records", {
           annotations: { readOnlyHint: false, destructiveHint: true },
         }),
@@ -44,29 +66,13 @@ describe("CodeModeManager reliability", () => {
       vi.fn(),
     );
 
-    // A write tool is a searchable tool. code_search refuses only when the
-    // catalogue is genuinely empty, never because everything in it would
-    // pause for approval when called.
-    const result = await codeMode.searchTools("return await codemode.listTools();");
-
-    expect(result.errorDetails).toBeUndefined();
-    expect(result.result).toEqual(["write_records"]);
-    expect(codeMode.getTypeHints()).toContain("write_records:");
-    expect(sandboxExecutor).toHaveBeenCalledTimes(1);
-  });
-
-  it("refuses code_search before isolate entry only when no tools exist at all", async () => {
-    const sandboxExecutor = vi.fn(async (): Promise<ExecuteResult> => ({
-      result: "unexpected",
-      logs: [],
-    }));
-    const codeMode = new CodeModeManager({ sandboxExecutor });
-    initCodeMode(codeMode, [], vi.fn());
-
-    const result = await codeMode.searchTools("return await codemode.listTools();");
-
-    expect(result.errorDetails).toMatchObject({ error: "no_tools" });
-    expect(sandboxExecutor).not.toHaveBeenCalled();
+    const listed = codeMode.discover("list", { server: "fixture" }) as {
+      tools: { ref: string }[];
+    };
+    expect(listed.tools.map((tool) => tool.ref)).toEqual([
+      "fixture/read_records",
+      "fixture/write_records",
+    ]);
   });
 
   it("keeps declared and synthesized schema provenance distinct without mutating tools", () => {
@@ -118,16 +124,91 @@ describe("CodeModeManager reliability", () => {
       outputSchemaProvenance: "synthesized",
     });
     expect(tools.every((tool) => !("codeMode" in tool))).toBe(true);
-
-    const hints = codeMode.getTypeHints();
-    expect(hints).toContain("MCP catalog: 3 tool(s); 2 run unattended, 1 pause for approval");
-    expect(hints).toContain("Output schemas: 1 declared, 2 synthesized, 0 unavailable");
-    expect(hints).toContain("declared_read:");
-    expect(hints).toContain("schema_less_read:");
-    expect(hints).toContain("write_records:");
   });
 
-  it("dispatches a write tool through the host approval path", async () => {
+  it("marks a declared output schema as typed and an absent one as unknown", () => {
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("declared_read", {
+          annotations: { readOnlyHint: true },
+          outputSchema: { type: "object", properties: { total: { type: "number" } } },
+        }),
+        makeTool("schema_less_read", { annotations: { readOnlyHint: true } }),
+      ],
+      vi.fn(),
+    );
+
+    const described = codeMode.discover("describe", {
+      refs: ["fixture/declared_read", "fixture/schema_less_read"],
+    }) as { signatures: { ref: string; signature: string }[] };
+
+    const declared = described.signatures[0].signature;
+    const undeclared = described.signatures[1].signature;
+
+    expect(declared).toContain("total");
+    // No schema means no claim about the shape. The model is told to look,
+    // rather than handed a fabricated type it might trust.
+    expect(undeclared).toContain("unknown");
+    expect(undeclared).toContain("codemode.inspect");
+  });
+
+  it("pins the system prompt section across catalog changes", () => {
+    const codeMode = new CodeModeManager();
+    const manager = fakeManager(
+      [makeTool("read_records", { annotations: { readOnlyHint: true } })],
+      vi.fn(),
+    );
+    codeMode.initialize(manager, new McpPolicy({ gateway: manager }));
+
+    const pinned = codeMode.formatSystemPromptSection();
+    const before = codeMode.getSnapshot().snapshotId;
+
+    // A server connects mid-session and publishes 40 more tools.
+    const grown = [
+      makeTool("read_records", { annotations: { readOnlyHint: true } }),
+      ...Array.from({ length: 40 }, (_, index) =>
+        makeTool(`late_tool_${String(index)}`, {
+          serverName: "late-server",
+          annotations: { readOnlyHint: true },
+        }),
+      ),
+    ];
+    const grownManager = fakeManager(grown, vi.fn());
+    codeMode.initialize(grownManager, new McpPolicy({ gateway: grownManager }));
+
+    expect(codeMode.getSnapshot().snapshotId).not.toBe(before);
+    // The prompt does not move: rewriting it would invalidate the provider
+    // prefix cache for every remaining turn.
+    expect(codeMode.formatSystemPromptSection()).toBe(pinned);
+    // But the late server is fully reachable through discovery.
+    const found = codeMode.discover("search", { query: "late_tool_7" }) as {
+      hits: { ref: string }[];
+    };
+    expect(found.hits[0].ref).toBe("late-server/late_tool_7");
+  });
+
+  it("refuses an ambiguous bare tool name instead of guessing a server", async () => {
+    const callTool = vi.fn();
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("list_issues", { serverName: "github", annotations: { readOnlyHint: true } }),
+        makeTool("list_issues", { serverName: "gitlab", annotations: { readOnlyHint: true } }),
+      ],
+      callTool,
+    );
+
+    const result = await codeMode.executeCode(`return await codemode.callRef("list_issues", {});`);
+
+    expect(result.errorDetails?.error).toBe("ambiguous_tool");
+    expect(result.errorDetails?.candidates).toEqual(["github/list_issues", "gitlab/list_issues"]);
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a policy denial as a structured failure rather than a text success", async () => {
     const callTool = vi.fn(async () =>
       adaptTerminalCallToolResult({ content: [{ type: "text", text: "closed" }] }),
     );
@@ -135,7 +216,6 @@ describe("CodeModeManager reliability", () => {
     initCodeMode(
       codeMode,
       [
-        makeTool("schema_less_read", { annotations: { readOnlyHint: true } }),
         makeTool("write_records", {
           annotations: { readOnlyHint: false, destructiveHint: true },
         }),
@@ -144,43 +224,13 @@ describe("CodeModeManager reliability", () => {
       true,
     );
 
-    const discovery = await codeMode.searchTools("return await codemode.listTools();");
-    expect(discovery.result).toEqual(["schema_less_read", "write_records"]);
-
-    // Dispatch goes to the host, which is where the annotations are read and
-    // the user is asked. Code Mode no longer answers that question itself.
-    const executed = await codeMode.executeCode(
-      'return await codemode.write_records({ value: "go" });',
-    );
-    expect(executed.errorDetails).toBeUndefined();
-    expect(callTool).toHaveBeenCalledTimes(1);
-    expect(callTool).toHaveBeenCalledWith("fixture", "write_records", { value: "go" }, undefined);
-  });
-
-  it("surfaces a declined approval as a decision rather than a failure", async () => {
-    const callTool = vi.fn(async () =>
-      adaptTerminalCallToolResult({ content: [{ type: "text", text: "should not run" }] }),
-    );
-    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
-    initCodeMode(
-      codeMode,
-      [
-        makeTool("write_records", {
-          annotations: { readOnlyHint: false, destructiveHint: true },
-        }),
-      ],
-      callTool,
-      false,
+    const denied = await codeMode.executeCode(
+      'return await codemode.call("fixture", "write_records", { value: "unsafe" });',
     );
 
-    const declined = await codeMode.executeCode(
-      'return await codemode.write_records({ value: "no" });',
-    );
-
-    expect(declined.errorDetails).toMatchObject({
-      error: "approval_declined",
-      toolName: "write_records",
-    });
+    expect(denied.result).toBeUndefined();
+    expect(denied.errorDetails?.error).toBe("permission_denied");
+    expect(denied.errorDetails?.toolName).toBe("write_records");
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -206,6 +256,21 @@ describe("CodeModeManager reliability", () => {
       expect(callTool).toHaveBeenCalledWith("fixture", "schema_less_read", {}, undefined);
     },
   );
+
+  it("forwards host cancellation into the policy call", async () => {
+    const controller = new AbortController();
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [makeTool("schema_less_read", { annotations: { readOnlyHint: true } })],
+      callTool,
+    );
+
+    await codeMode.executeCode("return await codemode.schema_less_read({});", controller.signal);
+
+    expect(callTool).toHaveBeenCalledWith("fixture", "schema_less_read", {}, controller.signal);
+  });
 });
 
 function makeTool(name: string, overrides: Partial<McpTool> = {}): McpTool {
