@@ -34,6 +34,21 @@ list is the eager catalog through the back door.
 schemas are now fetched on demand and returned into the conversation, not into the tool
 definitions.
 
+### Removed
+
+#### The eager type-hint catalog renderer
+
+`generateTypeHints` — the function that produced the ~37,000-token `declare const codemode`
+block — and `sanitizeToolName`, which existed only to turn tool names into JavaScript
+identifiers for it, are gone rather than merely unused. Nothing called them once the pinned
+namespace prompt landed, but a dead catalog renderer that still compiles is an invitation to
+call it again.
+
+The JSON Schema to TypeScript formatter they shared is still needed, since `describe` returns
+compact signatures, so it now lives in `json-schema-to-ts.ts` under its own name. It has no
+MCP imports and is not reachable from the prompt. Neither removed symbol was public API: the
+package exports only the extension entry point.
+
 ### Fixed
 
 #### A server could impersonate another server's tool through its tool name

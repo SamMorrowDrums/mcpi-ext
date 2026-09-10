@@ -1,4 +1,4 @@
-import { jsonSchemaToTypeString } from "./type-hints.js";
+import { jsonSchemaToTypeString } from "./json-schema-to-ts.js";
 import type { CatalogEntry } from "./catalog.js";
 
 type JsonSchema = Record<string, unknown>;

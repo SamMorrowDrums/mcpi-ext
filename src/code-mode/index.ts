@@ -70,7 +70,7 @@ export {
   type IsolatedVmModule,
 } from "./isolated-vm.js";
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
-export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
+export { jsonSchemaToTypeString } from "./json-schema-to-ts.js";
 export {
   DEFAULT_SERVER_TRUST,
   buildCatalogSnapshot,
