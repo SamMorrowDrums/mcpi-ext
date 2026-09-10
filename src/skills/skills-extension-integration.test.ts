@@ -279,7 +279,6 @@ describe("discovery and load", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await tool.execute("c1", { name: "weather" }, undefined, undefined, {} as any);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const second = await tool.execute(
       "c2",
       { name: "weather" },

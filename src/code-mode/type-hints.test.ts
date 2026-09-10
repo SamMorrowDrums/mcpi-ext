@@ -226,6 +226,8 @@ describe("generateTypeHints", () => {
     expect(result).toContain("schema_less_read:");
     expect(result).toContain("write_records:");
     expect(result).toContain("Output schema provenance: synthesized.");
-    expect(result).toContain("Approval: pauses for user approval before the call reaches the server.");
+    expect(result).toContain(
+      "Approval: pauses for user approval before the call reaches the server.",
+    );
   });
 });

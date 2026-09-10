@@ -3,7 +3,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   SessionStartEvent,
-  ToolCallEvent,
 } from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
