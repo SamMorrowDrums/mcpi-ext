@@ -44,6 +44,7 @@
     "!dist/**/*.test.d.ts",
     "!dist/**/fixtures.js",
     "!dist/**/fixtures.d.ts",
+    "!dist/**/fixtures/**",
     "!dist/test-servers/**",
     "!dist/**/*.map",
     "LICENSE",

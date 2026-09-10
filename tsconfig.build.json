@@ -12,5 +12,12 @@
     "sourceMap": false
   },
   "include": ["src"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/fixtures.ts", "src/test-servers"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/*.test.ts",
+    "src/**/fixtures.ts",
+    "src/**/fixtures/**",
+    "src/test-servers"
+  ]
 }

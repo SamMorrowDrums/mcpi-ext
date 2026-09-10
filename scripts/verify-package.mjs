@@ -57,6 +57,12 @@ function listRelativeFiles(root, prefix = "") {
   });
 }
 
+function isTestFixturePath(path) {
+  return path
+    .split("/")
+    .some((segment) => segment === "fixtures" || segment.startsWith("fixtures."));
+}
+
 function createIsolatedUserEnvironment(root) {
   const home = join(root, "home");
   const xdgConfig = join(root, "xdg-config");
@@ -118,8 +124,8 @@ console.log(`Packed ${packed.filename} — ${packed.entryCount} files, ${packed.
 // Tarball contents
 // ---------------------------------------------------------------------------
 
-check("release build emits no test fixture modules", () => {
-  const leaked = releasePaths.filter((path) => /(^|\/)fixtures\.(js|d\.ts)$/.test(path));
+check("release build emits no test fixture surface", () => {
+  const leaked = releasePaths.filter(isTestFixturePath);
   assert(leaked.length === 0, `found ${leaked.join(", ")}`);
 });
 
@@ -133,8 +139,8 @@ check("tarball ships no fixture servers", () => {
   assert(leaked.length === 0, `found ${leaked.join(", ")}`);
 });
 
-check("tarball ships no test fixture modules", () => {
-  const leaked = packedPaths.filter((path) => /(^|\/)fixtures\.(js|d\.ts)$/.test(path));
+check("tarball ships no test fixture surface", () => {
+  const leaked = packedPaths.filter(isTestFixturePath);
   assert(leaked.length === 0, `found ${leaked.join(", ")}`);
 });
 
@@ -156,8 +162,12 @@ check("package declares its managed extension entry point", () => {
   );
 });
 
-check("package excludes test fixture modules from publication", () => {
-  for (const exclusion of ["!dist/**/fixtures.js", "!dist/**/fixtures.d.ts"]) {
+check("package excludes test fixture surface from publication", () => {
+  for (const exclusion of [
+    "!dist/**/fixtures.js",
+    "!dist/**/fixtures.d.ts",
+    "!dist/**/fixtures/**",
+  ]) {
     assert(packageManifest.files?.includes(exclusion), `missing files rule ${exclusion}`);
   }
 });

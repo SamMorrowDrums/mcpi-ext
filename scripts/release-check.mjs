@@ -4,7 +4,7 @@
 // Every check here encodes a mistake that is cheap to make and expensive to
 // undo once a version is on the registry, because npm versions are immutable.
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -24,6 +24,19 @@ function check(name, fn) {
   } catch (err) {
     fail(`${name}: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+function listRelativeFiles(root, prefix = "") {
+  return readdirSync(join(root, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const path = join(prefix, entry.name);
+    return entry.isDirectory() ? listRelativeFiles(root, path) : path.replaceAll("\\", "/");
+  });
+}
+
+function isTestFixturePath(path) {
+  return path
+    .split("/")
+    .some((segment) => segment === "fixtures" || segment.startsWith("fixtures."));
 }
 
 check("client identity", () => {
@@ -64,19 +77,40 @@ check("managed extension manifest", () => {
 });
 
 check("test fixture exclusions", () => {
-  const expectedPackageExclusions = ["!dist/**/fixtures.js", "!dist/**/fixtures.d.ts"];
+  const expectedPackageExclusions = [
+    "!dist/**/fixtures.js",
+    "!dist/**/fixtures.d.ts",
+    "!dist/**/fixtures/**",
+  ];
   const missingPackageExclusions = expectedPackageExclusions.filter(
     (pattern) => !pkg.files?.includes(pattern),
   );
   if (missingPackageExclusions.length > 0) {
     throw new Error(
-      `package files must exclude test-only fixture modules: ${missingPackageExclusions.join(", ")}`,
+      `package files must exclude the test-only fixture surface: ${missingPackageExclusions.join(", ")}`,
     );
   }
-  if (!buildConfig.includes('"src/**/fixtures.ts"')) {
-    throw new Error("tsconfig.build.json must exclude test-only src/**/fixtures.ts modules");
+  const expectedBuildExclusions = ['"src/**/fixtures.ts"', '"src/**/fixtures/**"'];
+  const missingBuildExclusions = expectedBuildExclusions.filter(
+    (pattern) => !buildConfig.includes(pattern),
+  );
+  if (missingBuildExclusions.length > 0) {
+    throw new Error(
+      `tsconfig.build.json must exclude the test-only fixture surface: ${missingBuildExclusions.join(", ")}`,
+    );
   }
-  ok("test-only fixture modules excluded from the release build and tarball");
+  ok("test-only fixture surface excluded from the release build and tarball");
+});
+
+check("release build fixture surface", () => {
+  const leaked = listRelativeFiles(join(root, "dist")).filter(isTestFixturePath);
+  if (leaked.length > 0) {
+    throw new Error(
+      `release build emitted test-only fixture paths: ${leaked.join(", ")}. ` +
+        "A production module may be importing a test fixture.",
+    );
+  }
+  ok("release build contains no test-only fixture surface");
 });
 
 check("pinned dependencies", () => {
@@ -120,7 +154,7 @@ check("packed contents", () => {
   const leaked = files.filter(
     (f) =>
       /\.test\.(js|d\.ts)$/.test(f) ||
-      /(^|\/)fixtures\.(js|d\.ts)$/.test(f) ||
+      isTestFixturePath(f) ||
       f.startsWith("dist/test-servers/") ||
       f.endsWith(".map"),
   );
