@@ -78,8 +78,12 @@ describe("turn-0 prompt budget", () => {
   });
 
   it("collapses to a stable server-only block when nothing is declared", () => {
-    const block = renderNamespaceBlock(namespacesFor(tools));
-    // 89 undeclared tools must not produce 89 lines.
+    // The fixture now carries the server's real `_meta`, so undeclared has to
+    // be constructed explicitly rather than assumed: this is the server that
+    // publishes no toolset vocabulary at all.
+    const undeclared = tools.map(({ _meta: _ignored, ...rest }) => rest as McpTool);
+    const block = renderNamespaceBlock(namespacesFor(undeclared));
+    // 85 undeclared tools must not produce 85 lines.
     expect(block.split("\n").length).toBeLessThanOrEqual(3);
     expect(estimateTokens(block)).toBeLessThanOrEqual(50);
   });
@@ -123,17 +127,22 @@ describe("namespace block stability", () => {
 describe("catalog reachability", () => {
   it("keeps every fixture tool addressable by canonical ref", () => {
     const snapshot = buildCatalogSnapshot(loadGithubFixture().map(toCodeModeTool));
-    expect(snapshot.entries).toHaveLength(89);
+    expect(snapshot.entries).toHaveLength(85);
     for (const entry of snapshot.entries) {
       expect(snapshot.byRef.get(entry.ref)).toBe(entry);
     }
   });
 
-  it("records that the released server declares no output schemas", () => {
+  it("records which output schemas the server actually declares", () => {
     const snapshot = buildCatalogSnapshot(loadGithubFixture().map(toCodeModeTool));
-    const declaredCount = snapshot.entries.filter(
-      (entry) => entry.entry.outputSchemaProvenance === "declared",
-    ).length;
-    expect(declaredCount).toBe(0);
+    const byProvenance = (value: string) =>
+      snapshot.entries.filter((entry) => entry.entry.outputSchemaProvenance === value).length;
+
+    // The integrated server declares 31 of 85. The rest get a permissive
+    // survival floor and are reported as `synthesized` — the point being that
+    // an absent schema is marked unknown rather than dressed up as a type.
+    expect(byProvenance("declared")).toBe(31);
+    expect(byProvenance("synthesized")).toBe(54);
+    expect(byProvenance("declared") + byProvenance("synthesized")).toBe(85);
   });
 });

@@ -12,8 +12,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 #### Code Mode no longer injects the whole tool catalog into every prompt
 
 Every discovered MCP tool's full TypeScript signature was rendered into the system prompt,
-and that section was re-rendered on every turn. Against the real 89-tool
-`github-mcp-server` surface with `GITHUB_TOOLSETS=all` that was roughly 37,000 tokens of
+and that section was re-rendered on every turn. Against the real 85-tool
+`github-mcp-server` surface with `GITHUB_TOOLSETS=all` that was 33,133 tokens of
 declarations resent each turn, growing with every server added — and because the section
 changed whenever a server reconnected, it also defeated prompt-prefix caching.
 
@@ -38,7 +38,7 @@ definitions.
 
 #### The eager type-hint catalog renderer
 
-`generateTypeHints` — the function that produced the ~37,000-token `declare const codemode`
+`generateTypeHints` — the function that produced the 33,133-token `declare const codemode`
 block — and `sanitizeToolName`, which existed only to turn tool names into JavaScript
 identifiers for it, are gone rather than merely unused. Nothing called them once the pinned
 namespace prompt landed, but a dead catalog renderer that still compiles is an invitation to
@@ -107,7 +107,6 @@ It also installs public mcpi 0.85.1 into an isolated user prefix, runs the real 
 `mcpi install` flow, checks `mcpi list`, imports the exact managed entry, rejects a duplicate host
 copy, verifies both extension flags in `mcpi --help`, and starts a zero-server RPC session through
 those flags. CI runs the flow on Node 22 and Node 24.
-
 
 ## [1.0.1] — 2026-09-07
 

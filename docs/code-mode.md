@@ -38,7 +38,7 @@ Code Mode keeps discovery separate from permission enforcement, and separate fro
 
 Point 4 used to read the other way — the sandbox refused writes outright rather than prompting. That was not the conservative choice it looked like: it took a decision away from the person entitled to make it and left scripts able to see work they could never finish. Sandbox restrictions (no fs, no network, no process) are a separate matter and unchanged; they constrain what the _isolate_ can reach, not what the user may authorise.
 
-Discovery itself used to be paid for the same way. Earlier releases injected a TypeScript signature for every discovered tool into the system prompt on every turn. Against a real 89-tool server that was roughly 37,000 tokens of catalog the model had not asked for, paid again each turn, describing tools it would never call. It also defeated the point of a discovery API: nothing was left to discover.
+Discovery itself used to be paid for the same way. Earlier releases injected a TypeScript signature for every discovered tool into the system prompt on every turn. Against the real 85-tool server that is 33,133 tokens of catalog the model had not asked for, paid again each turn, describing tools it would never call. It also defeated the point of a discovery API: nothing was left to discover.
 
 The prompt now carries only namespaces — 529 tokens for the same server — and the model fetches what it needs:
 

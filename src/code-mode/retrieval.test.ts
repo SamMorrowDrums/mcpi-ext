@@ -13,7 +13,7 @@ import { loadGithubFixture } from "./fixtures.js";
  * these numbers hold, and they are release-blocking for that reason.
  *
  * Queries are phrased the way a model asks, not the way the tools are named,
- * and are graded against the real 89-tool github-mcp-server surface.
+ * and are graded against the real 85-tool github-mcp-server surface.
  *
  * Measured baseline: Recall@3/@5/@10 = 1.00, MRR = 0.953,
  * selection_accuracy_given_hit = 0.92. Only "who am i authenticated as"

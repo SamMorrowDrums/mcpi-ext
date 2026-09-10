@@ -10,6 +10,7 @@ import {
 import {
   SUPPORTED_TOOLSET_VERSION,
   deriveNamespaces,
+  namespaceForTool,
   readToolsetDeclaration,
 } from "./namespaces.js";
 import { buildCatalogSnapshot } from "./catalog.js";
@@ -46,6 +47,32 @@ describe("shipped github toolset vocabulary", () => {
 
     expect(estimateTokens(block)).toBeLessThanOrEqual(1500);
     expect(estimateTokens(section)).toBeLessThanOrEqual(6000);
+  });
+
+  it("costs the same at 21 tools as at 85, because the block describes namespaces", () => {
+    // The point of the rework is that turn-0 cost tracks the *vocabulary*, not
+    // the catalog. One tool per namespace covers the same 21 namespaces as the
+    // full server, so the rendered block must be byte-identical — not merely
+    // similar in size. If per-tool bytes ever creep back in, this diverges.
+    const seen = new Set<string>();
+    const onePerNamespace = tools.filter((tool) => {
+      const id = namespaceForTool(tool, namespaces) ?? "";
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    expect(onePerNamespace).toHaveLength(21);
+    expect(onePerNamespace.length).toBeLessThan(tools.length);
+
+    const full = renderNamespaceBlock(namespaces);
+    const sparse = renderNamespaceBlock(deriveNamespaces(onePerNamespace));
+    expect(sparse).toBe(full);
+
+    // Pinned exactly, so a regression shows up as a diff rather than as a
+    // budget that quietly crept toward its ceiling.
+    const section = renderPromptSection({ namespaces, sandboxAvailable: true });
+    expect(estimateTokens(full)).toBe(529);
+    expect(estimateTokens(section)).toBe(1398);
   });
 
   it("names no tool, at any vocabulary size", () => {
