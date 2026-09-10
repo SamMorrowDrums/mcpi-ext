@@ -3,9 +3,9 @@ import type { McpTool } from "../mcp/index.js";
 import {
   SYNTHESIZED_OUTPUT_SCHEMA,
   getCodeModeDiagnostics,
-  runsUnattendedInCodeMode,
   toCodeModeTool,
 } from "./eligibility.js";
+import { isReadOnlyToolCall } from "../mcp/policy.js";
 
 function makeTool(overrides: Partial<McpTool> = {}): McpTool {
   return {
@@ -17,53 +17,71 @@ function makeTool(overrides: Partial<McpTool> = {}): McpTool {
   };
 }
 
-describe("runsUnattendedInCodeMode", () => {
-  it("allows explicitly read-only tools with a declared output schema", () => {
-    const tool = makeTool({
-      annotations: { readOnlyHint: true },
-      outputSchema: { type: "object", properties: { result: { type: "string" } } },
-    });
-    expect(runsUnattendedInCodeMode(tool)).toBe(true);
-  });
+/**
+ * Code Mode used to carry its own copy of the read-only test. Two expressions
+ * of one security classification is two places to edit and one of them easy
+ * to forget, and a divergence would surface as the sandbox quietly skipping
+ * an approval the boundary meant to ask for. The predicate is gone; the
+ * catalog now asks the policy. These cases stay, pointed at the boundary, so
+ * a future re-introduction of a local copy has to disagree with them first.
+ */
+describe("Code Mode defers the approval classification to the policy", () => {
+  const cases: [string, Partial<McpTool>, boolean][] = [
+    [
+      "explicitly read-only with a declared output schema",
+      {
+        annotations: { readOnlyHint: true },
+        outputSchema: { type: "object", properties: { result: { type: "string" } } },
+      },
+      true,
+    ],
+    [
+      "explicitly read-only with no output schema",
+      { annotations: { readOnlyHint: true }, outputSchema: undefined },
+      true,
+    ],
+    [
+      "readOnlyHint explicitly false",
+      { annotations: { readOnlyHint: false }, outputSchema: { type: "object", properties: {} } },
+      false,
+    ],
+    [
+      "readOnlyHint absent",
+      { annotations: {}, outputSchema: { type: "object", properties: {} } },
+      false,
+    ],
+    [
+      "no annotations at all",
+      { annotations: undefined, outputSchema: { type: "object", properties: {} } },
+      false,
+    ],
+    [
+      "read-only but also destructive",
+      {
+        annotations: { readOnlyHint: true, destructiveHint: true },
+        outputSchema: { type: "object", properties: {} },
+      },
+      false,
+    ],
+  ];
 
-  it("allows explicitly read-only tools when outputSchema is missing", () => {
-    const tool = makeTool({
-      annotations: { readOnlyHint: true },
-      outputSchema: undefined,
+  for (const [label, overrides, unattended] of cases) {
+    it(`agrees with the policy for a tool that is ${label}`, () => {
+      const tool = makeTool(overrides);
+      expect(toCodeModeTool(tool).runsUnattended).toBe(unattended);
+      // The catalog flag is the policy's answer, not a parallel opinion.
+      expect(toCodeModeTool(tool).runsUnattended).toBe(isReadOnlyToolCall(tool));
     });
-    expect(runsUnattendedInCodeMode(tool)).toBe(true);
-  });
+  }
 
-  it("refuses tools when readOnlyHint is false", () => {
-    const tool = makeTool({
-      annotations: { readOnlyHint: false },
-      outputSchema: { type: "object", properties: {} },
-    });
-    expect(runsUnattendedInCodeMode(tool)).toBe(false);
-  });
-
-  it("refuses tools when readOnlyHint is missing", () => {
-    const tool = makeTool({
-      annotations: {},
-      outputSchema: { type: "object", properties: {} },
-    });
-    expect(runsUnattendedInCodeMode(tool)).toBe(false);
-  });
-
-  it("refuses tools when annotations is undefined", () => {
-    const tool = makeTool({
-      annotations: undefined,
-      outputSchema: { type: "object", properties: {} },
-    });
-    expect(runsUnattendedInCodeMode(tool)).toBe(false);
-  });
-
-  it("refuses destructive tools even when they claim to be read-only", () => {
-    const tool = makeTool({
-      annotations: { readOnlyHint: true, destructiveHint: true },
-      outputSchema: { type: "object", properties: {} },
-    });
-    expect(runsUnattendedInCodeMode(tool)).toBe(false);
+  it("never treats an approval-gated tool as absent from the catalog", () => {
+    // Requiring approval is not a reason to hide a tool. This is the
+    // regression that made the sandbox able to see work it could not finish.
+    const write = makeTool({ name: "write_thing", annotations: { readOnlyHint: false } });
+    const entry = toCodeModeTool(write);
+    expect(entry.runsUnattended).toBe(false);
+    expect(entry.tool).toBe(write);
+    expect(entry.outputSchema).toBeDefined();
   });
 });
 

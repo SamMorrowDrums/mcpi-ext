@@ -16,8 +16,6 @@ export {
   SYNTHESIZED_OUTPUT_SCHEMA,
   getCodeModeDiagnostics,
   getCodeModeTools,
-  getUnattendedTools,
-  runsUnattendedInCodeMode,
   toCodeModeTool,
 } from "./eligibility.js";
 export type {

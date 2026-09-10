@@ -1,4 +1,5 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
+import { isReadOnlyToolCall } from "../mcp/policy.js";
 
 export const SYNTHESIZED_OUTPUT_SCHEMA = Object.freeze({}) as NonNullable<McpTool["outputSchema"]>;
 
@@ -38,29 +39,21 @@ export interface CodeModeDiagnostics {
 }
 
 /**
- * Whether a Code Mode call dispatches without a human approval prompt.
- *
- * This is not an eligibility test. A tool that fails it is still callable from
- * inside the sandbox — it simply pauses at the host approval prompt first,
- * which is exactly the mid-script "are you sure?" that routing MCP calls back
- * through the harness is what buys.
- */
-export function runsUnattendedInCodeMode(tool: McpTool): boolean {
-  return tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true;
-}
-
-/** Get all tools that dispatch from Code Mode without prompting, across all servers. */
-export function getUnattendedTools(mcpManager: McpClientManager): McpTool[] {
-  return mcpManager.getTools().filter(runsUnattendedInCodeMode);
-}
-
-/**
  * Build the internal Code Mode catalog without mutating source MCP tool definitions.
  *
  * An output schema is synthesized for every tool, not just the unattended ones:
  * a write tool the model can call is a write tool it needs a return type for.
  */
 export function toCodeModeTool(tool: McpTool): CodeModeTool {
+  // Whether the call prompts is asked of the policy, never re-derived here.
+  // This module used to carry its own copy of the read-only test, which is a
+  // security classification expressed twice — two places to edit, one of them
+  // easy to forget, and a divergence that would show up as the sandbox
+  // silently skipping an approval the boundary intended to ask for.
+  const runsUnattended = isReadOnlyToolCall(tool);
+
+  // The reasons are explanatory only: they say *why* the boundary will ask,
+  // for diagnostics and type hints. They never decide it.
   const approvalReasons: CodeModeApprovalReason[] = [];
   if (tool.annotations?.readOnlyHint !== true) {
     approvalReasons.push("not_annotated_read_only");
@@ -69,7 +62,6 @@ export function toCodeModeTool(tool: McpTool): CodeModeTool {
     approvalReasons.push("destructive_hint");
   }
 
-  const runsUnattended = approvalReasons.length === 0;
   const declaredOutputSchema =
     tool.outputSchema !== undefined && tool.outputSchema !== null ? tool.outputSchema : undefined;
 
