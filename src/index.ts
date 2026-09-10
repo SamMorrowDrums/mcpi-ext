@@ -166,6 +166,17 @@ export default function (pi: ExtensionAPI) {
         // therefore means "no skills right now", not "try the old way".
         for (const serverName of mcpManager.getConnectedServers()) {
           const viaExtension = skillsExtensionEnabled && skillsClient.supports(serverName);
+          if (viaExtension) {
+            // SEP-2640 is a draft. It is on by default because a server that
+            // declares it has already asked for it, and requiring a second
+            // opt-in from the user only produces servers whose skills silently
+            // never appear. Default-on for an unratified wire contract is only
+            // defensible if it is stated out loud and can be switched off, so
+            // this line names the draft and the opt-out every time it is used.
+            log(
+              `[skills] "${serverName}" declares the draft (unratified) SEP-2640 skills extension; negotiating it. Pass --no-mcp-skills-extension to use skill:// resources instead.`,
+            );
+          }
           try {
             if (viaExtension) {
               const result = await discoverSkillsViaExtension(

@@ -520,36 +520,60 @@ check("installed package completes legacy skill:// discovery", () => {
     `no skills were discovered over the legacy contract:\n${result.logs.slice(0, 500)}`,
   );
   assert(result.toolNames.includes("load_skill"), "load_skill was not registered");
-  assert(
-    !/io\.modelcontextprotocol\/skills/.test(result.logs),
-    "the draft SEP contract was negotiated without the gate",
-  );
   return /(\d+ skill\(s\) discovered)/.exec(result.logs)?.[1] ?? "skills discovered";
 });
 
-check("installed package negotiates the draft SEP-2640 contract only when gated on", () => {
-  const enabled = withFixture(sepServer, { "mcp-skills-extension": true });
+check("installed package negotiates the draft SEP-2640 contract with no flags at all", () => {
+  // Default-on. A server that declares the extension has already opted in;
+  // requiring the user to opt in a second time is what made skills invisible.
+  const byDefault = withFixture(sepServer, {});
   assert(
-    /1 server\(s\)/.test(enabled.logs),
-    `fixture server did not connect:\n${enabled.logs.slice(0, 500)}`,
+    /1 server\(s\)/.test(byDefault.logs),
+    `fixture server did not connect:\n${byDefault.logs.slice(0, 500)}`,
   );
   assert(
-    /io\.modelcontextprotocol\/skills|skills extension|draft/i.test(enabled.logs),
-    `draft extension was not reported as negotiated:\n${enabled.logs.slice(0, 600)}`,
+    /io\.modelcontextprotocol\/skills|skills extension|SEP-2640/i.test(byDefault.logs),
+    `draft extension was not negotiated by default:\n${byDefault.logs.slice(0, 600)}`,
   );
   assert(
-    /\b[1-9]\d* skill/i.test(enabled.logs),
-    `no skills were discovered over the draft contract:\n${enabled.logs.slice(0, 600)}`,
+    /\b[1-9]\d* skill/i.test(byDefault.logs),
+    `no skills were discovered over the draft contract:\n${byDefault.logs.slice(0, 600)}`,
   );
 
-  // Same server, gate off. Shipping an unratified spec behind a flag is only
-  // meaningful if the flag actually withholds it.
-  const disabled = withFixture(sepServer, {});
+  // Shipping an unratified spec on by default is only defensible if the
+  // package says so where the user can see it, and names the way out.
   assert(
-    !/io\.modelcontextprotocol\/skills/i.test(disabled.logs),
-    `draft extension negotiated with the gate off:\n${disabled.logs.slice(0, 600)}`,
+    /draft \(unratified\)/i.test(byDefault.logs),
+    `draft status was negotiated silently:\n${byDefault.logs.slice(0, 600)}`,
   );
-  return "gate honoured in both directions";
+  assert(
+    /--no-mcp-skills-extension/.test(byDefault.logs),
+    `the opt-out was not surfaced alongside the draft warning:\n${byDefault.logs.slice(0, 600)}`,
+  );
+
+  // Same server, opt-out set. A default that cannot be turned off is not a default.
+  const optedOut = withFixture(sepServer, { "no-mcp-skills-extension": true });
+  assert(
+    !/io\.modelcontextprotocol\/skills/i.test(optedOut.logs),
+    `draft extension negotiated despite the opt-out:\n${optedOut.logs.slice(0, 600)}`,
+  );
+  return "default-on, and the opt-out is honoured";
+});
+
+check("installed package leaves non-declaring servers alone", () => {
+  // Default-on must not mean "probe everyone". A server that never declared
+  // the extension must not see a single extension method, or a default-on
+  // draft becomes a compatibility hazard for every server in the ecosystem.
+  const result = withFixture(legacyServer, {});
+  assert(
+    !/io\.modelcontextprotocol\/skills/.test(result.logs),
+    `draft methods were used against a server that never declared them:\n${result.logs.slice(0, 600)}`,
+  );
+  assert(
+    !/draft \(unratified\)/i.test(result.logs),
+    `draft warning shown for a server using the legacy contract:\n${result.logs.slice(0, 600)}`,
+  );
+  return "no draft negotiation without a declaration";
 });
 
 // ---------------------------------------------------------------------------
