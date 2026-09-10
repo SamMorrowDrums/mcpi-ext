@@ -3,7 +3,7 @@ import type { McpTool } from "../mcp/index.js";
 import {
   SYNTHESIZED_OUTPUT_SCHEMA,
   getCodeModeDiagnostics,
-  isEligibleForCodeMode,
+  runsUnattendedInCodeMode,
   toCodeModeTool,
 } from "./eligibility.js";
 
@@ -17,13 +17,13 @@ function makeTool(overrides: Partial<McpTool> = {}): McpTool {
   };
 }
 
-describe("isEligibleForCodeMode", () => {
+describe("runsUnattendedInCodeMode", () => {
   it("allows explicitly read-only tools with a declared output schema", () => {
     const tool = makeTool({
       annotations: { readOnlyHint: true },
       outputSchema: { type: "object", properties: { result: { type: "string" } } },
     });
-    expect(isEligibleForCodeMode(tool)).toBe(true);
+    expect(runsUnattendedInCodeMode(tool)).toBe(true);
   });
 
   it("allows explicitly read-only tools when outputSchema is missing", () => {
@@ -31,7 +31,7 @@ describe("isEligibleForCodeMode", () => {
       annotations: { readOnlyHint: true },
       outputSchema: undefined,
     });
-    expect(isEligibleForCodeMode(tool)).toBe(true);
+    expect(runsUnattendedInCodeMode(tool)).toBe(true);
   });
 
   it("refuses tools when readOnlyHint is false", () => {
@@ -39,7 +39,7 @@ describe("isEligibleForCodeMode", () => {
       annotations: { readOnlyHint: false },
       outputSchema: { type: "object", properties: {} },
     });
-    expect(isEligibleForCodeMode(tool)).toBe(false);
+    expect(runsUnattendedInCodeMode(tool)).toBe(false);
   });
 
   it("refuses tools when readOnlyHint is missing", () => {
@@ -47,7 +47,7 @@ describe("isEligibleForCodeMode", () => {
       annotations: {},
       outputSchema: { type: "object", properties: {} },
     });
-    expect(isEligibleForCodeMode(tool)).toBe(false);
+    expect(runsUnattendedInCodeMode(tool)).toBe(false);
   });
 
   it("refuses tools when annotations is undefined", () => {
@@ -55,7 +55,7 @@ describe("isEligibleForCodeMode", () => {
       annotations: undefined,
       outputSchema: { type: "object", properties: {} },
     });
-    expect(isEligibleForCodeMode(tool)).toBe(false);
+    expect(runsUnattendedInCodeMode(tool)).toBe(false);
   });
 
   it("refuses destructive tools even when they claim to be read-only", () => {
@@ -63,12 +63,12 @@ describe("isEligibleForCodeMode", () => {
       annotations: { readOnlyHint: true, destructiveHint: true },
       outputSchema: { type: "object", properties: {} },
     });
-    expect(isEligibleForCodeMode(tool)).toBe(false);
+    expect(runsUnattendedInCodeMode(tool)).toBe(false);
   });
 });
 
 describe("Code Mode catalog metadata", () => {
-  it("preserves real schemas and synthesizes only for callable read-only tools", () => {
+  it("preserves declared schemas and synthesizes one for every other tool", () => {
     const declaredSchema = {
       type: "object",
       properties: { result: { type: "string" } },
@@ -83,42 +83,44 @@ describe("Code Mode catalog metadata", () => {
       name: "synthesized",
       annotations: { readOnlyHint: true },
     });
-    const unavailable = makeTool({
+    const gated = makeTool({
       name: "write_tool",
       annotations: { readOnlyHint: false, destructiveHint: true },
     });
 
-    const catalog = [declared, synthesized, unavailable].map(toCodeModeTool);
+    const catalog = [declared, synthesized, gated].map(toCodeModeTool);
 
     expect(catalog[0]).toMatchObject({
-      callable: true,
+      runsUnattended: true,
       outputSchemaProvenance: "declared",
     });
     expect(catalog[0].outputSchema).toBe(declaredSchema);
     expect(catalog[0].tool.outputSchema).toBe(declaredSchema);
 
     expect(catalog[1]).toMatchObject({
-      callable: true,
+      runsUnattended: true,
       outputSchemaProvenance: "synthesized",
       outputSchema: SYNTHESIZED_OUTPUT_SCHEMA,
     });
     expect(synthesized.outputSchema).toBeUndefined();
 
+    // A write tool is as typeable as a read tool. It pauses for approval when
+    // it runs; that is not a reason to leave the model guessing at its shape.
     expect(catalog[2]).toMatchObject({
-      callable: false,
-      outputSchemaProvenance: "unavailable",
-      refusalReasons: ["read_only_hint_required", "destructive_hint"],
+      runsUnattended: false,
+      outputSchemaProvenance: "synthesized",
+      outputSchema: SYNTHESIZED_OUTPUT_SCHEMA,
+      approvalReasons: ["not_annotated_read_only", "destructive_hint"],
     });
-    expect(catalog[2].outputSchema).toBeUndefined();
-    expect(unavailable).not.toHaveProperty("codeMode");
+    expect(gated).not.toHaveProperty("codeMode");
 
     expect(getCodeModeDiagnostics(catalog)).toEqual({
       totalTools: 3,
-      callableTools: 2,
-      refusedTools: 1,
+      unattendedTools: 2,
+      approvalGatedTools: 1,
       declaredOutputSchemas: 1,
-      synthesizedOutputSchemas: 1,
-      unavailableOutputSchemas: 1,
+      synthesizedOutputSchemas: 2,
+      unavailableOutputSchemas: 0,
     });
   });
 });

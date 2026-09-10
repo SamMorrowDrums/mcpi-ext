@@ -137,7 +137,7 @@ describe("sanitizeToolName", () => {
 describe("generateTypeHints", () => {
   it("emits built-ins and zero-count diagnostics for no tools", () => {
     const result = generateTypeHints([]);
-    expect(result).toContain("MCP catalog: 0 tool(s); 0 callable, 0 dispatch-refused");
+    expect(result).toContain("MCP catalog: 0 tool(s); 0 run unattended, 0 pause for approval");
     expect(result).toContain("Output schemas: 0 declared, 0 synthesized, 0 unavailable");
     expect(result).toContain("listTools: () => Promise<(never)[]>");
   });
@@ -191,7 +191,7 @@ describe("generateTypeHints", () => {
     expect(result).toContain("github_list_repos:");
   });
 
-  it("includes callable and refused tools with schema provenance counts", () => {
+  it("includes unattended and approval-gated tools with schema provenance counts", () => {
     const tools: McpTool[] = [
       {
         name: "declared_read",
@@ -220,12 +220,12 @@ describe("generateTypeHints", () => {
 
     const result = generateTypeHints(tools);
 
-    expect(result).toContain("MCP catalog: 3 tool(s); 2 callable, 1 dispatch-refused");
-    expect(result).toContain("Output schemas: 1 declared, 1 synthesized, 1 unavailable");
+    expect(result).toContain("MCP catalog: 3 tool(s); 2 run unattended, 1 pause for approval");
+    expect(result).toContain("Output schemas: 1 declared, 2 synthesized, 0 unavailable");
     expect(result).toContain("declared_read:");
     expect(result).toContain("schema_less_read:");
     expect(result).toContain("write_records:");
     expect(result).toContain("Output schema provenance: synthesized.");
-    expect(result).toContain("Code Mode dispatch: refused.");
+    expect(result).toContain("Approval: pauses for user approval before the call reaches the server.");
   });
 });
