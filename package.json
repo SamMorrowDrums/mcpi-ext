@@ -80,7 +80,7 @@
     "isolated-vm": "~6.2.0"
   },
   "peerDependencies": {
-    "@sammorrowdrums/mcpi": ">=0.85.0 <1.0.0"
+    "@sammorrowdrums/mcpi": ">=0.85.2 <1.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

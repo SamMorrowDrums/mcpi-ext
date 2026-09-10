@@ -82,9 +82,21 @@ describe("stale strings never return", () => {
 
 describe("quick start install flow", () => {
   it("pins the audited versions of every package a user installs", () => {
-    expect(readme).toContain("@sammorrowdrums/mcpi@0.85.1");
+    // Derived, not literal: a hard-coded version here would silently drift away from the
+    // peer range and let the README recommend a host the package refuses to run on.
+    const floor = /^>=\s*([\d.]+)/.exec(pkg.peerDependencies["@sammorrowdrums/mcpi"])?.[1] ?? "";
+    expect(floor).toBeTruthy();
+    expect(readme).toContain(`npm install -g @sammorrowdrums/mcpi@${floor}`);
     expect(readme).toContain("@sammorrowdrums/tool-cli@1.0.2");
     expect(readme).toContain(`npm:@sammorrowdrums/mcpi-ext@${pkg.version}`);
+  });
+
+  it("explains why the host floor moved rather than just asserting it", () => {
+    // The floor is not cosmetic. Below it, deferral and activation both silently
+    // no-op, so a reader who treats the range as advisory gets a broken install.
+    const floorParagraph = readme.slice(readme.indexOf("The floor is"), readme.indexOf("### 1."));
+    expect(floorParagraph).toMatch(/registration-time `deferred`/);
+    expect(floorParagraph).toMatch(/addedToolNames/);
   });
 
   it("offers @latest as the alternative to the pinned set", () => {

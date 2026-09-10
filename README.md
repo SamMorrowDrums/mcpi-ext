@@ -23,10 +23,16 @@ tool selection. These three mechanisms let the agent discover and call tools pro
 
 ## Quick start
 
-Verified against **mcpi 0.85.1** and **tool-cli 1.0.2**. The minimum supported host remains
-`@sammorrowdrums/mcpi@0.85.0`: mcpi-ext declares a peer range of `>=0.85.0 <1.0.0`, and requires
-`@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext `1.x` works; the commands below
-pin the current one.
+Requires **`@sammorrowdrums/mcpi@0.85.2`** or newer: mcpi-ext declares a peer range of
+`>=0.85.2 <1.0.0`, and requires `@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext
+`1.x` works; the commands below pin the current one.
+
+The floor is 0.85.2 rather than 0.85.0 because progressive disclosure needs two host behaviours that
+land in that patch: registration-time `deferred` metadata, so a direct tool proxy is genuinely hidden
+from turn 0 rather than only after its first use, and `tool_reference` activation driven by
+`addedToolNames` on a tool result. On an older host the extension still loads, but skill activation
+reveals nothing and deferred definitions are not deferred — a silent degradation, which is why the
+floor is expressed as a hard peer range rather than a note.
 
 ### 1. Check Node
 
@@ -41,7 +47,7 @@ node --version
 `mcpi` and `tool-cli` are commands you run, so they belong on your `PATH`:
 
 ```sh
-npm install -g @sammorrowdrums/mcpi@0.85.1 @sammorrowdrums/tool-cli@1.0.2
+npm install -g @sammorrowdrums/mcpi@0.85.2 @sammorrowdrums/tool-cli@1.0.2
 ```
 
 To track the newest releases instead of the pinned pair, use `@latest`:
