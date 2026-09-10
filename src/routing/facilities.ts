@@ -72,9 +72,40 @@ export type ToolCliState =
   | { kind: "incompatible"; reason: string }
   | { kind: "no_bash"; reason: string };
 
+/**
+ * What a shell can actually reach, when someone has told us.
+ *
+ * `unknown` is the default and is load-bearing. A host may run the shell tool
+ * inside a container with no route off the machine, and the prompt has no way
+ * to detect that. Stating "network access" anyway is not a harmless
+ * simplification: an agent that believes it can reach the network will spend
+ * the turn on `gh` and `curl`, fail opaquely, and never try the on-ramp that
+ * would have worked. So an unprofiled capability is described as unverified,
+ * never as present.
+ */
+export type CapabilityClaim = "available" | "restricted" | "unavailable" | "unknown";
+
+/**
+ * A host-supplied description of the shell's reach.
+ *
+ * This is a seam, not a sandbox. mcpi-ext does not restrict anything here and
+ * cannot verify these claims; it only refuses to invent capabilities it was
+ * not told about. A host that knows its execution profile fills this in, and
+ * the routing section becomes truthful for that profile.
+ */
+export interface BashCapabilityProfile {
+  /** Profile name for the operator's benefit, e.g. "container-no-egress". */
+  name?: string;
+  filesystem?: CapabilityClaim;
+  network?: CapabilityClaim;
+  process?: CapabilityClaim;
+  /** Host-authored detail appended verbatim, e.g. an allowed-egress list. */
+  note?: string;
+}
+
 /** Whether the host currently exposes a shell tool, when that is discoverable at all. */
 export type BashState =
-  | { kind: "registered"; toolName: string }
+  | { kind: "registered"; toolName: string; profile?: BashCapabilityProfile }
   | { kind: "absent" }
   | { kind: "undiscoverable"; reason: string };
 
@@ -188,6 +219,49 @@ function toolCliAvailability(toolCli: ToolCliState, bash: BashState): FacilityAv
   };
 }
 
+const CAPABILITY_WORDING: Record<CapabilityClaim, string> = {
+  available: "available",
+  restricted: "restricted — assume only what the host note allows",
+  unavailable: "not available from this shell",
+  unknown: "not profiled; treat as unverified rather than assuming either way",
+};
+
+/**
+ * Describe the shell's reach without overclaiming.
+ *
+ * Deterministic and total: every capability is named in a fixed order with a
+ * non-empty wording, so the rendered section stays byte-stable and no
+ * capability is silently omitted.
+ */
+function bashCapabilities(profile: BashCapabilityProfile | undefined): string {
+  const claims: [string, CapabilityClaim][] = [
+    ["filesystem", profile?.filesystem ?? "unknown"],
+    ["network", profile?.network ?? "unknown"],
+    ["process", profile?.process ?? "unknown"],
+  ];
+  const described = claims
+    .map(([name, claim]) => `${name} ${CAPABILITY_WORDING[claim]}`)
+    .join("; ");
+  const named = profile?.name ? ` Execution profile: ${profile.name}.` : "";
+  const note = profile?.note ? ` ${profile.note}` : "";
+  return `The host bash tool, which runs real shell commands. Reach: ${described}.${named}${note}`;
+}
+
+/**
+ * Warn against the specific mis-route a restricted network produces.
+ *
+ * An agent that cannot reach the network usually discovers this by burning a
+ * turn on `gh` or `curl`. Naming the on-ramp here turns that dead end into a
+ * redirect, and it is stated only when the network is actually in doubt.
+ */
+function bashNetworkCaveat(profile: BashCapabilityProfile | undefined): string[] {
+  const network = profile?.network ?? "unknown";
+  if (network === "available") return [];
+  return [
+    "Guaranteed reach to the public network. Do not assume `gh`, `curl`, or a package manager can leave this machine; when data is available through an MCP server, tool-cli reaches it over the authorised local bridge and does not depend on egress.",
+  ];
+}
+
 function bashAvailability(bash: BashState): FacilityAvailability {
   switch (bash.kind) {
     case "registered":
@@ -223,13 +297,14 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       useWhen:
         "Use when the task touches the real machine: reading or writing files, running git, package managers, compilers, formatters or test runners, moving data between programs, or producing an artifact that has to exist on disk afterwards.",
       provides: [
-        "The host bash tool, which runs real shell commands with filesystem, network, and process access.",
+        bashCapabilities(state.bash.kind === "registered" ? state.bash.profile : undefined),
         "Every external program installed on the host, composed with pipes, redirection, loops, globs, and exit codes.",
         "The substrate the other facilities lack: this is the only facility that can create, modify, or inspect files and artifacts.",
       ],
       doesNotProvide: [
         "MCP tool access on its own — reaching an MCP tool from the shell is the tool-cli facility, itself run as a bash command.",
         "A sandbox. Commands run with the host's real permissions and their effects persist.",
+        ...bashNetworkCaveat(state.bash.kind === "registered" ? state.bash.profile : undefined),
       ],
       availability: bashAvailability(state.bash),
     },
