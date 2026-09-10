@@ -13,13 +13,13 @@ How to make your MCP server work with mcpi-ext's progressive discovery system. T
 
 mcpi-ext discovers your server's capabilities automatically on connection. What it finds determines which mechanisms your tools surface through:
 
-| What you provide                          | Mechanism     | What happens                                                    |
-| ----------------------------------------- | ------------- | --------------------------------------------------------------- |
-| Skills (SEP-2640 or `skill://` resources) | **Skills**    | Tools deferred until the model loads the skill                  |
-| Nothing special                           | **tool-cli**  | Tools discoverable via CLI progressive exploration              |
-| `readOnlyHint: true`                      | **Code mode** | Tool callable from sandboxed JS; `outputSchema` improves typing |
+| What you provide                          | Mechanism     | What happens                                                        |
+| ----------------------------------------- | ------------- | ------------------------------------------------------------------- |
+| Skills (SEP-2640 or `skill://` resources) | **Skills**    | Tools deferred until the model loads the skill                      |
+| Nothing special                           | **tool-cli**  | Tools discoverable via CLI progressive exploration                  |
+| Any MCP tool                              | **Code mode** | Tool callable from sandboxed JS; non-read-only calls pause for HITL |
 
-These mechanisms are complementary, and the table is not a ranking — nothing tries one before another. Every MCP tool appears in code mode discovery and type hints, while only explicitly read-only, non-destructive tools are callable there. A read-only tool gated behind a skill can therefore be available via Skills _and_ code mode.
+These mechanisms are complementary, and the table is not a ranking — nothing tries one before another. Every MCP tool appears in Code Mode discovery. Read-only, non-destructive tools run unattended; other tools pause for user approval at execution. Exact compact signatures are returned only by `code_search`/`codemode.describe`, not injected eagerly into the system prompt.
 
 ---
 
@@ -252,11 +252,11 @@ server.registerTool(
 
 ### Why annotations and schemas matter
 
-- **`readOnlyHint`** is an explicit permission boundary -- missing or false means Code Mode refuses dispatch
-- **`destructiveHint`** is a deny signal -- `true` wins even if `readOnlyHint` is also true
-- **`outputSchema`** improves machine-readable type hints, but is not a permission signal
+- **`readOnlyHint: true` without `destructiveHint: true`** lets Code Mode run the call unattended
+- **Missing/false `readOnlyHint` or true `destructiveHint`** makes the call pause for user approval
+- **`outputSchema`** types machine-readable `structuredContent`, but is not a permission signal
 
-For a callable read-only tool without `outputSchema`, the client creates an internal permissive JSON Schema survival floor. The generated return type is `unknown`, provenance is reported as `synthesized`, and the source tool definition is not modified. No provenance marker is sent to the server. Missing schemas are never synthesized for non-read-only tools.
+For any tool without `outputSchema`, the client creates an internal permissive JSON Schema survival floor. The described envelope uses `structuredContent?: unknown`, provenance is reported as `synthesized`, and the source tool definition is not modified. No provenance marker is sent to the server.
 
 ### Returning structured content
 
@@ -275,40 +275,32 @@ return {
 };
 ```
 
-The harness preserves the complete terminal MCP result. Code Mode code can read `structuredContent` directly, including falsey scalar values such as `false`, `0`, `""`, and `null`.
+The harness preserves the complete terminal MCP result. Code Mode code reads the declared data from `result.structuredContent`, including falsey scalar values such as `false`, `0`, `""`, and `null`. It also retains `content`, `_meta`, `isError`, resources, mixed content, text-only results, and extension fields.
 
-### How type hints are generated
+The MCP v2 client requires and validates structured content for successful non-error results when an output schema is declared. Tool-level error envelopes can still omit it, so callers must guard `result.isError || result.structuredContent === undefined`.
 
-The harness reads your `inputSchema` and `outputSchema` and generates TypeScript declarations like:
+### How result signatures are generated
 
-```typescript
-declare const codemode: {
-  /**
-   * Get current weather conditions for a city
-   * @param input.city - City name, e.g. 'London'
-   */
-  check_weather_for_city: (input: { city: string }) => Promise<{
-    /** Temperature in Celsius */
-    temperature: number;
-    /** Weather conditions description */
-    conditions: string;
-    /** Humidity percentage */
-    humidity: number;
-    /** City name */
-    city: string;
-  }>;
-};
+The harness reads your `inputSchema` and `outputSchema` and returns an on-demand compact signature from `describe`:
+
+```text
+weather/check_weather_for_city [read]
+  input:
+    city: string
+  returns: Promise<{ content: Array<{ type: string } & Record<string, unknown>>;
+    structuredContent?: { temperature: number; conditions: string; humidity: number; city: string; };
+    isError?: boolean; _meta?: Record<string, unknown>; [field: string]: unknown }>
 ```
 
-These hints are injected into the model's system prompt. The header reports how many tools run unattended and how many pause for approval, plus declared/synthesized schema counts. Write good `description` fields on your schema properties -- they become JSDoc comments that help the model write correct code.
+The output schema appears under `structuredContent`, never as the top-level return value. The namespace-only system prompt stays fixed; per-tool signatures enter the transcript only when requested. Write good `description` fields on input properties because `describe` includes them beside the parameters.
 
 ### Schema best practices
 
 - **Describe every property.** The `.describe()` text becomes documentation the model reads.
 - **Use specific types.** `z.number().int()` is better than `z.any()`. `z.enum(["asc", "desc"])` is better than `z.string()`.
-- **Keep output shapes flat when possible.** Deeply nested schemas generate complex type hints that cost tokens.
+- **Keep output shapes flat when possible.** Deeply nested schemas generate complex signatures that cost tokens.
 - **Include pagination fields** if your tool returns paginated results. The model can write loops.
-- **Still ship `outputSchema` for read-only tools.** The synthesized schema is a reliability floor, not a substitute for an accurate contract.
+- **Still ship `outputSchema`.** The synthesized schema is a survival floor, not a substitute for an accurate contract.
 
 ---
 
@@ -565,7 +557,7 @@ Before shipping your MCP server with progressive discovery support:
 - [ ] Read-only tools set `annotations: { readOnlyHint: true }`
 - [ ] Destructive or write tools set `readOnlyHint: false` and optionally `destructiveHint: true`
 - [ ] Tools with typed output define `outputSchema` and return `structuredContent`
-- [ ] Schema properties have `.describe()` annotations for type hint generation
+- [ ] Schema properties have `.describe()` annotations for on-demand signature generation
 - [ ] Tools are grouped into skills by user workflow, not API structure
 - [ ] Credentials are supplied by file or wrapper, never by assuming shell inheritance
 

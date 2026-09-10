@@ -271,6 +271,98 @@ describe("CodeModeManager reliability", () => {
     },
   );
 
+  it.each([false, 0, "", null])(
+    "preserves falsey declared structuredContent inside the terminal envelope: %j",
+    async (structuredContent) => {
+      const protocolResult: CallToolResult = { content: [], structuredContent };
+      const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+      const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+      initCodeMode(
+        codeMode,
+        [
+          makeTool("declared_read", {
+            annotations: { readOnlyHint: true },
+            outputSchema: {},
+          }),
+        ],
+        callTool,
+      );
+
+      const result = await codeMode.executeCode(`
+        const terminal = await codemode.declared_read({});
+        return terminal.structuredContent;
+      `);
+
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual(structuredContent);
+    },
+  );
+
+  it("preserves a declared mixed-content error envelope when structuredContent is absent", async () => {
+    const protocolResult: CallToolResult = {
+      content: [
+        { type: "text", text: "GitHub rejected the query" },
+        {
+          type: "resource_link",
+          uri: "https://api.github.com/issues/1",
+          name: "issue",
+        },
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///diagnostic.txt",
+            text: "query diagnostic",
+            mimeType: "text/plain",
+          },
+        },
+      ],
+      isError: true,
+      _meta: { requestId: "request-123" },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("declared_read", {
+          annotations: { readOnlyHint: true },
+          outputSchema: {
+            type: "object",
+            properties: { total_count: { type: "number" } },
+            required: ["total_count"],
+          },
+        }),
+      ],
+      callTool,
+    );
+
+    const result = await codeMode.executeCode("return await codemode.declared_read({});");
+
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual(protocolResult);
+    expect(result.result).not.toHaveProperty("structuredContent");
+  });
+
+  it("preserves a synthesized text-only result without inventing structuredContent", async () => {
+    const protocolResult: CallToolResult = {
+      content: [{ type: "text", text: "plain text only" }],
+      _meta: { source: "fixture" },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [makeTool("schema_less_read", { annotations: { readOnlyHint: true } })],
+      callTool,
+    );
+
+    const result = await codeMode.executeCode("return await codemode.schema_less_read({});");
+
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual(protocolResult);
+    expect(result.result).not.toHaveProperty("structuredContent");
+  });
+
   it("indexes and ranks skill-gated tools, because visibility is not authority", () => {
     const codeMode = new CodeModeManager();
     const manager = fakeManager(
@@ -496,6 +588,151 @@ describe("CodeModeManager reliability", () => {
     expect(sandboxExecutor).toHaveBeenCalledTimes(1);
   });
 
+  it("hands a full describe snapshot to execution and recovers once after catalog drift", async () => {
+    const searchOutputSchema = {
+      type: "object",
+      properties: {
+        total_count: { type: "number" },
+        incomplete_results: { type: "boolean" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { number: { type: "number" } },
+            required: ["number"],
+          },
+        },
+      },
+      required: ["total_count", "incomplete_results", "items"],
+    } as const;
+    let tools = [
+      makeTool("search_issues", {
+        annotations: { readOnlyHint: true },
+        outputSchema: searchOutputSchema,
+      }),
+    ];
+    const protocolResult: CallToolResult = {
+      content: [
+        {
+          type: "text",
+          text: '{"total_count":73,"incomplete_results":false,"items":[{"number":1}]}',
+        },
+      ],
+      structuredContent: {
+        total_count: 73,
+        incomplete_results: false,
+        items: [{ number: 1 }],
+      },
+      isError: false,
+      _meta: { serverInfo: { name: "github-mcp-server" } },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const manager = mutableFakeManager(() => tools, callTool);
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    codeMode.initialize(manager, new McpPolicy({ gateway: manager }));
+    const { codeSearch, codeExecute } = codeMode.createTools();
+    const runCode = (snapshotId: string, code: string) =>
+      codeExecute.execute("execute", { code, snapshotId }, undefined, undefined, {} as never);
+
+    const firstDescribe = await codeSearch.execute(
+      "describe-1",
+      { op: "describe", refs: ["fixture/search_issues"] },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const firstText = firstDescribe.content.find((block) => block.type === "text")?.text ?? "";
+    const firstSnapshot =
+      /snapshotId \(full; pass as code_execute\.snapshotId\): ([a-f0-9]{64})/.exec(firstText)?.[1];
+    expect(firstSnapshot).toBeDefined();
+    if (!firstSnapshot) return;
+
+    const firstRun = await runCode(
+      firstSnapshot,
+      `
+        const result = await codemode.search_issues({ query: "is:issue is:open" });
+        return {
+          total: result.structuredContent.total_count,
+          contentType: result.content[0].type,
+          isError: result.isError,
+          server: result._meta.serverInfo.name,
+        };
+      `,
+    );
+    const firstResultText = firstRun.content.find((block) => block.type === "text")?.text;
+    expect(firstResultText ? JSON.parse(firstResultText) : undefined).toEqual({
+      total: 73,
+      contentType: "text",
+      isError: false,
+      server: "github-mcp-server",
+    });
+    expect(callTool).toHaveBeenCalledTimes(1);
+
+    tools = [
+      makeTool("search_issues", {
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          ...searchOutputSchema,
+          properties: {
+            ...searchOutputSchema.properties,
+            page_count: { type: "number" },
+          },
+        },
+      }),
+    ];
+    callTool.mockClear();
+
+    const stale = await runCode(
+      firstSnapshot,
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(stale.details.error).toBe("stale_snapshot");
+    expect(stale.details.message).toContain("relevant code_search");
+    expect(stale.details.message).toContain("new full snapshotId");
+    expect(stale.details.message).toContain("intentional unpinned execution");
+    expect(stale.details.message).toContain("gives up stale-catalog protection");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const currentSchemaHash = codeMode.getSnapshot().entries[0].schemaHash;
+    const schemaHashAttempt = await runCode(
+      currentSchemaHash,
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(schemaHashAttempt.details.error).toBe("stale_snapshot");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const truncatedAttempt = await runCode(
+      firstSnapshot.slice(0, 12),
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(truncatedAttempt.details.error).toBe("stale_snapshot");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const secondDescribe = await codeSearch.execute(
+      "describe-2",
+      { op: "describe", refs: ["fixture/search_issues"] },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const secondText = secondDescribe.content.find((block) => block.type === "text")?.text ?? "";
+    const secondSnapshot =
+      /snapshotId \(full; pass as code_execute\.snapshotId\): ([a-f0-9]{64})/.exec(secondText)?.[1];
+    expect(secondSnapshot).toBeDefined();
+    expect(secondSnapshot).not.toBe(firstSnapshot);
+    if (!secondSnapshot) return;
+
+    const fresh = await runCode(
+      secondSnapshot,
+      `
+        const result = await codemode.search_issues({ query: "is:issue is:open" });
+        return result.structuredContent.total_count;
+      `,
+    );
+    expect(fresh.content.find((block) => block.type === "text")?.text).toBe("73");
+    expect(callTool).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards host cancellation into the policy call", async () => {
     const controller = new AbortController();
     const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
@@ -522,10 +759,17 @@ function makeTool(name: string, overrides: Partial<McpTool> = {}): McpTool {
 }
 
 function fakeManager(tools: McpTool[], callTool: ReturnType<typeof vi.fn>): McpClientManager {
+  return mutableFakeManager(() => tools, callTool);
+}
+
+function mutableFakeManager(
+  readTools: () => McpTool[],
+  callTool: ReturnType<typeof vi.fn>,
+): McpClientManager {
   return {
-    getTools: () => tools,
-    getConnectedServers: () => [...new Set(tools.map((t) => t.serverName))],
-    getToolsForServer: (name: string) => tools.filter((t) => t.serverName === name),
+    getTools: () => readTools(),
+    getConnectedServers: () => [...new Set(readTools().map((tool) => tool.serverName))],
+    getToolsForServer: (name: string) => readTools().filter((tool) => tool.serverName === name),
     callTool,
     listResources: async () => [],
     readResource: async () => ({ contents: [] }),

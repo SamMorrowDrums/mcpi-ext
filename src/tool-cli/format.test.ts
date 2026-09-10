@@ -107,13 +107,16 @@ describe("formatToolCliForPrompt", () => {
     expect(result).not.toContain("</tool_cli>");
   });
 
-  it("includes shell chaining and piping examples", () => {
+  it("keeps shell examples focused on one-shots and external artifact pipelines", () => {
     const result = formatToolCliForPrompt(verifiedState());
-    expect(result).toContain("grep");
+    expect(result).toContain("get_me");
     expect(result).toContain("|");
     expect(result).toContain("jq");
-    expect(result).toContain("xargs");
-    expect(result).toContain("prefer one piped command over many separate");
+    expect(result).toContain("pandoc");
+    expect(result).toContain("Code Mode");
+    expect(result).toContain("one Code Mode execution");
+    expect(result).not.toContain("xargs");
+    expect(result).not.toContain("for city in");
   });
 
   it("documents policy-authorized resource discovery, reads, and binary output", () => {
@@ -121,6 +124,6 @@ describe("formatToolCliForPrompt", () => {
     expect(result).toContain("tool-cli resource list");
     expect(result).toContain("tool-cli resource templates");
     expect(result).toContain("tool-cli resource read");
-    expect(result).toContain("--out /tmp/resource.bin");
+    expect(result).toContain("--out ./resource.bin");
   });
 });

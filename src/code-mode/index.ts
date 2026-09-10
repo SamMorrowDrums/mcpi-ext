@@ -383,9 +383,11 @@ export class CodeModeManager {
 
     if (expectedSnapshotId && expectedSnapshotId !== this.snapshot.snapshotId) {
       const message =
-        `The catalog changed since snapshot ${expectedSnapshotId.slice(0, 12)} ` +
-        `(now ${this.snapshot.snapshotId.slice(0, 12)}). Re-run code_search and check the ` +
-        "parameters you depend on before executing.";
+        `The catalog changed since snapshotId ${expectedSnapshotId} ` +
+        `(current snapshotId ${this.snapshot.snapshotId}). Re-run the relevant code_search ` +
+        "operation, check the parameters you depend on, and pass its new full snapshotId to " +
+        "code_execute. Omit snapshotId only for an intentional unpinned execution against the " +
+        "current catalog; doing so gives up stale-catalog protection.";
       return {
         result: undefined,
         error: message,

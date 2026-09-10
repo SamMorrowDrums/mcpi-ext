@@ -67,7 +67,7 @@ const CodeInput = Type.Object({
   snapshotId: Type.Optional(
     Type.String({
       description:
-        "The snapshotId from the code_search response you based this code on. Supply it to be told if the catalog changed since, instead of calling against parameters that may have moved.",
+        "The full snapshotId printed by the code_search response you based this code on. Do not use schemaHash or a truncated ID. Supply it for stale-catalog protection. Omit it only for an intentional unpinned execution against the current catalog.",
     }),
   ),
 });
@@ -141,7 +141,7 @@ export function createCodeSearchTool(manager: CodeModeManager) {
     name: "code_search",
     label: "Code Search",
     description:
-      "Look up MCP tools available to code_execute. Start with op=browse to see namespaces, op=search to find tools by task, op=list to page through a namespace, and op=describe to get exact parameters before calling. The whole catalogue is searchable whether or not any skill has been loaded. Read-only: contacts no server and runs no code.",
+      "Look up MCP tools available to code_execute. Start with op=browse to see namespaces, op=search to find tools by task, op=list to page through a namespace, and op=describe to get exact parameters before calling. Every successful response prints the full executable snapshotId; pass that exact value to code_execute, not schemaHash. The whole catalogue is searchable whether or not any skill has been loaded. Read-only: contacts no server and runs no code.",
     parameters: DiscoveryInput,
 
     async execute(
@@ -182,7 +182,7 @@ export function createCodeExecuteTool(manager: CodeModeManager) {
     name: "code_execute",
     label: "Code Execute",
     description:
-      "Execute JavaScript that chains MCP tool calls for computation over their results — aggregate, filter, loop, join, paginate. Call tools with `await codemode.call('server/tool', args)`; use code_search or `codemode.describe` first to get exact parameters. Each tool call is authorized individually. Runs in a sandbox — no filesystem, network, or Node.js API access.",
+      "Execute one JavaScript program that chains MCP tool calls for computation over their raw CallToolResult envelopes — aggregate, filter, loop, join, paginate, and read declared data from result.structuredContent. Call tools with `await codemode.call('server/tool', args)`; use code_search or `codemode.describe` first to get exact parameters, and pass code_search's full snapshotId for stale-catalog protection. Each tool call is authorized individually. Runs in a sandbox — no filesystem, network, or Node.js API access.",
     parameters: CodeInput,
 
     async execute(

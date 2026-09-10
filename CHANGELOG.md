@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Code Mode discovery now describes the raw MCP `CallToolResult` envelope and types declared output
+  schemas under optional `structuredContent`, preserving content blocks, resources, `_meta`,
+  `isError`, text-only results, and falsey structured values without inventing a top-level result
+  shape.
+- Every successful `code_search` rendering now exposes the full executable `snapshotId`, clearly
+  separates it from a tool's `schemaHash`, and gives bounded stale-snapshot recovery guidance.
+- Execution routing now distinguishes direct one-call proxies, Code Mode calculations, tool-cli
+  shell composition, and bash/external artifact pipelines without imposing a global precedence.
+- Code Mode guidance now favors discovery followed by one execution, with at most a bounded
+  inspect-and-correct retry for an unknown result shape rather than repeated runs around call limits.
+
 ## [1.1.0] — 2026-09-10
 
 This is also the first published release to contain the `1.0.2` fixes below. `1.0.2`

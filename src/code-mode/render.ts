@@ -43,11 +43,15 @@ function renderError(error: DiscoveryError): string {
 }
 
 function renderBrowse(result: BrowseResult): string {
+  const lines = [snapshotHeader(result.snapshotId), ""];
   if (result.namespaces.length === 0) {
-    return "No MCP namespaces are available. No servers are connected, or none expose callable tools.";
+    lines.push(
+      "No MCP namespaces are available. No servers are connected, or none expose callable tools.",
+    );
+    return lines.join("\n");
   }
 
-  const lines = [`namespaces (snapshot ${short(result.snapshotId)}):`];
+  lines.push("namespaces:");
   for (const view of result.namespaces) {
     const parts = [`  ${view.ref}`, `[${String(view.toolCount)} tools]`];
     if (view.effects) parts.push(`(${view.effects})`);
@@ -62,14 +66,13 @@ function renderBrowse(result: BrowseResult): string {
 
 function renderList(result: ListResult): string {
   const scope = result.namespace ?? result.server ?? "all namespaces";
+  const lines = [snapshotHeader(result.snapshotId), ""];
   if (result.tools.length === 0) {
-    return `No tools matched ${scope}. Use op=browse to see available namespaces.`;
+    lines.push(`No tools matched ${scope}. Use op=browse to see available namespaces.`);
+    return lines.join("\n");
   }
 
-  const lines = [
-    `${String(result.totalMatches)} tool(s) in ${scope} (snapshot ${short(result.snapshotId)}):`,
-    ...result.tools.map(renderHit),
-  ];
+  lines.push(`${String(result.totalMatches)} tool(s) in ${scope}:`, ...result.tools.map(renderHit));
   lines.push(
     "",
     pageFooter(result.truncated, result.totalMatches, result.tools.length, result.nextCursor),
@@ -78,14 +81,18 @@ function renderList(result: ListResult): string {
 }
 
 function renderSearch(result: SearchResult): string {
+  const lines = [snapshotHeader(result.snapshotId), ""];
   if (result.hits.length === 0) {
-    return `No tools matched "${result.query}". Try op=browse for available namespaces, or different terms — matching is over tool names and descriptions only.`;
+    lines.push(
+      `No tools matched "${result.query}". Try op=browse for available namespaces, or different terms — matching is over tool names and descriptions only.`,
+    );
+    return lines.join("\n");
   }
 
-  const lines = [
-    `${String(result.totalMatches)} match(es) for "${result.query}" (snapshot ${short(result.snapshotId)}):`,
+  lines.push(
+    `${String(result.totalMatches)} match(es) for "${result.query}":`,
     ...result.hits.map(renderHit),
-  ];
+  );
   lines.push(
     "",
     pageFooter(result.truncated, result.totalMatches, result.hits.length, result.nextCursor),
@@ -94,7 +101,7 @@ function renderSearch(result: SearchResult): string {
 }
 
 function renderDescribe(result: DescribeResult): string {
-  const lines: string[] = [];
+  const lines: string[] = [snapshotHeader(result.snapshotId), ""];
   for (const entry of result.signatures) lines.push(entry.signature);
 
   if (result.unresolved.length > 0) {
@@ -111,8 +118,6 @@ function renderDescribe(result: DescribeResult): string {
       "Some refs were dropped: describe accepts a bounded batch. Request the rest separately.",
     );
   }
-
-  if (lines.length === 0) return 'No refs supplied. Pass canonical refs such as "server/tool".';
 
   lines.push("", `Call with: await codemode.call("<ref>", { ...args })`);
   return lines.join("\n");
@@ -136,8 +141,8 @@ function pageFooter(
   return `${String(remaining)} more not shown.${cursorHint} Use op=describe with any ref for exact parameters.`;
 }
 
-function short(snapshotId: string): string {
-  return snapshotId.slice(0, 12);
+function snapshotHeader(snapshotId: string): string {
+  return `snapshotId (full; pass as code_execute.snapshotId): ${snapshotId}`;
 }
 
 /**

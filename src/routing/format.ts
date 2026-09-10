@@ -16,6 +16,10 @@ const PREAMBLE: readonly string[] = [
   "rank: none of them is a default, none outranks another, and there is no sequence to try them in.",
   "Match the facility to what the task actually requires.",
   "",
+  "The host may also expose provider-native deferred tool search and direct proxy calls. For one",
+  "straightforward MCP call such as `get_me`, that search-plus-direct-proxy path fits the task shape.",
+  "This is not global precedence: use the facility whose capabilities match the work.",
+  "",
   "Every facility below states its own availability. Treat an unavailable facility as absent for",
   "this session: do not invoke it, and never describe or summarise output it did not produce.",
 ];
@@ -24,10 +28,11 @@ const COMPOSITION: readonly string[] = [
   "### Composing facilities",
   "",
   "One task may need more than one facility. tool-cli and bash compose especially closely: tool-cli",
-  "*is* a program you run with the bash tool, so fetching MCP data and then filtering, joining, or",
-  "writing it to disk with ordinary shell programs is a single bash command rather than two rival",
-  "approaches. Code mode composes by handing you an exact value you then act on elsewhere, and a",
-  "skill composes by telling you which tools its workflow expects you to use.",
+  "*is* a program you run with the bash tool, so using it as MCP input inside a real shell pipeline,",
+  "writing it to disk, or passing Markdown to Pandoc is a single bash command rather than two rival",
+  "approaches. A multi-call arithmetic, filtering, aggregation, join, or exact-reduction calculation",
+  "belongs in Code mode rather than tool-cli plus jq loops. Code mode can hand an exact value to a later",
+  "artifact step, and a skill can tell you which tools its workflow expects you to use.",
 ];
 
 function formatFacility(facility: ExecutionFacility): string[] {

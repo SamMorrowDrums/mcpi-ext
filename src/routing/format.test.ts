@@ -144,6 +144,20 @@ describe("execution routing section", () => {
       expect(result).toContain("Composing facilities");
       expect(result).toContain("single bash command rather than two rival");
     });
+
+    it("makes the live profile, issue-total, and Pandoc demo routes explicit", () => {
+      const result = formatExecutionRouting(fullState());
+
+      expect(result).toContain("provider-native deferred tool search");
+      expect(result).toContain("direct proxy");
+      expect(result).toContain("get_me");
+      expect(result).toContain("open and closed issue counts");
+      expect(result).toContain("one code_execute");
+      expect(result).toContain("Pandoc");
+      expect(result).toContain("MCP input inside a real shell pipeline");
+      expect(result).toContain("tool-cli plus jq loops");
+      expect(result).toContain("belongs in Code mode");
+    });
   });
 
   describe("availability reporting", () => {

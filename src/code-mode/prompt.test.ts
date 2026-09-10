@@ -87,6 +87,29 @@ describe("turn-0 prompt budget", () => {
     expect(block.split("\n").length).toBeLessThanOrEqual(3);
     expect(estimateTokens(block)).toBeLessThanOrEqual(50);
   });
+
+  it("teaches the raw result envelope and structuredContent pagination", () => {
+    const section = renderPromptSection({
+      namespaces: namespacesFor(declared),
+      sandboxAvailable: true,
+    });
+
+    expect(section).toContain("raw MCP CallToolResult envelope");
+    expect(section).toContain("result.structuredContent");
+    expect(section).toContain("result.structuredContent === undefined");
+    expect(section).not.toContain("result.items");
+  });
+
+  it("allows only bounded inspect recovery and never treats retries as extra call budget", () => {
+    const section = renderPromptSection({
+      namespaces: namespacesFor(declared),
+      sandboxAvailable: true,
+    });
+
+    expect(section).toContain("Plan discovery first, then make one `code_execute`");
+    expect(section).toContain("one bounded inspection execution and one corrected retry");
+    expect(section).toContain("not a way around the per-execution tool-call budget");
+  });
 });
 
 describe("namespace block stability", () => {
