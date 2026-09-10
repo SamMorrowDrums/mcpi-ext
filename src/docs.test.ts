@@ -82,9 +82,21 @@ describe("stale strings never return", () => {
 
 describe("quick start install flow", () => {
   it("pins the audited versions of every package a user installs", () => {
-    expect(readme).toContain("@sammorrowdrums/mcpi@0.85.1");
+    // Derived, not literal: a hard-coded version here would silently drift away from the
+    // peer range and let the README recommend a host the package refuses to run on.
+    const floor = /^>=\s*([\d.]+)/.exec(pkg.peerDependencies["@sammorrowdrums/mcpi"])?.[1] ?? "";
+    expect(floor).toBeTruthy();
+    expect(readme).toContain(`npm install -g @sammorrowdrums/mcpi@${floor}`);
     expect(readme).toContain("@sammorrowdrums/tool-cli@1.0.2");
     expect(readme).toContain(`npm:@sammorrowdrums/mcpi-ext@${pkg.version}`);
+  });
+
+  it("explains why the host floor moved rather than just asserting it", () => {
+    // The floor is not cosmetic. Below it, deferral and activation both silently
+    // no-op, so a reader who treats the range as advisory gets a broken install.
+    const floorParagraph = readme.slice(readme.indexOf("The floor is"), readme.indexOf("### 1."));
+    expect(floorParagraph).toMatch(/registration-time `deferred`/);
+    expect(floorParagraph).toMatch(/addedToolNames/);
   });
 
   it("offers @latest as the alternative to the pinned set", () => {
@@ -120,10 +132,19 @@ describe("quick start install flow", () => {
 
   it("documents the extension-registered flags by their real names", () => {
     const index = readFileSync(join(root, "src/index.ts"), "utf8");
-    for (const flag of ["mcp-config", "mcp-skills-extension"]) {
+    for (const flag of ["mcp-config", "no-mcp-skills-extension"]) {
       expect(index).toContain(`pi.registerFlag("${flag}"`);
       expect(readme).toContain(`--${flag}`);
     }
+  });
+
+  it("does not tell the user to pass the deprecated opt-in", () => {
+    // `--mcp-skills-extension` still registers as a no-op so an existing
+    // command line does not fail, but documenting it would teach the opt-in
+    // the correction removed. It must survive without being advertised.
+    const index = readFileSync(join(root, "src/index.ts"), "utf8");
+    expect(index).toContain(`pi.registerFlag("mcp-skills-extension"`);
+    expect(readme).not.toMatch(/(?<!no-)-{2}mcp-skills-extension/);
   });
 
   it("explains /login for provider authentication", () => {
@@ -239,9 +260,18 @@ describe("server support claims", () => {
     expect(readme).toContain(revision);
   });
 
-  it("describes the skills extension as an opt-in draft", () => {
+  it("describes the skills extension as a draft that is negotiated by default", () => {
     expect(readme).toMatch(/Draft/);
-    expect(readme).toMatch(/off by default|opt-in/i);
+    expect(readme).toMatch(/on by default/i);
+    expect(readme).toContain("--no-mcp-skills-extension");
+  });
+
+  it("no longer claims the extension is off or opt-in", () => {
+    // The whole point of the change: a server that advertises skills is asked
+    // about them. Leaving the old sentence anywhere would send a reader
+    // looking for a flag that no longer gates anything.
+    expect(readme).not.toMatch(/gated \*\*off\*\*|off by default/i);
+    expect(readme).not.toMatch(/skills extension is \*\*opt-in\*\*/i);
   });
 });
 
@@ -350,7 +380,52 @@ describe("mechanisms, facilities, and degradation", () => {
 
   it("states the security posture: HITL and no host execution from skills", () => {
     expect(readme).toMatch(/Nothing in a skill is executed/);
-    expect(readme).toMatch(/refused, not prompted|refused\b.*rather than escalated/i);
+    // Confirmation is driven by annotations at execution, on every surface.
+    expect(readme).toMatch(/gates\s+non-read-only calls through user confirmation/i);
+    expect(readme).toMatch(/only at execution/i);
+  });
+
+  it("does not claim code mode refuses writes instead of asking", () => {
+    // The corrected behaviour: a write from the sandbox pauses at the same
+    // prompt any other surface raises. The old sentence described a policy
+    // that took the decision away from the user, and it must not survive
+    // anywhere in the published docs.
+    for (const { name, body } of docFiles) {
+      expect(body, `${name} still says code mode refuses rather than prompts`).not.toMatch(
+        /refused, not prompted|dispatch-refused|denied\s+outright rather than escalated/i,
+      );
+    }
+    expect(readme).toMatch(/pauses mid-script|asks rather than refusing/i);
+  });
+
+  it("does not describe skill exposure as an authorization grant", () => {
+    // `allowed-tools` is an exposure list. Calling it a grant, or saying tools
+    // are locked or inert until approval, is the precise error the correction
+    // removes: it makes visibility look like permission.
+    for (const { name, body } of docFiles) {
+      expect(body, `${name} still describes skill loading as granting permission`).not.toMatch(
+        /inert until (the user|you) (explicitly )?approve|stay locked until you approve|approve the skill's tool grant/i,
+      );
+    }
+  });
+
+  it("does not tell the agent to prefer skills over the other facilities", () => {
+    // Routing is by task shape. A tool being available is not a reason to load
+    // a skill, and any sentence that says otherwise thumbs the scale. The
+    // patterns match directives only, so documenting the removed gate's own
+    // error text does not count as issuing one.
+    const skillFirst = [
+      /call load_skill even if/i,
+      /always (call|load|use) (the )?skill/i,
+      /\b(try|prefer|use|reach for|check) (the )?skills? (first|before)\b/i,
+      /skills? (should|must) be (tried|loaded|used) first/i,
+      /proactively (call|load) (the )?skill/i,
+    ];
+    for (const { name, body } of docFiles) {
+      for (const pattern of skillFirst) {
+        expect(body, `${name} contains skill-first routing language`).not.toMatch(pattern);
+      }
+    }
   });
 
   it("describes tool-cli bridge credentials as session-scoped", () => {

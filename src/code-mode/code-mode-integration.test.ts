@@ -36,7 +36,7 @@ describe("code mode integration (weather server)", () => {
   });
 
   it("discovers callable read-only tools", () => {
-    const eligible = codeMode.getEligibleTools();
+    const eligible = codeMode.getUnattendedTools();
     expect(eligible).toHaveLength(3);
     const names = eligible.map((t) => t.name).sort();
     expect(names).toContain("check_weather_for_city");
@@ -44,8 +44,8 @@ describe("code mode integration (weather server)", () => {
     expect(names).toContain("echo");
     expect(codeMode.getDiagnostics()).toEqual({
       totalTools: 3,
-      callableTools: 3,
-      refusedTools: 0,
+      unattendedTools: 3,
+      approvalGatedTools: 0,
       declaredOutputSchemas: 3,
       synthesizedOutputSchemas: 0,
       unavailableOutputSchemas: 0,

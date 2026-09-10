@@ -211,10 +211,12 @@ A tool can appear in multiple skills' `allowed-tools` lists -- it will be reveal
 
 ## Tool Annotations and Schemas for Code Mode
 
-Code mode lets the agent write JavaScript that chains tool calls in a V8 sandbox. Every MCP tool is discoverable, but host dispatch is allowed only when both permission conditions hold:
+Code mode lets the agent write JavaScript that chains tool calls in a V8 sandbox. Every MCP tool is discoverable **and callable**. What your annotations control is not whether a call is permitted but whether it interrupts the script to ask:
 
-1. **`readOnlyHint: true`** -- the tool does not modify its environment
-2. **`destructiveHint` is not `true`** -- contradictory destructive tools are refused
+1. **`readOnlyHint: true`** and **`destructiveHint` not `true`** -- dispatches unattended.
+2. **Anything else** -- pauses mid-script for the user's confirmation, then continues with the value it returns.
+
+Annotating accurately is therefore a courtesy to the user, not a gate you are passing. Marking a write tool read-only does not unlock anything the user could not have approved; it removes their chance to decide.
 
 ```typescript
 // Callable from Code Mode with a precise declared output type
@@ -298,7 +300,7 @@ declare const codemode: {
 };
 ```
 
-These hints are injected into the model's system prompt. The header reports total/callable/refused tools plus declared/synthesized/unavailable schema counts. Write good `description` fields on your schema properties -- they become JSDoc comments that help the model write correct code.
+These hints are injected into the model's system prompt. The header reports how many tools run unattended and how many pause for approval, plus declared/synthesized schema counts. Write good `description` fields on your schema properties -- they become JSDoc comments that help the model write correct code.
 
 ### Schema best practices
 
@@ -400,7 +402,7 @@ server.registerTool(
   },
 );
 
-// Write tool -- visible in Code Mode discovery, but dispatch-refused
+// Write tool -- discoverable and callable from Code Mode; pauses for user approval
 server.registerTool(
   "update_stock",
   {
@@ -443,9 +445,11 @@ server.registerTool(
 
 In this example:
 
-- `search_products` and `get_product_details` are **skill-gated + Code Mode callable** (read-only with output schemas)
-- `update_stock` is **skill-gated and Code Mode-visible, but dispatch-refused** (it writes data)
-- `server_status` is **ungated + Code Mode callable** (read-only with an output schema)
+- `search_products` and `get_product_details` are **skill-referenced** (so their schemas are revealed by `load_skill` on the direct surface) and **run unattended** in Code Mode (read-only with output schemas)
+- `update_stock` is **skill-referenced** and **callable everywhere, pausing for approval** when it runs (it writes data)
+- `server_status` is **referenced by no skill** — which changes only whether `load_skill` reveals its schema, not whether it can be called — and **runs unattended** (read-only with an output schema)
+
+Being referenced by a skill is about _exposure_: it decides which definitions the model is shown directly. It never decides what may run. All three tools are reachable from Code Mode and tool-cli whether or not any skill is loaded.
 
 ---
 

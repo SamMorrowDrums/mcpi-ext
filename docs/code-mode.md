@@ -22,21 +22,25 @@ return details.map((d) => ({ title: d.title, assignee: d.assignee }));
 
 ## Catalog, schemas, and dispatch
 
-Code Mode keeps discovery separate from permission enforcement:
+Code Mode keeps discovery separate from permission enforcement, and separate from skills:
 
-1. Every MCP tool appears in `codemode.listTools()` and the generated type hints.
-2. Read-only, non-destructive tools are callable.
-3. A callable tool without `outputSchema` receives an internal permissive JSON Schema survival floor. Its output type is `unknown`, and the source MCP tool remains unchanged.
-4. Non-read-only or destructive tools stay visible but are refused before `McpClientManager.callTool()` is reached.
+1. Every MCP tool appears in `codemode.listTools()` and the generated type hints — every discovered tool, whether or not any skill references it. Code Mode never requires `load_skill`.
+2. Read-only, non-destructive tools dispatch unattended.
+3. Every tool without an `outputSchema` receives an internal permissive JSON Schema survival floor. Its output type is `unknown`, and the source MCP tool remains unchanged. This applies to write tools too: a tool the model can call is a tool it needs a return type for.
+4. A write or destructive tool **pauses mid-script for user approval** at `McpPolicy`, the same confirmation any other surface raises, and the script continues with the value it returns. A decline surfaces as a legible error naming the tool.
+
+Point 4 used to read the other way — the sandbox refused writes outright rather than prompting. That was not the conservative choice it looked like: it took a decision away from the person entitled to make it and left scripts able to see work they could never finish. Sandbox restrictions (no fs, no network, no process) are a separate matter and unchanged; they constrain what the _isolate_ can reach, not what the user may authorise.
 
 Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and is never added to MCP traffic. Code Mode diagnostics and the type-hint header report declared and synthesized counts so schema degradation is visible without prompting.
 
+Approval posture is classified separately from the boolean, as `read_only`, `write`, `destructive`, or `contradictory_annotations`, with a normalized reason set. `McpPolicy` remains the sole authority on whether a call prompts; the classification describes that decision for diagnostics and for the catalog's definition fingerprint, so a tool that acquires `destructiveHint` invalidates a cached snapshot rather than inheriting its old classification.
+
 ## Tools
 
-| Tool           | Purpose                                                                      |
-| -------------- | ---------------------------------------------------------------------------- |
-| `code_search`  | Discover available tools; returns `no_eligible_tools` when none are callable |
-| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)`             |
+| Tool           | Purpose                                                          |
+| -------------- | ---------------------------------------------------------------- |
+| `code_search`  | Discover available tools across the full discovered catalogue    |
+| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)` |
 
 With zero callable MCP tools, `code_search` names `code_execute` and `tool-cli` as alternatives. `code_execute` still handles arithmetic, parsing, and deterministic transforms.
 

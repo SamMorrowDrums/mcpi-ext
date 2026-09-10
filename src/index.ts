@@ -3,7 +3,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   SessionStartEvent,
-  ToolCallEvent,
 } from "@sammorrowdrums/mcpi";
 import { CodeModeManager } from "./code-mode/index.js";
 import { dockerE2ETool } from "./docker-e2e.js";
@@ -69,8 +68,17 @@ export default function (pi: ExtensionAPI) {
     type: "string",
   });
 
+  pi.registerFlag("no-mcp-skills-extension", {
+    description:
+      "Do not negotiate the DRAFT MCP skills extension (SEP-2640) with servers that declare it. " +
+      "Negotiation is on by default; this is the explicit opt-out.",
+    type: "boolean",
+  });
+
   pi.registerFlag("mcp-skills-extension", {
-    description: "Enable the DRAFT MCP skills extension (SEP-2640). Unratified; off by default.",
+    description:
+      "Deprecated no-op: the DRAFT MCP skills extension (SEP-2640) is negotiated by default. " +
+      "Use --no-mcp-skills-extension to opt out.",
     type: "boolean",
   });
 
@@ -124,15 +132,19 @@ export default function (pi: ExtensionAPI) {
       const config = await loadMcpConfig(configPath);
       const serverCount = Object.keys(config.mcpServers).length;
 
-      // Draft extension support is opt-in from either the config file or the
-      // CLI flag, and must be decided before any connection is opened because
-      // capabilities are fixed at initialize.
+      // Draft extension negotiation is on by default and must be decided before
+      // any connection is opened, because capabilities are fixed at initialize.
+      // The opt-out is a distinct flag rather than `--mcp-skills-extension=false`
+      // because a registered boolean flag reads back as `true` whenever it is
+      // present, so a negated value could not be expressed on that name.
       const skillsExtensionEnabledNow =
-        pi.getFlag("mcp-skills-extension") === true || isSkillsExtensionEnabled(config);
+        pi.getFlag("no-mcp-skills-extension") === true ? false : isSkillsExtensionEnabled(config);
       skillsExtensionEnabled = skillsExtensionEnabledNow;
       mcpManager.enableSkillsExtension(skillsExtensionEnabledNow);
       if (skillsExtensionEnabledNow) {
         log(skillsExtensionDiagnostic());
+      } else {
+        log("[skills] SEP-2640 Skills Extension negotiation disabled by explicit opt-out.");
       }
 
       if (serverCount > 0) {
@@ -154,6 +166,17 @@ export default function (pi: ExtensionAPI) {
         // therefore means "no skills right now", not "try the old way".
         for (const serverName of mcpManager.getConnectedServers()) {
           const viaExtension = skillsExtensionEnabled && skillsClient.supports(serverName);
+          if (viaExtension) {
+            // SEP-2640 is a draft. It is on by default because a server that
+            // declares it has already asked for it, and requiring a second
+            // opt-in from the user only produces servers whose skills silently
+            // never appear. Default-on for an unratified wire contract is only
+            // defensible if it is stated out loud and can be switched off, so
+            // this line names the draft and the opt-out every time it is used.
+            log(
+              `[skills] "${serverName}" declares the draft (unratified) SEP-2640 skills extension; negotiating it instead of skill:// discovery.`,
+            );
+          }
           try {
             if (viaExtension) {
               const result = await discoverSkillsViaExtension(
@@ -182,13 +205,15 @@ export default function (pi: ExtensionAPI) {
           );
         }
 
-        // Hand the discovered skills to the policy so their tools are gated
-        // everywhere, not just on the mcpi dispatch path.
+        // Hand the discovered skills to the policy so it knows which direct
+        // proxy definitions stay deferred until a skill references them. This
+        // is exposure bookkeeping only — it never grants or withholds
+        // authorization, and it never affects Code Mode or tool-cli.
         policy.registerSkills(skillRegistry.getAll());
 
         if (skillRegistry.size > 0) {
           log(
-            `MCP: ${skillRegistry.size} skill(s) discovered, ${policy.getGatedToolNames().length} tool(s) deferred`,
+            `MCP: ${skillRegistry.size} skill(s) discovered, ${policy.getDeferredToolNames().length} direct tool definition(s) deferred`,
           );
         }
 
@@ -269,17 +294,11 @@ export default function (pi: ExtensionAPI) {
     return { systemPrompt: event.systemPrompt + extra };
   });
 
-  // Block deferred MCP tools until their skill is loaded. The policy owns the
-  // decision so mcpi dispatch and the RPC path cannot disagree.
-  pi.on("tool_call", async (event: ToolCallEvent) => {
-    const name = "toolName" in event ? event.toolName : undefined;
-    if (!name || !policy.isGated(name)) return;
-    const relevantSkills = policy.getGatingSkills(name);
-    return {
-      block: true,
-      reason: `Tool "${name}" requires loading a skill first. Call load_skill with one of: ${relevantSkills.join(", ")}`,
-    };
-  });
+  // Deliberately no `tool_call` gate on deferred MCP tools. Deferral is
+  // visibility, not authorization: if a provider's grammar lets the model name
+  // a deferred tool, the call is legitimate and must reach the policy, which
+  // decides on annotations alone. Blocking here would turn a presentation
+  // choice into a permission rule and would also strand Code Mode and tool-cli.
 
   pi.on("session_shutdown", async () => {
     hostElicitation.setContext(undefined);

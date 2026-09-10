@@ -7,7 +7,7 @@ function makeSkill(overrides: Partial<McpSkillMetadata> = {}): McpSkillMetadata 
     description: "A test skill",
     uri: "skill://test/SKILL.md",
     serverName: "test-server",
-    allowedTools: ["tool_a"],
+    referencedTools: ["tool_a"],
     ...overrides,
   };
 }

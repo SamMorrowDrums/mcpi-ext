@@ -29,7 +29,18 @@ export interface LoadSkillDeps {
 export interface LoadSkillDetails {
   skillName: string;
   serverName?: string;
-  activatedTools?: string[];
+  /**
+   * Tool definitions this skill revealed, for the conversation-tail
+   * `tool_reference` blocks a provider expands schemas from.
+   */
+  referencedTools?: string[];
+  /**
+   * Names the skill declared that no connected server serves.
+   *
+   * Reported so a server's catalogue defect is visible rather than silently
+   * swallowed. These are never sent to the host as activated names.
+   */
+  unresolvedTools?: string[];
   error?: string;
   /** True when the content was verified against SEP-2640 digests. */
   verified?: boolean;
@@ -43,13 +54,21 @@ export interface LoadSkillDetails {
  * When the model calls this tool, it:
  * 1. Looks up the skill in the registry
  * 2. Reads the full SKILL.md content through the shared policy boundary
- * 3. Asks the user to approve the skill's `allowed-tools` grant
- * 4. Returns the SKILL.md body (the skill names its tools, and the model
- *    already has their schemas from the deferred tools array)
+ * 3. Activates the skill's tool-definition references
+ * 4. Returns the SKILL.md body together with the names of the tool definitions
+ *    it revealed
  *
- * The grant is requested before the body is returned, so a server cannot use
- * skill instructions to influence a pending authorization decision. A declined
- * or unavailable approval leaves every gated tool locked.
+ * Step 3 asks the user nothing. Revealing a schema is a context-engineering
+ * act, and the series' own end-to-end trajectory has no approval step between
+ * `load_skill` and the tools becoming visible. Approval happens later and
+ * elsewhere: when a non-read-only tool actually runs, whichever surface runs
+ * it. Loading a skill therefore widens what the model can *read*, never what it
+ * may *do* — the tools a skill names were already dispatchable, and the ones it
+ * omits still are.
+ *
+ * Nothing here mutates the registered tools array. The revealed definitions
+ * ride out in this tool result, on the conversation tail, so the prompt prefix
+ * and tool declarations stay byte-identical for the whole conversation.
  */
 export function createLoadSkillTool(deps: LoadSkillDeps) {
   const { registry, policy, skillsClient } = deps;
@@ -58,9 +77,9 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
     name: "load_skill",
     label: "Load Skill",
     description:
-      "Use when a task matches an MCP skill's documented workflow and you need its instructions. Returns the skill body and requests approval to enable the tools it declares; the tools stay locked unless that grant is approved.",
+      "Use when a task matches an MCP skill's documented workflow and you need its instructions. Returns the skill body and reveals the full schemas of the tool definitions it references.",
     promptSnippet:
-      "Use when a task matches an MCP skill's workflow: returns its instructions and, once you approve the grant, enables the tools it declares.",
+      "Use when a task matches an MCP skill's workflow: returns its instructions and reveals the schemas of the tools it references.",
     parameters: LoadSkillParams,
 
     async execute(
@@ -173,36 +192,28 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
         };
       }
 
-      // Approval is bound to the resource set the server just published. A
-      // rotated set produces a different grant key, so a previously approved
-      // skill is re-prompted instead of inheriting the old answer.
-      const grantSubject = entry ? withFreshContent(skill, entry) : skill;
-      const grant = await policy.activateSkillGrant(grantSubject, signal);
-      if (grant.status === "granted" || grant.status === "reused") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: body,
-            },
-          ],
-          details: {
-            skillName: params.name,
-            serverName: skill.serverName,
-            activatedTools: [...grant.activatedTools],
-            verified: verifiable,
-            resourceSetRotated: rotated,
-          },
-        };
-      }
-
+      // Activation is bound to the resource set the server just published, so a
+      // rotated set reveals the definitions the server names now rather than
+      // the ones it named at discovery. No approval is involved either way.
+      const activationSubject = entry ? withFreshContent(skill, entry) : skill;
+      const activation = policy.activateSkillReference(activationSubject);
+      const revealed = [...activation.referencedTools];
       return {
-        content: [{ type: "text", text: grant.message }],
+        content: [{ type: "text", text: body }],
+        // `addedToolNames` is the host's activation channel: it rides out on
+        // this tool result, so the provider expands the revealed schemas from
+        // `tool_reference` blocks on the conversation tail. Nothing mutates the
+        // registered tools array or the system prompt, so the prompt prefix
+        // stays byte-identical across the conversation. Omitted when empty,
+        // because an empty array would still be a transcript marker.
+        ...(revealed.length > 0 ? { addedToolNames: revealed } : {}),
         details: {
           skillName: params.name,
           serverName: skill.serverName,
-          activatedTools: [],
-          error: grant.status === "declined" ? "approval_declined" : "approval_unavailable",
+          referencedTools: revealed,
+          ...(activation.unresolvedTools.length > 0
+            ? { unresolvedTools: [...activation.unresolvedTools] }
+            : {}),
           verified: verifiable,
           resourceSetRotated: rotated,
         },
@@ -214,21 +225,20 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
 /**
  * Rebuild skill metadata from the entry the server just served.
  *
- * Both the gated tool names and the content fingerprint come from the verified
- * entry rather than the discovery-time copy, so an `allowed-tools` list that
- * grew since discovery cannot ride in on an approval the user gave for a
- * smaller one.
+ * Both the referenced tool names and the content fingerprint come from the
+ * verified entry rather than the discovery-time copy, so what the model is
+ * shown is what the server is publishing now.
  */
 function withFreshContent(skill: McpSkillMetadata, entry: SkillEntry): McpSkillMetadata {
   const declared = entry.frontmatter["allowed-tools"];
-  const allowedTools = Array.isArray(declared)
+  const referencedTools = Array.isArray(declared)
     ? declared.filter((value): value is string => typeof value === "string")
     : typeof declared === "string" && declared.trim().length > 0
       ? declared.trim().split(/\s+/)
       : [];
   return {
     ...skill,
-    allowedTools,
+    referencedTools,
     contentFingerprint: resourceSetFingerprint(entry),
   };
 }

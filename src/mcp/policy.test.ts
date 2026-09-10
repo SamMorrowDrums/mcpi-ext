@@ -340,197 +340,204 @@ describe("argument validation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Gating + tool-cli visibility (no hidden-tool bypass)
+// Deferral is exposure, not authorization
 // ---------------------------------------------------------------------------
 
-describe("gating and discovery visibility", () => {
+describe("deferral and discovery visibility", () => {
   const skill: McpPolicySkill = {
     name: "probe",
     uri: "skill://probe/SKILL.md",
     serverName: "alpha",
-    allowedTools: ["secret_probe"],
+    referencedTools: ["secret_probe"],
   };
 
-  it("omits gated tools from the policy-visible discovered schema set", () => {
+  it("keeps every discovered tool discoverable while marking the definition deferred", () => {
     const { policy } = harness({
       approval: true,
       tools: { alpha: [readOnlyTool, gatedTool] },
     });
     policy.registerSkills([skill]);
 
-    const visible = policy.getVisibleTools("alpha").map((t) => t.name);
-    expect(visible).toEqual(["read_weather"]);
-    expect(policy.isGated("secret_probe")).toBe(true);
-    expect(policy.getGatingSkills("secret_probe")).toEqual(["probe"]);
+    // Discovery is not the skills' to filter: Code Mode and tool-cli both read
+    // this set, and neither should need a skill loaded to see a tool exists.
+    const discoverable = policy.getDiscoverableTools("alpha").map((t) => t.name);
+    expect(discoverable).toEqual(["read_weather", "secret_probe"]);
+
+    // The direct proxy definition is still deferred. That is a statement about
+    // which schema the prompt carries, and nothing else.
+    expect(policy.isDeferred("secret_probe")).toBe(true);
+    expect(policy.getReferencingSkills("secret_probe")).toEqual(["probe"]);
   });
 
-  it("refuses a tool-cli call that names a hidden tool directly", async () => {
-    const { policy, gateway } = harness({
-      approval: true,
-      tools: { alpha: [readOnlyTool, gatedTool] },
-    });
-    policy.registerSkills([skill]);
+  it.each(ALL_SOURCES)(
+    "dispatches a deferred tool from the %s path with no skill loaded",
+    async (source) => {
+      const { policy, gateway } = harness({
+        approval: true,
+        tools: { alpha: [gatedTool] },
+      });
+      policy.registerSkills([skill]);
 
-    const error = await expectDenied(
-      policy.callTool({
-        source: "tool-cli",
-        serverName: "alpha",
-        toolName: "secret_probe",
-        args: { city: "lisbon" },
-      }),
-      "tool_gated",
-    );
-
-    expect(error.alternatives).toContain("load_skill");
-    expect(gateway.callTool).not.toHaveBeenCalled();
-  });
-
-  it.each(ALL_SOURCES)("applies gating to the %s path as well", async (source) => {
-    const { policy, gateway } = harness({
-      approval: true,
-      tools: { alpha: [gatedTool] },
-    });
-    policy.registerSkills([skill]);
-
-    await expectDenied(
-      policy.callTool({
+      await policy.callTool({
         source,
         serverName: "alpha",
         toolName: "secret_probe",
         args: { city: "lisbon" },
-      }),
-      "tool_gated",
-    );
+      });
 
-    expect(gateway.callTool).not.toHaveBeenCalled();
-  });
+      expect(gateway.callTool).toHaveBeenCalledTimes(1);
+    },
+  );
 
-  it("exposes gated names to the host gate without leaking them to discovery", () => {
+  it("reports deferred names without removing them from discovery", () => {
     const { policy } = harness({
       approval: true,
       tools: { alpha: [readOnlyTool, gatedTool] },
     });
     policy.registerSkills([skill]);
 
-    expect(policy.getGatedToolNames()).toEqual(["secret_probe"]);
+    expect(policy.getDeferredToolNames()).toEqual(["secret_probe"]);
     expect(policy.getVisibleServers()).toEqual(["alpha"]);
+    expect(policy.getDiscoverableTools("alpha")).toHaveLength(2);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Skill allowed-tools grants require approval
+// Skill references activate exposure, and ask nothing
 // ---------------------------------------------------------------------------
 
-describe("skill grant approval", () => {
+describe("skill reference activation", () => {
   const skill: McpPolicySkill = {
     name: "probe",
     uri: "skill://probe/SKILL.md",
     serverName: "alpha",
-    allowedTools: ["secret_probe"],
+    referencedTools: ["secret_probe"],
   };
 
-  function grantHarness(approval: boolean | undefined) {
-    const h = harness({ approval, tools: { alpha: [gatedTool] } });
+  function referenceHarness() {
+    const h = harness({ approval: true, tools: { alpha: [gatedTool] } });
     h.policy.registerSkills([skill]);
     return h;
   }
 
-  it("activates only after explicit approval", async () => {
-    const { policy, confirm } = grantHarness(true);
+  it("reveals the referenced definitions without prompting", () => {
+    const { policy, confirm } = referenceHarness();
 
-    expect(policy.isGated("secret_probe")).toBe(true);
-    const outcome = await policy.activateSkillGrant(skill);
-
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(confirm.mock.calls[0]?.[0]).toMatchObject({
-      kind: "skill-grant",
-      serverName: "alpha",
-      skillName: "probe",
-      grantedTools: ["secret_probe"],
-    });
-    expect(outcome.status).toBe("granted");
-    expect(policy.isGated("secret_probe")).toBe(false);
-  });
-
-  it("leaves tools gated and returns an actionable message when declined", async () => {
-    const { policy, confirm } = grantHarness(false);
-
-    const outcome = await policy.activateSkillGrant(skill);
-
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(outcome.status).toBe("declined");
-    expect("message" in outcome && outcome.message).toContain("load_skill");
-    expect(policy.isGated("secret_probe")).toBe(true);
-    expect(policy.getAuditLog().at(-1)).toMatchObject({
-      operation: "skill-grant",
-      decision: "denied",
-      approval: "declined",
-    });
-  });
-
-  it("leaves tools gated when no approval surface is available", async () => {
-    const h = harness({ tools: { alpha: [gatedTool] } });
-    h.policy.registerSkills([skill]);
-
-    const outcome = await h.policy.activateSkillGrant(skill);
-
-    expect(outcome.status).toBe("unavailable");
-    expect("message" in outcome && outcome.message.length).toBeGreaterThan(0);
-    expect(h.policy.isGated("secret_probe")).toBe(true);
-  });
-
-  it("treats a cancelled activation as unavailable, not approved", async () => {
-    const { policy, confirm } = grantHarness(true);
-    const controller = new AbortController();
-    controller.abort();
-
-    const outcome = await policy.activateSkillGrant(skill, controller.signal);
+    expect(policy.isDeferred("secret_probe")).toBe(true);
+    const outcome = policy.activateSkillReference(skill);
 
     expect(confirm).not.toHaveBeenCalled();
-    expect(outcome.status).toBe("unavailable");
-    expect(policy.isGated("secret_probe")).toBe(true);
+    expect(outcome.status).toBe("activated");
+    expect(outcome.referencedTools).toEqual(["secret_probe"]);
+    expect(policy.isDeferred("secret_probe")).toBe(false);
   });
 
-  it("reuses an identical approved grant without prompting again", async () => {
-    const { policy, confirm } = grantHarness(true);
+  it("records the activation as an allowed skill-reference crossing", () => {
+    const { policy } = referenceHarness();
 
-    await policy.activateSkillGrant(skill);
-    const second = await policy.activateSkillGrant(skill);
+    policy.activateSkillReference(skill);
 
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(second.status).toBe("reused");
+    expect(policy.getAuditLog().at(-1)).toMatchObject({
+      source: "skill-load",
+      operation: "skill-reference",
+      serverName: "alpha",
+      uri: "skill://probe/SKILL.md",
+      decision: "allowed",
+    });
   });
 
-  it("re-prompts when the same skill URI grants a different tool set", async () => {
-    const { policy, confirm } = grantHarness(true);
-    await policy.activateSkillGrant(skill);
+  it("reports a repeat activation without prompting or re-revealing", () => {
+    const { policy, confirm } = referenceHarness();
 
-    const widened: McpPolicySkill = { ...skill, allowedTools: ["secret_probe", "send_alert"] };
-    await policy.activateSkillGrant(widened);
-
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(policy.activateSkillReference(skill).status).toBe("activated");
+    expect(policy.activateSkillReference(skill).status).toBe("reactivated");
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("re-prompts when an identical tool set arrives from another origin", async () => {
+  it("treats a widened reference set as a fresh activation", () => {
+    const h = harness({
+      approval: true,
+      tools: { alpha: [gatedTool, writeTool] },
+    });
+    h.policy.registerSkills([skill]);
+    h.policy.activateSkillReference(skill);
+
+    const widened: McpPolicySkill = { ...skill, referencedTools: ["secret_probe", "send_alert"] };
+    const outcome = h.policy.activateSkillReference(widened);
+
+    expect(outcome.status).toBe("activated");
+    expect(outcome.referencedTools).toEqual(["secret_probe", "send_alert"]);
+    expect(h.confirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps activation bound to the origin that advertised the skill", () => {
     const h = harness({
       approval: true,
       tools: { alpha: [gatedTool], beta: [gatedTool] },
     });
     h.policy.registerSkills([skill]);
-    await h.policy.activateSkillGrant(skill);
+    h.policy.activateSkillReference(skill);
 
-    await h.policy.activateSkillGrant({ ...skill, serverName: "beta" });
+    const fromBeta = h.policy.activateSkillReference({ ...skill, serverName: "beta" });
 
-    expect(h.confirm).toHaveBeenCalledTimes(2);
+    expect(fromBeta.status).toBe("activated");
+    expect(h.policy.getAuditLog().at(-1)).toMatchObject({
+      operation: "skill-reference",
+      serverName: "beta",
+    });
   });
 
-  it("does not prompt for a skill that grants no tools", async () => {
-    const { policy, confirm } = grantHarness(true);
+  it("drops names that do not resolve to a discovered tool", () => {
+    const { policy } = referenceHarness();
 
-    const outcome = await policy.activateSkillGrant({ ...skill, allowedTools: [] });
+    const outcome = policy.activateSkillReference({
+      ...skill,
+      referencedTools: ["secret_probe", "not_a_real_tool"],
+    });
+
+    expect(outcome.referencedTools).toEqual(["secret_probe"]);
+  });
+
+  it("dedupes repeated names while preserving declaration order", () => {
+    const h = harness({
+      approval: true,
+      tools: { alpha: [writeTool, gatedTool] },
+    });
+    h.policy.registerSkills([skill]);
+
+    const outcome = h.policy.activateSkillReference({
+      ...skill,
+      referencedTools: ["send_alert", "secret_probe", "send_alert"],
+    });
+
+    expect(outcome.referencedTools).toEqual(["send_alert", "secret_probe"]);
+  });
+
+  it("activates nothing, and records nothing, for a skill that references no tools", () => {
+    const { policy, confirm } = referenceHarness();
+    const before = policy.getAuditLog().length;
+
+    const outcome = policy.activateSkillReference({ ...skill, referencedTools: [] });
 
     expect(confirm).not.toHaveBeenCalled();
-    expect(outcome.status).toBe("granted");
+    expect(outcome.status).toBe("activated");
+    expect(outcome.referencedTools).toEqual([]);
+    expect(policy.getAuditLog().length).toBe(before);
+  });
+
+  it("dispatches a deferred tool that no skill reference has revealed", async () => {
+    const { policy, gateway, confirm } = referenceHarness();
+
+    expect(policy.isDeferred("secret_probe")).toBe(true);
+    await policy.callTool({
+      source: "proxy",
+      serverName: "alpha",
+      toolName: "secret_probe",
+      args: { city: "lisbon" },
+    });
+
+    expect(gateway.callTool).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
   });
 });
 
@@ -619,18 +626,18 @@ describe("tool-call approval semantics", () => {
     expect(gateway.callTool).not.toHaveBeenCalled();
   });
 
-  it("never double-approves a tool already covered by an approved skill grant", async () => {
+  it("asks again for every execution, because a skill reference grants nothing", async () => {
     const skill: McpPolicySkill = {
       name: "alerts",
       uri: "skill://alerts/SKILL.md",
       serverName: "alpha",
-      allowedTools: ["send_alert"],
+      referencedTools: ["send_alert"],
     };
     const { policy, confirm, gateway } = harness({ approval: true });
     policy.registerSkills([skill]);
 
-    await policy.activateSkillGrant(skill);
-    expect(confirm).toHaveBeenCalledTimes(1);
+    policy.activateSkillReference(skill);
+    expect(confirm).not.toHaveBeenCalled();
 
     await policy.callTool({
       source: "proxy",
@@ -645,11 +652,11 @@ describe("tool-call approval semantics", () => {
       args: { city: "lisbon" },
     });
 
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
     expect(gateway.callTool).toHaveBeenCalledTimes(2);
     expect(policy.getAuditLog().at(-1)).toMatchObject({
       decision: "allowed",
-      approval: "reused",
+      approval: "granted",
     });
   });
 
@@ -687,55 +694,95 @@ describe("tool-call approval semantics", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Code Mode read-only semantics preserved
+// Code Mode executes writes through the same approval path
 // ---------------------------------------------------------------------------
 
-describe("code-mode permission semantics", () => {
-  it("refuses a non-read-only tool from code-mode without prompting", async () => {
+describe("code-mode approval semantics", () => {
+  it("prompts once for a non-read-only tool and dispatches on approval", async () => {
     const { policy, confirm, gateway } = harness({ approval: true });
 
+    await policy.callTool({
+      source: "code-mode",
+      serverName: "alpha",
+      toolName: "send_alert",
+      args: { city: "lisbon" },
+    });
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0]?.[0]).toMatchObject({
+      kind: "tool-call",
+      source: "code-mode",
+      serverName: "alpha",
+      toolName: "send_alert",
+    });
+    expect(gateway.callTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("records exactly one audit crossing for an approved code-mode write", async () => {
+    const { policy } = harness({ approval: true });
+    const before = policy.getAuditLog().length;
+
+    await policy.callTool({
+      source: "code-mode",
+      serverName: "alpha",
+      toolName: "send_alert",
+      args: { city: "lisbon" },
+    });
+
+    const added = policy.getAuditLog().slice(before);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "send_alert",
+      decision: "allowed",
+      approval: "granted",
+    });
+  });
+
+  it("declines legibly and never reaches the server", async () => {
+    const h = harness({ approval: false });
+    const before = h.policy.getAuditLog().length;
+
     const error = await expectDenied(
-      policy.callTool({
+      h.policy.callTool({
         source: "code-mode",
         serverName: "alpha",
         toolName: "send_alert",
         args: { city: "lisbon" },
       }),
-      "permission_denied",
+      "approval_declined",
     );
 
-    expect(confirm).not.toHaveBeenCalled();
-    expect(gateway.callTool).not.toHaveBeenCalled();
-    expect(error.message).toContain("visible for discovery but cannot be called from Code Mode");
-    expect(error.alternatives).toEqual(["load_skill", "tool-cli"]);
+    expect(h.gateway.callTool).not.toHaveBeenCalled();
+    expect(error.message).toContain("send_alert");
+    const added = h.policy.getAuditLog().slice(before);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      decision: "denied",
+      approval: "declined",
+      reason: "approval_declined",
+    });
   });
 
-  it("still refuses code-mode writes after a skill grant approved them elsewhere", async () => {
-    const skill: McpPolicySkill = {
-      name: "alerts",
-      uri: "skill://alerts/SKILL.md",
-      serverName: "alpha",
-      allowedTools: ["send_alert"],
-    };
-    const { policy, gateway } = harness({ approval: true });
-    policy.registerSkills([skill]);
-    await policy.activateSkillGrant(skill);
+  it("treats a missing approval surface as no approval", async () => {
+    const h = harness({ tools: { alpha: [writeTool] } });
 
     await expectDenied(
-      policy.callTool({
+      h.policy.callTool({
         source: "code-mode",
         serverName: "alpha",
         toolName: "send_alert",
         args: { city: "lisbon" },
       }),
-      "permission_denied",
+      "approval_unavailable",
     );
 
-    expect(gateway.callTool).not.toHaveBeenCalled();
+    expect(h.gateway.callTool).not.toHaveBeenCalled();
   });
 
-  it("allows read-only code-mode calls", async () => {
-    const { policy, gateway } = harness({ approval: true });
+  it("allows read-only code-mode calls without prompting", async () => {
+    const { policy, gateway, confirm } = harness({ approval: true });
 
     await policy.callTool({
       source: "code-mode",
@@ -745,6 +792,7 @@ describe("code-mode permission semantics", () => {
     });
 
     expect(gateway.callTool).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
   });
 });
 
@@ -887,7 +935,7 @@ describe("resource authorization", () => {
         name: "weather",
         uri: skillUri,
         serverName: "alpha",
-        allowedTools: [],
+        referencedTools: [],
       },
     ]);
     policy.registerSkillResources("alpha", skillUri, [skillUri, referenceUri]);
@@ -1048,8 +1096,8 @@ describe("resource authorization", () => {
   it("binds skill-load reads to the registered skill origin", async () => {
     const { policy, gateway } = resourceHarness();
     policy.registerSkills([
-      { name: "alpha-skill", uri: alphaSkillUri, serverName: "alpha", allowedTools: [] },
-      { name: "beta-skill", uri: betaSkillUri, serverName: "beta", allowedTools: [] },
+      { name: "alpha-skill", uri: alphaSkillUri, serverName: "alpha", referencedTools: [] },
+      { name: "beta-skill", uri: betaSkillUri, serverName: "beta", referencedTools: [] },
     ]);
 
     await policy.readResource({
@@ -1254,25 +1302,26 @@ describe("audit context", () => {
     expect(policy.getAuditLog()).toHaveLength(3);
   });
 
-  it("clears gating and grants on reset", async () => {
+  it("clears deferral and activated references on reset", () => {
     const skill: McpPolicySkill = {
       name: "probe",
       uri: "skill://probe/SKILL.md",
       serverName: "alpha",
-      allowedTools: ["secret_probe"],
+      referencedTools: ["secret_probe"],
     };
-    const { policy, confirm } = harness({ approval: true, tools: { alpha: [gatedTool] } });
+    const { policy } = harness({ approval: true, tools: { alpha: [gatedTool] } });
     policy.registerSkills([skill]);
-    await policy.activateSkillGrant(skill);
-    expect(policy.isGated("secret_probe")).toBe(false);
+    policy.activateSkillReference(skill);
+    expect(policy.isDeferred("secret_probe")).toBe(false);
 
     policy.reset();
 
-    expect(policy.getGatedToolNames()).toEqual([]);
+    expect(policy.getDeferredToolNames()).toEqual([]);
     expect(policy.getAuditLog()).toHaveLength(0);
 
+    // A fresh session re-defers the definition and treats the reference as new.
     policy.registerSkills([skill]);
-    await policy.activateSkillGrant(skill);
-    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(policy.isDeferred("secret_probe")).toBe(true);
+    expect(policy.activateSkillReference(skill).status).toBe("activated");
   });
 });

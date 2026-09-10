@@ -83,7 +83,9 @@ export function skillsExtensionDiagnostic(): string {
     `[skills] SEP-2640 Skills Extension support is DRAFT ` +
     `(${SKILLS_EXTENSION_NAME}, status=${SKILLS_EXTENSION_STATUS}, ` +
     `revision=${SKILLS_EXTENSION_REVISION.slice(0, 12)}). ` +
-    `Not final MCP specification; behaviour may change without notice.`
+    `Not final MCP specification; behaviour may change without notice. ` +
+    `Negotiated only with servers that declare it; ` +
+    `disable with --no-mcp-skills-extension or "experimental": { "skillsExtension": false }.`
   );
 }
 

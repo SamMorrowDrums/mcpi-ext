@@ -51,7 +51,7 @@ export async function discoverSkillsFromServer(
       const fm = parsed.frontmatter as Record<string, unknown>;
       const name = (fm.name as string | undefined) ?? resource.name;
       const description = (fm.description as string | undefined) ?? "";
-      const allowedTools = parseAllowedTools(fm);
+      const referencedTools = parseReferencedTools(fm);
 
       if (!name) {
         log(`[skills] Skill at ${resource.uri} has no name, skipping`);
@@ -63,11 +63,11 @@ export async function discoverSkillsFromServer(
         description,
         uri: resource.uri,
         serverName,
-        allowedTools,
+        referencedTools,
       });
 
       log(
-        `[skills] Discovered skill "${name}" from "${serverName}" (${allowedTools.length} gated tools)`,
+        `[skills] Discovered skill "${name}" from "${serverName}" (${referencedTools.length} referenced tool definition(s))`,
       );
     } catch (err) {
       log(`[skills] Failed to read skill ${resource.uri}: ${(err as Error).message}`);
@@ -82,13 +82,17 @@ function compareStrings(left: string, right: string): number {
 }
 
 /**
- * Parse tool names from frontmatter, supporting both formats:
+ * Parse the tool names a skill references, supporting both formats:
  * - Current: `allowed-tools: [tool_a, tool_b]` (YAML array)
  * - Proposed spec: `metadata.io.modelcontextprotocol/tools: "tool_a tool_b"` (space-separated)
  *
  * Prefers the proposed spec format when both are present.
+ *
+ * Either way the list is read as an exposure set: it decides which deferred
+ * tool schemas loading the skill reveals. It is not consulted when deciding
+ * whether a call may execute.
  */
-function parseAllowedTools(fm: Record<string, unknown>): string[] {
+function parseReferencedTools(fm: Record<string, unknown>): string[] {
   // Proposed spec format: metadata.io.modelcontextprotocol/tools (space-separated string)
   const metadata = fm.metadata as Record<string, unknown> | undefined;
   if (metadata) {

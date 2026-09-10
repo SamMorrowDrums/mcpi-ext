@@ -202,7 +202,7 @@ export function generateTypeHints(tools: readonly (McpTool | CodeModeTool)[]): s
   return [
     "// Code mode type hints — auto-generated from MCP tool schemas",
     "// Available tools are accessed via the `codemode` namespace",
-    `// MCP catalog: ${diagnostics.totalTools} tool(s); ${diagnostics.callableTools} callable, ${diagnostics.refusedTools} dispatch-refused`,
+    `// MCP catalog: ${diagnostics.totalTools} tool(s); ${diagnostics.unattendedTools} run unattended, ${diagnostics.approvalGatedTools} pause for approval`,
     `// Output schemas: ${diagnostics.declaredOutputSchemas} declared, ${diagnostics.synthesizedOutputSchemas} synthesized, ${diagnostics.unavailableOutputSchemas} unavailable`,
     "",
     `declare const codemode: {`,
@@ -238,10 +238,10 @@ function buildJsDoc(codeModeTool: CodeModeTool, inputSchema: JsonSchema): string
     lines.push(`   * ${tool.description}`);
   }
 
-  if (codeModeTool.callable) {
-    lines.push("   * Code Mode dispatch: callable (explicitly read-only and non-destructive).");
+  if (codeModeTool.runsUnattended) {
+    lines.push("   * Approval: runs unattended (annotated read-only and non-destructive).");
   } else {
-    lines.push("   * Code Mode dispatch: refused. Use a permission-aware non-Code-Mode path.");
+    lines.push("   * Approval: pauses for user approval before the call reaches the server.");
   }
   lines.push(`   * Output schema provenance: ${codeModeTool.outputSchemaProvenance}.`);
 

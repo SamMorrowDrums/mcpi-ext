@@ -200,7 +200,7 @@ async function startBridge(options: StartBridgeOptions = {}) {
         name: "probe",
         uri: "skill://probe/SKILL.md",
         serverName: "alpha",
-        allowedTools: ["secret_probe"],
+        referencedTools: ["secret_probe"],
       },
     ]);
   }
@@ -334,12 +334,15 @@ describe("tool-cli v1 authenticated bridge", () => {
 });
 
 describe("tool-cli v1 policy-backed tools", () => {
-  it("advertises exactly policy-visible tools and preserves their complete schemas", async () => {
+  it("advertises every discovered tool and preserves their complete schemas", async () => {
     const { rpc } = await startBridge();
 
+    // tool-cli is a progressive-discovery surface. A tool a skill happens to
+    // reference is still just a discovered tool here: nothing about the direct
+    // proxy's deferral should decide what the shell can see.
     const listed = await rpc("listTools", { server: "alpha" });
     const listResult = listed.result as { tools: { name: string }[] };
-    expect(listResult.tools.map((entry) => entry.name)).toEqual(["read_weather"]);
+    expect(listResult.tools.map((entry) => entry.name)).toEqual(["read_weather", "secret_probe"]);
 
     const described = await rpc("describeTool", {
       server: "alpha",
@@ -357,7 +360,7 @@ describe("tool-cli v1 policy-backed tools", () => {
     expect(described.result).not.toHaveProperty("serverName");
   });
 
-  it("hides and refuses gated tools before upstream dispatch", async () => {
+  it("describes and dispatches a skill-referenced tool with no skill loaded", async () => {
     const { rpc, upstream } = await startBridge();
 
     const described = await rpc("describeTool", {
@@ -370,10 +373,10 @@ describe("tool-cli v1 policy-backed tools", () => {
       arguments: {},
     });
 
-    expect(described.error).toBeDefined();
-    expect(called.error).toBeDefined();
-    expect(JSON.stringify(called.error)).toContain("secret_probe");
-    expect(upstream).not.toHaveBeenCalled();
+    expect(described.error).toBeUndefined();
+    expect(described.result).toMatchObject({ name: "secret_probe" });
+    expect(called.error).toBeUndefined();
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 
   it.each([

@@ -23,10 +23,16 @@ tool selection. These three mechanisms let the agent discover and call tools pro
 
 ## Quick start
 
-Verified against **mcpi 0.85.1** and **tool-cli 1.0.2**. The minimum supported host remains
-`@sammorrowdrums/mcpi@0.85.0`: mcpi-ext declares a peer range of `>=0.85.0 <1.0.0`, and requires
-`@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext `1.x` works; the commands below
-pin the current one.
+Requires **`@sammorrowdrums/mcpi@0.85.2`** or newer: mcpi-ext declares a peer range of
+`>=0.85.2 <1.0.0`, and requires `@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext
+`1.x` works; the commands below pin the current one.
+
+The floor is 0.85.2 rather than 0.85.0 because progressive disclosure needs two host behaviours that
+land in that patch: registration-time `deferred` metadata, so a direct tool proxy is genuinely hidden
+from turn 0 rather than only after its first use, and `tool_reference` activation driven by
+`addedToolNames` on a tool result. On an older host the extension still loads, but skill activation
+reveals nothing and deferred definitions are not deferred — a silent degradation, which is why the
+floor is expressed as a hard peer range rather than a note.
 
 ### 1. Check Node
 
@@ -41,7 +47,7 @@ node --version
 `mcpi` and `tool-cli` are commands you run, so they belong on your `PATH`:
 
 ```sh
-npm install -g @sammorrowdrums/mcpi@0.85.1 @sammorrowdrums/tool-cli@1.0.2
+npm install -g @sammorrowdrums/mcpi@0.85.2 @sammorrowdrums/tool-cli@1.0.2
 ```
 
 To track the newest releases instead of the pinned pair, use `@latest`:
@@ -164,14 +170,14 @@ optional `headers`. Any other shape is rejected at startup with the offending pa
 
 ```sh
 mcpi --provider github-copilot --model claude-opus-5 \
-  --mcp-config ~/.config/mcpi-ext/mcp.json \
-  --mcp-skills-extension
+  --mcp-config ~/.config/mcpi-ext/mcp.json
 ```
 
-`--mcp-config` and `--mcp-skills-extension` are registered by mcpi-ext, so they exist only once the
-extension is installed. `--mcp-skills-extension` is **opt-in** and off by default; see
-[Skills support](#skills-support) before enabling it. Drop it unless you are talking to a server that
-implements the draft.
+`--mcp-config` and `--no-mcp-skills-extension` are registered by mcpi-ext, so they exist only once
+the extension is installed. Skills discovery is **on by default**: a server that declares the
+SEP-2640 extension is negotiated with automatically, and one that does not is never spoken to in it.
+Pass `--no-mcp-skills-extension` to opt out; see [Skills support](#skills-support) for what the draft
+status means.
 
 ### 6. Authenticate the model provider
 
@@ -241,10 +247,16 @@ Skills require an MCP server that publishes them by one of two contracts:
 1. **[SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640)** — the
    server declares the `io.modelcontextprotocol/skills` extension and serves `skills/list`. This is
    a **live Draft** on the MCP Extensions Track: open, unratified, and still changing. mcpi-ext pins
-   revision `753b9f2be43e07fdd070e535d75f190cff14beea` and is gated **off** by default, which is why
-   `--mcp-skills-extension` (or `{"experimental": {"skillsExtension": true}}` in `mcp.json`) is
-   required to enable it. With the gate off, the extension is never advertised at `initialize`, so
-   no server can negotiate it.
+   revision `753b9f2be43e07fdd070e535d75f190cff14beea`.
+
+   Negotiation is **on by default**, because requiring a flag to discover skills a server already
+   advertises makes the common case a configuration problem. The draft status is handled by saying
+   so — a visible diagnostic names the pinned revision whenever the contract is in use — rather than
+   by hiding the feature. Opt out with `--no-mcp-skills-extension` (or
+   `{"experimental": {"skillsExtension": false}}` in `mcp.json`); with the gate off the extension is
+   never advertised at `initialize`, so no server can negotiate it. Either way, a server that never
+   declared the extension is never spoken to in it.
+
 2. **Legacy `skill://` resources** — the server lists `skill://` URIs among its resources. This is
    the compatibility fallback, used only when a server declares no extension.
 
@@ -307,15 +319,17 @@ agent's tool registry: it is a program invoked through mcpi's bash tool. A respo
 
 > List the skills available, then load the one for issue triage.
 
-Expect a **`load_skill`** tool call. Loading prompts you to approve the skill's tool grant; the
-declared tools stay locked until you approve. With no skills discovered, the agent should tell you
-so — the routing section reports skills as unavailable with the reason rather than omitting them.
+Expect a **`load_skill`** tool call. Loading returns the skill body and reveals the full schemas of
+the tool definitions it references — no approval prompt, because reading a procedure is not doing
+anything. Those tools were always callable from Code Mode and tool-cli; what loading changes is only
+whether the model can read their schemas directly. With no skills discovered, the agent should tell
+you so — the routing section reports skills as unavailable with the reason rather than omitting them.
 
 ### Confirming what loaded
 
-At startup mcpi-ext reports connected servers and discovered tool counts, and — when
-`--mcp-skills-extension` is on — logs the pinned draft revision and the per-server negotiation
-result. It always emits an `<execution_routing>` prompt section stating each facility's availability
+At startup mcpi-ext reports connected servers and discovered tool counts, and — unless
+`--no-mcp-skills-extension` turns it off — logs the pinned draft revision and the per-server
+negotiation result. It always emits an `<execution_routing>` prompt section stating each facility's availability
 and, when unavailable, why.
 
 ---
@@ -393,14 +407,18 @@ or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by
 
 - **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and code mode
   sandbox calls alike. Full observability without instrumentation.
-- **Human-in-the-loop happens at one point.** `McpPolicy` reads tool annotations and gates
-  non-read-only calls through user confirmation, whichever mechanism initiated them. A tool unlocked
-  by an approved skill grant is not re-prompted.
-- **Code mode is refused, not prompted.** A non-read-only tool called from the sandbox is denied
-  outright rather than escalated to a confirmation. Visibility is not authority.
-- **Undiscovered and gated tools never reach upstream.** The policy verifies the tool exists in the
-  discovered set and is not skill-gated _before_ contacting the server, so naming a hidden tool over
-  the authenticated bridge socket fails at the boundary.
+- **Human-in-the-loop happens at one point, and only at execution.** `McpPolicy` reads tool
+  annotations and gates non-read-only calls through user confirmation, whichever mechanism initiated
+  them. Nothing else prompts: seeing a schema, loading a skill, or listing a catalogue are not
+  actions, so they do not ask.
+- **Code mode asks rather than refusing.** A write or destructive tool called from the sandbox
+  pauses mid-script at the same confirmation any other surface would raise, and continues with the
+  value it returns. Refusing outright was the old behaviour, and it was wrong: it took the decision
+  away from the person whose decision it is.
+- **Undiscovered tools never reach upstream.** The policy verifies the tool exists in the discovered
+  set and validates arguments against its schema _before_ contacting the server, so naming an unknown
+  tool over the authenticated bridge socket fails at the boundary. Deferral is not part of that test:
+  a deferred definition is one the model has not been shown, not one it is forbidden to call.
 - **Resource reads use the same policy.** tool-cli can list templates and read ordinary text and
   binary resources, while every `skill://` URI and SEP-2640-declared skill resource stays isolated.
   Skill reads are origin-bound, and a discovery pass cannot authorize a skill-load read.
@@ -411,9 +429,15 @@ or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by
 
 Nothing in a skill is executed. A SKILL.md body is content, not commands: helper code and
 instructions telling the host to run something are text the model reads, never actions the extension
-performs. A skill's declared tools stay **inert until you approve the grant**, and the grant is bound
-to the server, the resource URI, and a hash of the tool list — so a server that widens `allowed-tools`
-or rotates its content after approval is re-prompted rather than inheriting the old answer.
+performs. `allowed-tools` is an **exposure** list, not an authorization one: it decides which
+definitions the model can read, and nothing else. A tool named there still faces the same
+annotation-driven confirmation when it actually runs, and a tool named by no skill at all is still
+callable from every surface.
+
+Activation is content-bound all the same — keyed to the server, the resource URI, and a digest of
+the referenced set — so a server that widens `allowed-tools` or rotates its content reveals what it
+publishes _now_ rather than what it published at discovery. That binding decides which definitions
+appear, never whether anything may run.
 
 ### tool-cli bridge credentials are session-scoped
 

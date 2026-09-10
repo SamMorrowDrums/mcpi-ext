@@ -86,18 +86,23 @@ Every path that reaches an MCP server crosses `McpPolicy` (`src/mcp/policy.ts`) 
 | Skill activation | `skills/load-skill-tool.ts`   | `skill-load`       |
 | SEP-2640 skills  | `skills/sep2640/*`            | `skills-extension` |
 
-The ordered pipeline for a tool call: server connected → tool present in the discovered set → not skill-gated → arguments valid against the declared input schema → not cancelled → permission → dispatch. Every denial happens **before** the upstream call, and every outcome (allowed or denied) appends exactly one audit record.
+The ordered pipeline for a tool call: server connected → tool present in the discovered set → arguments valid against the declared input schema → not cancelled → permission → dispatch. Every denial happens **before** the upstream call, and every outcome (allowed or denied) appends exactly one audit record.
+
+There is no skill step in that pipeline, and its absence is deliberate. Skill references decide which definitions the model is _shown_ on the direct proxy surface; they never decide what may run. A tool referenced by no skill is callable from every surface.
 
 Permission rules:
 
 - **Read-only** (`readOnlyHint === true && destructiveHint !== true`) — no prompt.
-- **Code Mode + non-read-only** — refused outright, never prompted. Visibility is not authority.
-- **Other sources + non-read-only** — user confirmation, unless an approved skill grant already unlocked the tool (recorded as `reused`, not prompted again).
+- **Non-read-only, any source** — user confirmation, including from Code Mode. A write called inside a sandboxed script pauses at the same prompt and resumes with the value it returns.
 - **No UI available** — treated as _not approved_, never as approval.
 
-Skill grants from MCP servers require explicit user approval and are bound to server + resource URI + a hash of the sorted tool list, so widening `allowed-tools` or replaying a grant from a different server re-prompts. Resource reads use the same policy: `skill://` URIs are origin-bound to the server that advertised them, and a discovery pass does not authorize a skill-load read.
+The rule is uniform across sources on purpose. Code Mode used to be refused outright rather than prompted, which sounded conservative and was not: it removed a decision from the person entitled to make it, and left a script able to see work it could never finish.
 
-For SEP-2640 skills the `skills-extension` source narrows this further: reads are authorized by exact membership in _that skill's_ declared `resources` set (keyed `serverName` + `skillUri`), not by the per-server skill index, and the grant key additionally carries a fingerprint of the resource set so rotated content re-prompts. See [docs/skills.md](docs/skills.md) — the extension is **Draft** and gated off by default.
+Skill activation involves no user approval, because revealing a schema is a context-engineering act rather than an execution one. It is still content-bound — keyed to server + resource URI + a digest of the referenced set — so a rotated or widened set reveals what the server publishes now rather than what it published at discovery. That binding decides _which definitions appear_, never whether anything may run.
+
+Resource reads are authorized separately and genuinely: `skill://` URIs are origin-bound to the server that advertised them, and a discovery pass does not authorize a skill-load read.
+
+For SEP-2640 skills the `skills-extension` source narrows resource reads further: they are authorized by exact membership in _that skill's_ declared `resources` set (keyed `serverName` + `skillUri`), not by the per-server skill index. See [docs/skills.md](docs/skills.md) — the extension is **Draft**, negotiated by default, with an explicit opt-out and a visible draft diagnostic.
 
 `McpClientManager` is the transport gateway beneath the policy — it owns connections and protocol negotiation, not authorization.
 
@@ -105,13 +110,15 @@ For SEP-2640 skills the `skills-extension` source narrows this further: reads ar
 
 The extension provides three mechanisms for exposing MCP tools to the agent:
 
-| Mechanism | Exposure                                                           | When Used                              |
-| --------- | ------------------------------------------------------------------ | -------------------------------------- |
-| Skills    | `deferred: true` + `tool_call` gate → tools unlocked by load_skill | MCP server ships skills                |
-| tool-cli  | CLI progressive discovery via shell                                | Ad-hoc exploration, no skills          |
-| Code mode | search+execute, read-only tools only (refused, not prompted)       | Read-only tools with structured output |
+| Mechanism | Exposure                                                                 | When Used                                    |
+| --------- | ------------------------------------------------------------------------ | -------------------------------------------- |
+| Skills    | direct proxies registered `deferred: true`; `load_skill` reveals schemas | MCP server ships a documented workflow       |
+| tool-cli  | CLI progressive discovery via shell                                      | Ad-hoc exploration from the shell            |
+| Code mode | search+execute over the full catalogue                                   | Exact computation or control flow over tools |
 
-Skills have two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills` and the gate is on.
+All three see the same catalogue. Deferral is a statement about which definitions the _model_ has been shown on the direct surface; it is not a restriction on what may run, and Code Mode and tool-cli discover and call every tool regardless of skill state.
+
+Skills have two discovery contracts, never mixed on the same server: legacy `skill://` resource listing, and the digest-verified SEP-2640 extension when the server declares `io.modelcontextprotocol/skills`.
 
 These name _exposure mechanisms_, not a routing order, and the table is deliberately unnumbered so it cannot be read as one. Nothing tells the agent to try skills before tool-cli. Which surface an agent should use for a given task is decided by the execution-routing section below.
 
@@ -167,7 +174,7 @@ MCP Server(s)
 
 - **Authenticated, but not trusted** — the RPC server binds a random port and requires a session token, so other local processes cannot call it. Authentication is not authorization: an authenticated caller can still name any string it likes, so every call is re-authorized by `McpPolicy` behind the provider.
 - **Verified before exposure** — mcpi-ext serializes and authenticates `getBridgeInfo`, pins the client target to loopback, requires bridge protocol major 1 plus the complete deterministic operation/capability contract, and derives the advertised upstream summary from live per-server MCP diagnostics. It masks inherited subprocess credentials until this handshake succeeds.
-- **Authorization happens in `McpPolicy`, not in the RPC server** — `ToolCliServer.callTool` forwards `server`/`tool`/`args` to the provider without checking membership in the discovered set. `createPolicyToolProvider` closes that gap: the provider exposes only the policy-visible tools and routes every call back through the same dispatcher used by the proxy and Code Mode paths, so a hidden or gated tool is refused before the MCP server is contacted.
+- **Authorization happens in `McpPolicy`, not in the RPC server** — `ToolCliServer.callTool` forwards `server`/`tool`/`args` to the provider without checking membership in the discovered set. `createPolicyToolProvider` closes that gap: the provider exposes only the policy-visible tools and routes every call back through the same dispatcher used by the proxy and Code Mode paths, so an undiscovered tool is refused before the MCP server is contacted. Deferral is not part of that check — tool-cli's catalogue is the full discovered set, and it never requires `load_skill`.
 - **Resources cross the same boundary** — ordinary resource lists, templates, and reads are policy-backed and preserve modern metadata/text/blob fields; every `skill://` URI and all SEP-2640-declared resources stay inaccessible through tool-cli and remain owned by skill discovery/load.
 - **Cancellation reaches MCP v2** — request disconnects and client aborts flow through the provider context and policy to upstream tool and resource calls.
 - **Bridge credentials never enter MCP children** — stdio servers receive the MCP SDK's safe default environment plus explicit server configuration, with every `TOOL_CLI_*` value stripped even in nested mcpi sessions.

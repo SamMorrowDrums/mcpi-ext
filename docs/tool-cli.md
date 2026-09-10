@@ -48,7 +48,7 @@ tool-cli resource read --server docs file:///readme.md
 tool-cli resource read --server media file:///image.png --out /tmp/image.png
 ```
 
-Resource metadata and modern text/blob fields are retained losslessly. `--out` base64-decodes binary blobs to the named file. `skill://` resources/templates and SEP-2640-declared skill resources under any URI scheme are deliberately excluded: they carry workflow instructions and grants, so they remain isolated behind skill discovery and `load_skill`. The policy also refuses an otherwise ordinary read if any returned content block identifies a skill-owned URI, preventing a server from smuggling hidden instructions in a multi-resource response.
+Resource metadata and modern text/blob fields are retained losslessly. `--out` base64-decodes binary blobs to the named file. `skill://` resources/templates and SEP-2640-declared skill resources under any URI scheme are deliberately excluded: they carry workflow instructions whose origin and integrity are established by skill discovery, so they remain owned by skill discovery and `load_skill`. The policy also refuses an otherwise ordinary read if any returned content block identifies a skill-owned URI, preventing a server from smuggling hidden instructions in a multi-resource response.
 
 ## Shell composability
 
@@ -77,7 +77,9 @@ The server uses token-based auth and dynamic port allocation (provided by [`@sam
 4. Only then does it set `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` via `pi.setEnv()`.
 5. Every later request must carry `Authorization: Bearer <token>` and is rejected with 401 otherwise.
 
-This enables concurrent sessions and prevents random processes from calling MCP tools. Authentication is not authorization, though: an authenticated caller can still name arbitrary servers, tools, arguments, and resource URIs. `createPolicyToolProvider` exposes exactly the policy-visible tool schemas and routes each tool/resource operation back through `McpPolicy` once, where discovery, skill gating, input validation, resource isolation, cancellation, audit, and non-read-only confirmation are enforced before upstream dispatch.
+This enables concurrent sessions and prevents random processes from calling MCP tools. Authentication is not authorization, though: an authenticated caller can still name arbitrary servers, tools, arguments, and resource URIs. `createPolicyToolProvider` exposes the full discovered tool set and routes each tool/resource operation back through `McpPolicy` once, where discovery membership, input validation, resource isolation, cancellation, audit, and non-read-only confirmation are enforced before upstream dispatch.
+
+tool-cli's catalogue is deliberately independent of skills: it lists and calls every discovered tool, and never requires `load_skill`. Deferral describes which definitions the _model_ has been shown on the direct proxy surface, which has no bearing on a shell command reaching the bridge.
 
 Stdio MCP children receive the MCP SDK's safe inherited environment plus their explicit configuration, with every `TOOL_CLI_*` variable stripped. A child server therefore cannot inherit this session's bridge credentials, including when mcpi itself was started from another mcpi session.
 

@@ -8,8 +8,15 @@ export interface McpSkillMetadata {
   uri: string;
   /** Which MCP server this skill came from. */
   serverName: string;
-  /** Tool names this skill gates via allowed-tools frontmatter. */
-  allowedTools: string[];
+  /**
+   * Tool definitions this skill references via its frontmatter.
+   *
+   * These names decide which deferred tool *schemas* activating the skill
+   * reveals to the model. They are not an authorization list: a tool named here
+   * is no more callable than one that is not, and every surface can already
+   * dispatch both subject to the server's own annotations.
+   */
+  referencedTools: string[];
   /**
    * Which contract this skill was discovered over.
    *
@@ -24,9 +31,10 @@ export interface McpSkillMetadata {
   /**
    * Digest of the skill's declared resource set, when known.
    *
-   * SEP-2640 makes tool approval content-bound: if a later listing advertises a
-   * different resource set, prior approval is revoked. This value is what the
-   * policy hashes into the grant key to make that happen.
+   * SEP-2640 makes activation content-bound: if a later listing advertises a
+   * different resource set, the definitions that activate come from the new
+   * listing rather than the old one. This value is what the policy hashes into
+   * the activation key to make that happen.
    */
   contentFingerprint?: string;
 }
