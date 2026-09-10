@@ -10,7 +10,7 @@
     "v": 1,
     "id": "code_quality",
     "title": "Code quality",
-    "summary": "GitHub Code Quality related tools",
+    "summary": "Code quality findings raised against a repository",
     "effect": "read"
   },
   {
@@ -31,7 +31,7 @@
     "v": 1,
     "id": "copilot",
     "title": "Copilot",
-    "summary": "Copilot related tools",
+    "summary": "Delegating issues and pull request reviews to Copilot",
     "effect": "write"
   },
   {
@@ -46,21 +46,21 @@
     "v": 1,
     "id": "dependabot",
     "title": "Dependabot",
-    "summary": "Dependabot tools",
+    "summary": "Dependabot alerts for vulnerable dependencies",
     "effect": "read"
   },
   {
     "v": 1,
     "id": "discussions",
     "title": "Discussions",
-    "summary": "GitHub Discussions related tools",
+    "summary": "Repository discussions, their categories, comments and replies",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "gists",
     "title": "Gists",
-    "summary": "GitHub Gist related tools",
+    "summary": "Standalone code snippets published as gists",
     "effect": "mixed"
   },
   {
@@ -74,49 +74,49 @@
     "v": 1,
     "id": "issues",
     "title": "Issues",
-    "summary": "GitHub Issues related tools",
+    "summary": "Issue tracking: filing, updating, commenting, and linking issues to one another",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "labels",
     "title": "Labels",
-    "summary": "GitHub Labels related tools",
+    "summary": "Repository label definitions and the label scheme they form",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "notifications",
     "title": "Notifications",
-    "summary": "GitHub Notifications related tools",
+    "summary": "The authenticated user's notification inbox, its read state and subscriptions",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "orgs",
     "title": "Organizations",
-    "summary": "GitHub Organization related tools",
+    "summary": "Discovering GitHub organizations and their public metadata",
     "effect": "read"
   },
   {
     "v": 1,
     "id": "projects",
     "title": "Projects",
-    "summary": "GitHub Projects related tools",
+    "summary": "GitHub Projects boards, their items, fields and views",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "pull_requests",
     "title": "Pull requests",
-    "summary": "GitHub Pull Request related tools",
+    "summary": "Pull request lifecycle: review, comment, status and merge",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "repos",
     "title": "Repositories",
-    "summary": "GitHub Repository related tools",
+    "summary": "Repository contents, branches, commits, tags, releases and collaborators",
     "effect": "mixed"
   },
   {
@@ -130,21 +130,21 @@
     "v": 1,
     "id": "security_advisories",
     "title": "Security advisories",
-    "summary": "Security advisories related tools",
+    "summary": "Published security advisories, both global and repository-scoped",
     "effect": "read"
   },
   {
     "v": 1,
     "id": "stargazers",
     "title": "Stargazers",
-    "summary": "GitHub Stargazers related tools",
+    "summary": "Starring repositories on behalf of the authenticated user",
     "effect": "mixed"
   },
   {
     "v": 1,
     "id": "users",
     "title": "Users",
-    "summary": "GitHub User related tools",
+    "summary": "Discovering GitHub user accounts and their public profiles",
     "effect": "read"
   }
 ]
