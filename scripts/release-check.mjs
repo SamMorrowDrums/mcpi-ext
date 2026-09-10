@@ -39,6 +39,17 @@ function isTestFixturePath(path) {
     .some((segment) => segment === "fixtures" || segment.startsWith("fixtures."));
 }
 
+function isDevelopmentBuildPath(path) {
+  return (
+    /\.test\.(js|d\.ts)(\.map)?$/.test(path) ||
+    path.startsWith("test-servers/") ||
+    path.endsWith(".map")
+  );
+}
+
+const distRoot = join(root, "dist");
+const distFiles = existsSync(distRoot) ? listRelativeFiles(distRoot) : [];
+
 check("client identity", () => {
   const src = readFileSync(join(root, "src/mcp/client-factory.ts"), "utf8");
   const match = /version:\s*"([^"]+)"/.exec(src);
@@ -102,12 +113,24 @@ check("test fixture exclusions", () => {
   ok("test-only fixture surface excluded from the release build and tarball");
 });
 
+check("release build freshness", () => {
+  const developmentOnly = distFiles.filter(isDevelopmentBuildPath);
+  if (developmentOnly.length > 0) {
+    throw new Error(
+      `dist contains development-only output: ${developmentOnly.slice(0, 5).join(", ")}` +
+        `${developmentOnly.length > 5 ? `, and ${developmentOnly.length - 5} more` : ""}. ` +
+        "Run npm run build:release before npm run release:check.",
+    );
+  }
+  ok("dist contains no development-only output");
+});
+
 check("release build fixture surface", () => {
-  const leaked = listRelativeFiles(join(root, "dist")).filter(isTestFixturePath);
+  const leaked = distFiles.filter(isTestFixturePath);
   if (leaked.length > 0) {
     throw new Error(
-      `release build emitted test-only fixture paths: ${leaked.join(", ")}. ` +
-        "A production module may be importing a test fixture.",
+      `release-shaped dist contains test-only fixture paths: ${leaked.join(", ")}. ` +
+        "Remove any production import or release copy step that includes test fixtures.",
     );
   }
   ok("release build contains no test-only fixture surface");
