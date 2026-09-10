@@ -174,7 +174,7 @@ export default function (pi: ExtensionAPI) {
             // defensible if it is stated out loud and can be switched off, so
             // this line names the draft and the opt-out every time it is used.
             log(
-              `[skills] "${serverName}" declares the draft (unratified) SEP-2640 skills extension; negotiating it. Pass --no-mcp-skills-extension to use skill:// resources instead.`,
+              `[skills] "${serverName}" declares the draft (unratified) SEP-2640 skills extension; negotiating it instead of skill:// discovery.`,
             );
           }
           try {
