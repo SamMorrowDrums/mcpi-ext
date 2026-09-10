@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicy } from "../mcp/policy.js";
-import type { ExecuteResult } from "./executor.js";
+import { CodeModeDispatchError, type ExecuteResult, type SandboxRequest } from "./executor.js";
 import { CodeModeManager } from "./index.js";
 
 const structuredValues: CallToolResult["structuredContent"][] = [
@@ -537,6 +537,143 @@ describe("CodeModeManager reliability", () => {
     expect(result.result).toEqual([pinned, pinned]);
   });
 
+  it("refuses a target definition changed after the run snapshot was captured", async () => {
+    const original = makeTool("read_records", {
+      description: "Read the captured records.",
+      annotations: { readOnlyHint: true },
+    });
+    const unrelated = makeTool("list_projects", {
+      description: "List projects.",
+      annotations: { readOnlyHint: true },
+    });
+    let tools = [original, unrelated];
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn(async (request: SandboxRequest): Promise<ExecuteResult> => {
+      tools = [
+        makeTool("read_records", {
+          description: "Read a materially different set of records.",
+          annotations: { readOnlyHint: true },
+        }),
+        unrelated,
+      ];
+      return dispatchOnce(request, "read_records");
+    });
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+
+    expect(result.errorDetails).toMatchObject({
+      error: "stale_snapshot",
+      toolName: "read_records",
+    });
+    expect(callTool).not.toHaveBeenCalled();
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "read_records",
+      decision: "denied",
+      reason: "stale_snapshot",
+    });
+  });
+
+  it("revalidates a write definition after approval before dispatch", async () => {
+    const original = makeTool("write_records", {
+      description: "Write the captured records.",
+      annotations: { readOnlyHint: false },
+    });
+    let tools = [original];
+    let resolveApproval!: (approved: boolean | undefined) => void;
+    const confirm = vi.fn(
+      () =>
+        new Promise<boolean | undefined>((resolve) => {
+          resolveApproval = resolve;
+        }),
+    );
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn((request: SandboxRequest) =>
+      dispatchOnce(request, "write_records"),
+    );
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager, approvals: { confirm } });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const execution = codeMode.executeCode("return 1;", undefined, snapshotId);
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    tools = [
+      makeTool("write_records", {
+        description: "Write a materially different set of records.",
+        annotations: { readOnlyHint: false },
+      }),
+    ];
+    resolveApproval(true);
+    const result = await execution;
+
+    expect(result.errorDetails).toMatchObject({
+      error: "stale_snapshot",
+      toolName: "write_records",
+    });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(callTool).not.toHaveBeenCalled();
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "write_records",
+      decision: "denied",
+      reason: "stale_snapshot",
+      approval: "granted",
+    });
+  });
+
+  it("continues when only an unrelated live definition changes", async () => {
+    const target = makeTool("read_records", {
+      description: "Read records.",
+      annotations: { readOnlyHint: true },
+    });
+    let tools = [
+      target,
+      makeTool("list_projects", {
+        description: "List the captured projects.",
+        annotations: { readOnlyHint: true },
+      }),
+    ];
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn(async (request: SandboxRequest): Promise<ExecuteResult> => {
+      tools = [
+        target,
+        makeTool("list_projects", {
+          description: "List a different set of projects.",
+          annotations: { readOnlyHint: true },
+        }),
+      ];
+      return dispatchOnce(request, "read_records");
+    });
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+
+    expect(result.error).toBeUndefined();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "read_records",
+      decision: "allowed",
+    });
+  });
+
   it("moves the snapshot id when an effect class changes but schemas do not", () => {
     const outputSchema = { type: "object", properties: { ok: { type: "boolean" } } } as const;
     const read = new CodeModeManager();
@@ -561,7 +698,7 @@ describe("CodeModeManager reliability", () => {
     expect(read.getSnapshot().snapshotId).not.toBe(write.getSnapshot().snapshotId);
   });
 
-  it("refuses a stale snapshot pin before starting the isolate", async () => {
+  it("refuses every supplied nonmatching snapshot id before starting the isolate", async () => {
     const sandboxExecutor = vi.fn(async (): Promise<ExecuteResult> => ({
       result: "ran anyway",
       logs: [],
@@ -573,17 +710,23 @@ describe("CodeModeManager reliability", () => {
       vi.fn(),
     );
 
-    const result = await codeMode.executeCode("return 1;", undefined, "sha256-of-an-older-catalog");
-
-    expect(result.errorDetails?.error).toBe("stale_snapshot");
+    const current = codeMode.getSnapshot();
+    const wrongFullHash = `${current.snapshotId[0] === "0" ? "1" : "0"}${current.snapshotId.slice(1)}`;
+    const invalidSnapshotIds = [
+      "",
+      current.snapshotId.slice(0, 12),
+      current.entries[0].schemaHash,
+      "g".repeat(64),
+      wrongFullHash,
+    ];
+    for (const snapshotId of invalidSnapshotIds) {
+      const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+      expect(result.errorDetails?.error).toBe("stale_snapshot");
+    }
     expect(sandboxExecutor).not.toHaveBeenCalled();
 
     // The current id is accepted, so pinning is not a one-way trap.
-    const fresh = await codeMode.executeCode(
-      "return 1;",
-      undefined,
-      codeMode.getSnapshot().snapshotId,
-    );
+    const fresh = await codeMode.executeCode("return 1;", undefined, current.snapshotId);
     expect(fresh.errorDetails).toBeUndefined();
     expect(sandboxExecutor).toHaveBeenCalledTimes(1);
   });
@@ -774,6 +917,24 @@ function mutableFakeManager(
     listResources: async () => [],
     readResource: async () => ({ contents: [] }),
   } as unknown as McpClientManager;
+}
+
+async function dispatchOnce(request: SandboxRequest, toolName: string): Promise<ExecuteResult> {
+  try {
+    const result = await request.dispatch(
+      { kind: "identity", serverName: "fixture", toolName },
+      {},
+    );
+    return { result, logs: [] };
+  } catch (error) {
+    if (!(error instanceof CodeModeDispatchError)) throw error;
+    return {
+      result: undefined,
+      error: error.message,
+      errorDetails: error.details,
+      logs: [],
+    };
+  }
 }
 
 /** Wire a fake manager through the real policy, mirroring production wiring. */

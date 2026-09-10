@@ -14,7 +14,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `isError`, text-only results, and falsey structured values without inventing a top-level result
   shape.
 - Every successful `code_search` rendering now exposes the full executable `snapshotId`, clearly
-  separates it from a tool's `schemaHash`, and gives bounded stale-snapshot recovery guidance.
+  separates it from a tool's `schemaHash`, gives bounded stale-snapshot recovery guidance, and
+  revalidates the captured target's full definition immediately before dispatch, including after
+  write approval.
 - Execution routing now distinguishes direct one-call proxies, Code Mode calculations, tool-cli
   shell composition, and bash/external artifact pipelines without imposing a global precedence.
 - Code Mode guidance now favors discovery followed by one execution, with at most a bounded

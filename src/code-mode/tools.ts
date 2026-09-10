@@ -68,6 +68,9 @@ const CodeInput = Type.Object({
     Type.String({
       description:
         "The full snapshotId printed by the code_search response you based this code on. Do not use schemaHash or a truncated ID. Supply it for stale-catalog protection. Omit it only for an intentional unpinned execution against the current catalog.",
+      minLength: 64,
+      maxLength: 64,
+      pattern: "^[a-f0-9]{64}$",
     }),
   ),
 });

@@ -381,7 +381,7 @@ export class CodeModeManager {
   ): Promise<ExecuteResult> {
     this.refresh();
 
-    if (expectedSnapshotId && expectedSnapshotId !== this.snapshot.snapshotId) {
+    if (expectedSnapshotId !== undefined && expectedSnapshotId !== this.snapshot.snapshotId) {
       const message =
         `The catalog changed since snapshotId ${expectedSnapshotId} ` +
         `(current snapshotId ${this.snapshot.snapshotId}). Re-run the relevant code_search ` +
@@ -473,6 +473,10 @@ export class CodeModeManager {
             serverName: entry.serverName,
             toolName: entry.toolName,
             args,
+            expectedDefinition: {
+              definitionDigest: entry.definitionDigest,
+              namespace: entry.namespace,
+            },
             ...(signal !== undefined ? { signal } : {}),
           });
           return terminal.result;

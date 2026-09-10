@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { McpTool } from "../mcp/index.js";
-import { approvalPosture, serializeApprovalPosture, type CodeModeTool } from "./eligibility.js";
+import {
+  approvalPosture,
+  serializeApprovalPosture,
+  toCodeModeTool,
+  type CodeModeTool,
+} from "./eligibility.js";
 import {
   deriveNamespaces,
   namespaceForTool,
@@ -143,7 +148,7 @@ export function buildCatalogSnapshot(
         ref: canonicalRef(tool.serverName, tool.name),
         ...(unique ? { alias: sanitizeIdentifier(tool.name) } : {}),
         schemaHash: hashSchemas(entry),
-        definitionDigest: hashDefinition(entry, namespace),
+        definitionDigest: computeDefinitionDigest(tool, namespace),
         approval: serializeApprovalPosture(approvalPosture(entry)),
         effect: toolEffect(tool),
         trust: options.trust?.[tool.serverName] ?? DEFAULT_SERVER_TRUST,
@@ -366,6 +371,11 @@ function hashDefinition(entry: CodeModeTool, namespace: string): string {
       approval: serializeApprovalPosture(approvalPosture(entry)),
     }),
   );
+}
+
+/** Compute the full model-visible identity of one live tool definition. */
+export function computeDefinitionDigest(tool: McpTool, namespace: string): string {
+  return hashDefinition(toCodeModeTool(tool), namespace);
 }
 
 function hashSchemas(entry: CodeModeTool): string {

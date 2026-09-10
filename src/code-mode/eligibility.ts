@@ -1,5 +1,5 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
-import { isReadOnlyToolCall } from "../mcp/policy.js";
+import { isReadOnlyToolCall } from "../mcp/tool-call-classification.js";
 
 export const SYNTHESIZED_OUTPUT_SCHEMA = Object.freeze({}) as NonNullable<McpTool["outputSchema"]>;
 
