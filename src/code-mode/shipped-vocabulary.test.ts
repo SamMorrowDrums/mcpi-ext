@@ -146,13 +146,52 @@ describe("shipped github toolset vocabulary", () => {
       _meta: { [GITHUB_TOOLSET_KEY]: intents },
     } as unknown as McpTool);
 
+    // Asserted against the fixture rather than against transcribed prose. This
+    // test is about the field mapping — note `effect` on the wire becomes
+    // `effects` internally — and the server is actively rewriting its summaries.
+    // Pinning the current wording here would make an expected editorial change
+    // look like a parser regression.
     expect(declared).toEqual({
-      id: "copilot_issue_intents",
-      title: "Copilot issue intents",
-      summary:
-        "Opt-in Copilot issue assignment tools that carry intent metadata (rationale, confidence, suggestion)",
-      effects: "write",
-      parent: "copilot",
+      id: intents?.id,
+      title: intents?.title,
+      summary: intents?.summary,
+      effects: intents?.effect,
+      parent: intents?.parent,
     });
+  });
+
+  it("holds the budget even if every summary is rewritten to the cap", () => {
+    // Fourteen summaries are currently near-contentless ("GitHub X related
+    // tools") and are being rewritten to be useful, which means longer. Rather
+    // than re-measure after they land, gate the worst case now: every namespace
+    // carrying a summary and title at the maximum length the parser accepts.
+    const worstCase = tools.map((tool, index) => {
+      const declared = readToolsetDeclaration(tool);
+      return {
+        ...tool,
+        _meta: {
+          [GITHUB_TOOLSET_KEY]: {
+            v: 1,
+            id: declared?.id ?? `ns_${String(index)}`,
+            title: "T".repeat(80),
+            summary: "S".repeat(240),
+            effect: "mixed",
+          },
+        },
+      } as McpTool;
+    });
+
+    const saturated = deriveNamespaces(worstCase);
+    expect(saturated).toHaveLength(21);
+
+    const block = renderNamespaceBlock(saturated);
+    const section = renderPromptSection({ namespaces: saturated, sandboxAvailable: true });
+
+    // Over-long values are clamped rather than rejected, so a verbose server
+    // cannot spend the prompt budget on this client's behalf.
+    expect(saturated.every((entry) => entry.title.length <= 60)).toBe(true);
+    expect(saturated.every((entry) => (entry.summary ?? "").length <= 160)).toBe(true);
+    expect(estimateTokens(block)).toBeLessThanOrEqual(1500);
+    expect(estimateTokens(section)).toBeLessThanOrEqual(6000);
   });
 });
