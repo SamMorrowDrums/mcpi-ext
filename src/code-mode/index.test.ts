@@ -154,7 +154,7 @@ describe("CodeModeManager reliability", () => {
     );
     expect(executed.errorDetails).toBeUndefined();
     expect(callTool).toHaveBeenCalledTimes(1);
-    expect(callTool.mock.calls[0]?.[1]).toBe("write_records");
+    expect(callTool).toHaveBeenCalledWith("fixture", "write_records", { value: "go" }, undefined);
   });
 
   it("surfaces a declined approval as a decision rather than a failure", async () => {

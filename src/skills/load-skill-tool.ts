@@ -34,6 +34,13 @@ export interface LoadSkillDetails {
    * `tool_reference` blocks a provider expands schemas from.
    */
   referencedTools?: string[];
+  /**
+   * Names the skill declared that no connected server serves.
+   *
+   * Reported so a server's catalogue defect is visible rather than silently
+   * swallowed. These are never sent to the host as activated names.
+   */
+  unresolvedTools?: string[];
   error?: string;
   /** True when the content was verified against SEP-2640 digests. */
   verified?: boolean;
@@ -204,6 +211,9 @@ export function createLoadSkillTool(deps: LoadSkillDeps) {
           skillName: params.name,
           serverName: skill.serverName,
           referencedTools: revealed,
+          ...(activation.unresolvedTools.length > 0
+            ? { unresolvedTools: [...activation.unresolvedTools] }
+            : {}),
           verified: verifiable,
           resourceSetRotated: rotated,
         },

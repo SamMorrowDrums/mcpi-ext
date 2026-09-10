@@ -231,9 +231,20 @@ export interface McpPolicySkill {
  * one. `reactivated` means this exact origin + content set had already been
  * activated this session, so the model has seen these definitions before.
  */
-export type SkillReferenceOutcome =
-  | { readonly status: "activated"; readonly referencedTools: readonly string[] }
-  | { readonly status: "reactivated"; readonly referencedTools: readonly string[] };
+export interface SkillReferenceOutcome {
+  readonly status: "activated" | "reactivated";
+  /** Definitions actually revealed: names that resolve to a discovered tool. */
+  readonly referencedTools: readonly string[];
+  /**
+   * Names the skill declared that no connected server serves.
+   *
+   * A catalogue defect on the server's side, reported so it is visible rather
+   * than silently dropped. It is never passed to the host as an activated
+   * name: there is no definition behind it to reveal, and the host expects
+   * names it has already registered.
+   */
+  readonly unresolvedTools: readonly string[];
+}
 
 export interface McpPolicyOptions {
   gateway: McpPolicyGateway;
@@ -439,15 +450,17 @@ export class McpPolicy {
     // describing the same thing.
     const known = this.discoveredToolNames();
     const referenced: string[] = [];
+    const unresolved: string[] = [];
     const seen = new Set<string>();
     for (const tool of skill.referencedTools) {
-      if (seen.has(tool) || !known.has(tool)) continue;
+      if (seen.has(tool)) continue;
       seen.add(tool);
-      referenced.push(tool);
+      if (known.has(tool)) referenced.push(tool);
+      else unresolved.push(tool);
     }
 
     if (referenced.length === 0) {
-      return { status: "activated", referencedTools: [] };
+      return { status: "activated", referencedTools: [], unresolvedTools: unresolved };
     }
 
     const key = skillReferenceKey(skill);
@@ -468,6 +481,7 @@ export class McpPolicy {
     return {
       status: alreadyActivated ? "reactivated" : "activated",
       referencedTools: referenced,
+      unresolvedTools: unresolved,
     };
   }
 
