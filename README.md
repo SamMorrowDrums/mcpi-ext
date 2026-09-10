@@ -69,7 +69,7 @@ That takes the newest `1.x`, which is what most people want. To pin an exact ver
 reproducible setup, name it — this page documents `1.0.2`:
 
 ```sh
-mcpi install npm:@sammorrowdrums/mcpi-ext@1.0.2
+mcpi install npm:@sammorrowdrums/mcpi-ext@1.1.0
 ```
 
 Confirm it registered:
@@ -80,7 +80,7 @@ mcpi list
 
 ```
 User packages:
-  npm:@sammorrowdrums/mcpi-ext@1.0.2
+  npm:@sammorrowdrums/mcpi-ext@1.1.0
     ~/.cache/mcpi/npm/node_modules/@sammorrowdrums/mcpi-ext
 ```
 
