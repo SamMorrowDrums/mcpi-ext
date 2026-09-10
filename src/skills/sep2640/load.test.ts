@@ -91,7 +91,7 @@ describe("discoverSkillsViaExtension", () => {
       uri: "skill://weather/SKILL.md",
       serverName: "srv",
       origin: "sep2640",
-      allowedTools: ["check_weather"],
+      referencedTools: ["check_weather"],
     });
     expect(result.skills[0]?.contentFingerprint).toBeTruthy();
   });
@@ -139,7 +139,7 @@ describe("discoverSkillsViaExtension", () => {
     const { client } = fakeClient({ skills: [entry] });
 
     const result = await discoverSkillsViaExtension(policy, client, "srv", () => undefined);
-    expect(result.skills[0]?.allowedTools).toEqual([]);
+    expect(result.skills[0]?.referencedTools).toEqual([]);
   });
 
   it("accepts a whitespace-separated allowed-tools string", async () => {
@@ -150,7 +150,7 @@ describe("discoverSkillsViaExtension", () => {
     const { client } = fakeClient({ skills: [entry] });
 
     const result = await discoverSkillsViaExtension(policy, client, "srv", () => undefined);
-    expect(result.skills[0]?.allowedTools).toEqual(["a", "b", "c"]);
+    expect(result.skills[0]?.referencedTools).toEqual(["a", "b", "c"]);
   });
 
   it("logs and carries forward rejections from the listing", async () => {

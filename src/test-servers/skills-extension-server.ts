@@ -59,6 +59,16 @@ export interface SkillsFixtureOptions {
   skills: SkillsFixtureSkill[];
   /** Declare the extension capability at all. Default true. */
   declareExtension?: boolean;
+  /**
+   * Tool names the fixture server exposes.
+   *
+   * A real server that publishes a skill referencing a tool also serves that
+   * tool, and activation only reveals definitions that actually exist, so the
+   * fixture has to serve them for the skill to reveal anything.
+   *
+   * Defaults to `["check_weather"]`, the tool the shared weather skill names.
+   */
+  tools?: string[];
   /** Declare `directoryRead` support. Default false. */
   directoryRead?: boolean;
   /** Page size for `skills/list`. Default: all entries in one page. */
@@ -99,8 +109,20 @@ export function createSkillsExtensionServer(options: SkillsFixtureOptions): Skil
 
   const server = new McpServer(
     { name: options.name ?? "test-skills-extension-server", version: "0.1.0" },
-    { capabilities: { resources: {} } },
+    { capabilities: { resources: {}, tools: {} } },
   );
+
+  for (const toolName of options.tools ?? ["check_weather"]) {
+    server.registerTool(
+      toolName,
+      {
+        description: `Fixture tool ${toolName}`,
+        inputSchema: { city: z.string().describe("City name") },
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
+      async ({ city }) => ({ content: [{ type: "text" as const, text: `${toolName}:${city}` }] }),
+    );
+  }
 
   if (options.declareExtension !== false) {
     server.server.registerCapabilities({

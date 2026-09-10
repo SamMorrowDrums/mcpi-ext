@@ -218,11 +218,11 @@ describe("discovery and load", () => {
     expect(result.skills[0]).toMatchObject({
       name: "weather",
       origin: "sep2640",
-      allowedTools: ["check_weather"],
+      referencedTools: ["check_weather"],
     });
   });
 
-  it("loads a verified skill and activates its tools after one approval", async () => {
+  it("loads a verified skill and reveals its tools without asking", async () => {
     const h = await harness({ skills: [weatherSkill()] });
     const { skills } = await discoverSkillsViaExtension(
       h.policy,
@@ -238,7 +238,7 @@ describe("discovery and load", () => {
       policy: h.policy,
       skillsClient: h.skillsClient,
     });
-    expect(h.policy.isGated("check_weather")).toBe(true);
+    expect(h.policy.isDeferred("check_weather")).toBe(true);
 
     const result = await tool.execute(
       "call-1",
@@ -251,16 +251,17 @@ describe("discovery and load", () => {
 
     expect(result.details.error).toBeUndefined();
     expect(result.details.verified).toBe(true);
-    expect(result.details.activatedTools).toEqual(["check_weather"]);
+    expect(result.details.referencedTools).toEqual(["check_weather"]);
     const first = result.content[0];
     expect("text" in first && first.text).toContain("Call check_weather");
     // Frontmatter is stripped from what the model sees.
     expect("text" in first && first.text.startsWith("---")).toBe(false);
-    expect(h.confirm).toHaveBeenCalledTimes(1);
-    expect(h.policy.isGated("check_weather")).toBe(false);
+    expect(h.confirm).not.toHaveBeenCalled();
+    expect(h.policy.isDeferred("check_weather")).toBe(false);
+    expect(result.addedToolNames).toEqual(["check_weather"]);
   });
 
-  it("reuses an approved grant rather than re-prompting", async () => {
+  it("re-reveals on a repeat load without prompting", async () => {
     const h = await harness({ skills: [weatherSkill()] });
     const { skills } = await discoverSkillsViaExtension(
       h.policy,
@@ -279,11 +280,21 @@ describe("discovery and load", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await tool.execute("c1", { name: "weather" }, undefined, undefined, {} as any);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await tool.execute("c2", { name: "weather" }, undefined, undefined, {} as any);
-    expect(h.confirm).toHaveBeenCalledTimes(1);
+    const second = await tool.execute(
+      "c2",
+      { name: "weather" },
+      undefined,
+      undefined,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      {} as any,
+    );
+    expect(h.confirm).not.toHaveBeenCalled();
+    // The marker rides out on every load, because a provider that missed the
+    // first result must still be able to resolve the reference from the tail.
+    expect(second.addedToolNames).toEqual(["check_weather"]);
   });
 
-  it("keeps mcp-origin allowed-tools inert when approval is declined", async () => {
+  it("reveals mcp-origin referenced tools even when the approval surface would decline", async () => {
     const h = await harness({ skills: [weatherSkill()] });
     h.confirm.mockResolvedValue(false);
     const { skills } = await discoverSkillsViaExtension(
@@ -309,9 +320,12 @@ describe("discovery and load", () => {
       {} as any,
     );
 
-    expect(result.details.error).toBe("approval_declined");
-    expect(result.details.activatedTools).toEqual([]);
-    expect(h.policy.isGated("check_weather")).toBe(true);
+    // A declining UI is irrelevant here: nothing asks it, because loading a
+    // skill executes nothing. Approval belongs to whichever tool runs later.
+    expect(result.details.error).toBeUndefined();
+    expect(result.details.referencedTools).toEqual(["check_weather"]);
+    expect(h.confirm).not.toHaveBeenCalled();
+    expect(h.policy.isDeferred("check_weather")).toBe(false);
   });
 
   it("refuses to load a sep2640 skill with no client to verify it", async () => {
@@ -438,8 +452,8 @@ describe("integrity failures over the wire", () => {
   });
 });
 
-describe("rotation revokes approval", () => {
-  it("re-prompts when the resource set changes after an approval", async () => {
+describe("rotation re-activates from the served content", () => {
+  it("reports a rotated resource set and re-reveals from the fresh entry", async () => {
     const h = await harness({ skills: [weatherSkill()] });
     const { skills } = await discoverSkillsViaExtension(
       h.policy,
@@ -457,8 +471,8 @@ describe("rotation revokes approval", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const first = await tool.execute("c1", { name: "weather" }, undefined, undefined, {} as any);
-    expect(first.details.activatedTools).toEqual(["check_weather"]);
-    expect(h.confirm).toHaveBeenCalledTimes(1);
+    expect(first.details.referencedTools).toEqual(["check_weather"]);
+    expect(h.confirm).not.toHaveBeenCalled();
 
     // The server now publishes different content under the same skill name.
     const rotatedDoc = WEATHER_DOC.replace("Call check_weather", "Call check_weather now");
@@ -466,8 +480,13 @@ describe("rotation revokes approval", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const second = await tool.execute("c2", { name: "weather" }, undefined, undefined, {} as any);
+    // Rotation still matters: what the model is shown comes from the entry the
+    // server is publishing now, not the discovery-time copy. It is a question
+    // about content integrity, which is why it never becomes a prompt.
     expect(second.details.resourceSetRotated).toBe(true);
-    expect(h.confirm).toHaveBeenCalledTimes(2);
+    expect(second.details.verified).toBe(true);
+    expect(second.addedToolNames).toEqual(["check_weather"]);
+    expect(h.confirm).not.toHaveBeenCalled();
   });
 });
 

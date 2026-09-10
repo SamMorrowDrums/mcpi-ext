@@ -58,7 +58,7 @@ describe("skill integration (weather server)", () => {
     expect(skills).toHaveLength(1);
     expect(skills[0].name).toBe("weather");
     expect(skills[0].description).toBe("Check current weather and weekly forecasts for any city");
-    expect(skills[0].allowedTools).toEqual([
+    expect(skills[0].referencedTools).toEqual([
       "check_weather_for_city",
       "check_weekly_forecast_for_city",
     ]);
@@ -76,10 +76,10 @@ describe("skill integration (weather server)", () => {
     expect(prompt).toContain("load_skill");
   });
 
-  it("load_skill returns skill body and reports activated tools after approval", async () => {
+  it("load_skill returns the body and reveals its referenced tools without asking", async () => {
     const tool = createLoadSkillTool({ registry, policy });
 
-    expect(policy.isGated("check_weather_for_city")).toBe(true);
+    expect(policy.isDeferred("check_weather_for_city")).toBe(true);
 
     const result = await tool.execute(
       "call-1",
@@ -91,7 +91,7 @@ describe("skill integration (weather server)", () => {
     );
 
     expect(result.details.error).toBeUndefined();
-    expect(result.details.activatedTools).toEqual([
+    expect(result.details.referencedTools).toEqual([
       "check_weather_for_city",
       "check_weekly_forecast_for_city",
     ]);
@@ -99,13 +99,20 @@ describe("skill integration (weather server)", () => {
     expect(text.type).toBe("text");
     // Skill body should mention the tools
     expect("text" in text && text.text).toContain("check_weather_for_city");
-    // Activation required exactly one explicit approval.
-    expect(confirm).toHaveBeenCalledTimes(1);
-    expect(policy.isGated("check_weather_for_city")).toBe(false);
-    expect(policy.isGated("check_weekly_forecast_for_city")).toBe(false);
+    // Revealing a schema is a context-engineering act, so nothing is asked.
+    expect(confirm).not.toHaveBeenCalled();
+    expect(policy.isDeferred("check_weather_for_city")).toBe(false);
+    expect(policy.isDeferred("check_weekly_forecast_for_city")).toBe(false);
+
+    // The host's activation channel carries the same names, in order, so the
+    // provider can emit tool_reference blocks on the conversation tail.
+    expect(result.addedToolNames).toEqual([
+      "check_weather_for_city",
+      "check_weekly_forecast_for_city",
+    ]);
   });
 
-  it("reuses the approved grant instead of prompting again", async () => {
+  it("re-reveals on a repeat load without prompting", async () => {
     const tool = createLoadSkillTool({ registry, policy });
 
     const result = await tool.execute(
@@ -118,10 +125,14 @@ describe("skill integration (weather server)", () => {
     );
 
     expect(result.details.error).toBeUndefined();
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(result.addedToolNames).toEqual([
+      "check_weather_for_city",
+      "check_weekly_forecast_for_city",
+    ]);
   });
 
-  it("calls gated tools via MCP client", async () => {
+  it("calls skill-referenced tools via MCP client", async () => {
     const weather = await client.callTool({
       name: "check_weather_for_city",
       arguments: { city: "Tokyo" },

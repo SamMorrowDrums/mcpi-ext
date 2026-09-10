@@ -101,7 +101,7 @@ describe("mcpi-ext", () => {
       {},
     );
     expect(search?.details).toMatchObject({
-      error: "no_eligible_tools",
+      error: "no_tools",
       alternatives: ["code_execute", "tool-cli"],
     });
   });

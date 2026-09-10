@@ -101,10 +101,18 @@ describe("execution routing section", () => {
       expect(result).toContain("load_skill");
     });
 
-    it("states skills enable declared tools only after approval", () => {
+    it("states that loading a skill reveals schemas and authorizes nothing", () => {
       const result = formatExecutionRouting(fullState());
-      expect(result).toContain("enabled only after you approve the grant");
-      expect(result).toContain("leaves every gated tool locked");
+      expect(result).toContain("revealed in the transcript when it loads");
+      expect(result).toContain("reveals schemas; it grants nothing");
+      expect(result).not.toContain("approve the grant");
+      expect(result).not.toContain("locked");
+    });
+
+    it("states that code mode pauses for approval rather than refusing writes", () => {
+      const result = formatExecutionRouting(fullState());
+      expect(result).toContain("pauses mid-script for your approval");
+      expect(result).not.toContain("refused inside the sandbox");
     });
 
     it("describes code mode as sandboxed exact computation with no fs/net/process", () => {

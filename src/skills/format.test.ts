@@ -14,7 +14,7 @@ describe("formatMcpSkillsForPrompt", () => {
         description: "Check weather forecasts",
         uri: "skill://weather/SKILL.md",
         serverName: "weather-srv",
-        allowedTools: ["check_weather"],
+        referencedTools: ["check_weather"],
       },
     ];
 
@@ -25,7 +25,9 @@ describe("formatMcpSkillsForPrompt", () => {
     expect(result).toContain("<description>Check weather forecasts</description>");
     expect(result).toContain("<server>weather-srv</server>");
     expect(result).toContain("load_skill");
-    expect(result).toContain("deferred");
+    expect(result).toContain("reveals the full schemas");
+    expect(result).toContain("asks you nothing and authorizes nothing");
+    expect(result).not.toContain("approve");
   });
 
   it("formats multiple skills", () => {
@@ -35,14 +37,14 @@ describe("formatMcpSkillsForPrompt", () => {
         description: "Skill A",
         uri: "skill://a/SKILL.md",
         serverName: "srv",
-        allowedTools: [],
+        referencedTools: [],
       },
       {
         name: "b",
         description: "Skill B",
         uri: "skill://b/SKILL.md",
         serverName: "srv",
-        allowedTools: ["tool_b"],
+        referencedTools: ["tool_b"],
       },
     ];
 
@@ -58,7 +60,7 @@ describe("formatMcpSkillsForPrompt", () => {
         description: 'Uses <tags> & "quotes"',
         uri: "skill://test/SKILL.md",
         serverName: "srv",
-        allowedTools: [],
+        referencedTools: [],
       },
     ];
 
