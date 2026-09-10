@@ -1,6 +1,6 @@
 import type { AgentToolResult, ExtensionContext } from "@sammorrowdrums/mcpi";
-import { stripFrontmatter } from "@sammorrowdrums/mcpi";
 import { Type, type Static } from "typebox";
+import { stripFrontmatter } from "../frontmatter.js";
 import type { McpPolicy } from "../mcp/policy.js";
 import type { SkillsExtensionClient } from "./sep2640/client.js";
 import { loadSkillDocument, SkillFetchBudget } from "./sep2640/load.js";

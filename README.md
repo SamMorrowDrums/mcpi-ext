@@ -23,10 +23,10 @@ tool selection. These three mechanisms let the agent discover and call tools pro
 
 ## Quick start
 
-Verified against **mcpi 0.85.0** and **tool-cli 1.0.2** — the current releases, and also the
-minimum supported versions: mcpi-ext declares a peer floor of `@sammorrowdrums/mcpi >=0.85.0
-<1.0.0`, and requires `@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext `1.x`
-works; the commands below pin the current one.
+Verified against **mcpi 0.85.1** and **tool-cli 1.0.2**. The minimum supported host remains
+`@sammorrowdrums/mcpi@0.85.0`: mcpi-ext declares a peer range of `>=0.85.0 <1.0.0`, and requires
+`@sammorrowdrums/tool-cli` v1 for the bridge contract. Any mcpi-ext `1.x` works; the commands below
+pin the current one.
 
 ### 1. Check Node
 
@@ -41,7 +41,7 @@ node --version
 `mcpi` and `tool-cli` are commands you run, so they belong on your `PATH`:
 
 ```sh
-npm install -g @sammorrowdrums/mcpi@0.85.0 @sammorrowdrums/tool-cli@1.0.2
+npm install -g @sammorrowdrums/mcpi@0.85.1 @sammorrowdrums/tool-cli@1.0.2
 ```
 
 To track the newest releases instead of the pinned pair, use `@latest`:
@@ -60,10 +60,10 @@ mcpi install npm:@sammorrowdrums/mcpi-ext
 ```
 
 That takes the newest `1.x`, which is what most people want. To pin an exact version for a
-reproducible setup, name it — this page documents `1.0.1`:
+reproducible setup, name it — this page documents `1.0.2`:
 
 ```sh
-mcpi install npm:@sammorrowdrums/mcpi-ext@1.0.1
+mcpi install npm:@sammorrowdrums/mcpi-ext@1.0.2
 ```
 
 Confirm it registered:
@@ -74,13 +74,15 @@ mcpi list
 
 ```
 User packages:
-  npm:@sammorrowdrums/mcpi-ext@1.0.1
+  npm:@sammorrowdrums/mcpi-ext@1.0.2
     ~/.cache/mcpi/npm/node_modules/@sammorrowdrums/mcpi-ext
 ```
 
 `mcpi install` writes to `~/.config/mcpi/settings.json`. Add `-l` to install into the current
 project's `.mcpi/settings.json` instead. Once a package is listed there, mcpi loads it on every
-run — you never pass `--extension` for it again.
+run — you never pass `--extension` for it again. The managed npm root intentionally does not
+install another copy of mcpi; the host supplies its extension contract, while mcpi-ext carries its
+own runtime dependencies.
 
 ### 4. Configure MCP servers
 

@@ -16,8 +16,8 @@
  *
  * A failure in any of them means the content MUST NOT be used.
  */
-import { parseFrontmatter } from "@sammorrowdrums/mcpi";
 import { createHash } from "node:crypto";
+import { parseFrontmatter } from "../../frontmatter.js";
 import {
   findResourceRef,
   frontmatterName,

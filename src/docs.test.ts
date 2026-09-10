@@ -25,6 +25,7 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
   peerDependencies: Record<string, string>;
   dependencies: Record<string, string>;
   engines: { node: string };
+  pi: { extensions: string[] };
 };
 
 const docsDir = join(root, "docs");
@@ -81,7 +82,7 @@ describe("stale strings never return", () => {
 
 describe("quick start install flow", () => {
   it("pins the audited versions of every package a user installs", () => {
-    expect(readme).toContain("@sammorrowdrums/mcpi@0.85.0");
+    expect(readme).toContain("@sammorrowdrums/mcpi@0.85.1");
     expect(readme).toContain("@sammorrowdrums/tool-cli@1.0.2");
     expect(readme).toContain(`npm:@sammorrowdrums/mcpi-ext@${pkg.version}`);
   });
@@ -106,6 +107,10 @@ describe("quick start install flow", () => {
 
   it("tells the user to verify the install with mcpi list", () => {
     expect(readme).toContain("mcpi list");
+  });
+
+  it("declares the compiled entry point for managed package discovery", () => {
+    expect(pkg.pi.extensions).toEqual(["./dist/index.js"]);
   });
 
   it("keeps the #quick-start anchor other repositories link to", () => {

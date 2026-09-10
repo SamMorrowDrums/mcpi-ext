@@ -1,4 +1,4 @@
-import { parseFrontmatter } from "@sammorrowdrums/mcpi";
+import { parseFrontmatter } from "../frontmatter.js";
 import type { McpPolicy } from "../mcp/policy.js";
 import type { McpSkillMetadata } from "./skill-registry.js";
 

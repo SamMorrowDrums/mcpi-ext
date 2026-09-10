@@ -5,6 +5,34 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-09-08
+
+### Fixed
+
+#### `mcpi install` now discovers the published extension
+
+The npm package did not declare a `pi.extensions` resource. `mcpi install
+npm:@sammorrowdrums/mcpi-ext` therefore installed and recorded the package successfully, but
+managed resource discovery found no entry point and the extension flags never appeared. The
+package now declares `./dist/index.js` explicitly.
+
+#### The installed package no longer imports its peer host at runtime
+
+mcpi intentionally installs managed packages with peer resolution disabled so it does not create
+a second host copy with a different module identity. Three skill modules still imported
+`parseFrontmatter` and `stripFrontmatter` as runtime values from `@sammorrowdrums/mcpi`, so a
+native import of the managed entry failed with `ERR_MODULE_NOT_FOUND`. The compatible helpers now
+live inside mcpi-ext, backed by a direct, pinned `yaml` dependency; every remaining mcpi import is
+type-only.
+
+### Added
+
+The package verifier now installs the tarball without its peer and proves it imports independently.
+It also installs public mcpi 0.85.1 into an isolated user prefix, runs the real managed
+`mcpi install` flow, checks `mcpi list`, imports the exact managed entry, rejects a duplicate host
+copy, verifies both extension flags in `mcpi --help`, and starts a zero-server RPC session through
+those flags. CI runs the flow on Node 22 and Node 24.
+
 ## [1.0.1] — 2026-09-07
 
 Documentation only. No runtime behaviour changes.
