@@ -13,14 +13,20 @@ import { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
 import { generateTypeHints } from "./type-hints.js";
 
 export {
+  APPROVAL_POSTURE_SCHEMA_VERSION,
+  APPROVAL_REASON_ORDER,
   SYNTHESIZED_OUTPUT_SCHEMA,
+  approvalPosture,
   getCodeModeDiagnostics,
   getCodeModeTools,
+  serializeApprovalPosture,
   toCodeModeTool,
 } from "./eligibility.js";
 export type {
+  CodeModeApprovalPosture,
   CodeModeApprovalReason,
   CodeModeDiagnostics,
+  CodeModeEffectClass,
   CodeModeTool,
   OutputSchemaProvenance,
 } from "./eligibility.js";
