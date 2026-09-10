@@ -7,8 +7,16 @@ import type { McpTool } from "../mcp/index.js";
  * `GITHUB_TOOLSETS=all`, captured over stdio.
  *
  * Budget gates run against this rather than a hand-written sample: 85 tools,
- * 510 input properties, and zero declared output schemas is the shape that
- * actually broke, and a synthetic fixture would quietly make the numbers nicer.
+ * 466 input properties, 31 declared output schemas and 54 synthesized is the
+ * shape that actually broke, and a synthetic fixture would quietly make the
+ * numbers nicer.
+ *
+ * This pins one configuration, not "the server". The surface is
+ * capability-dependent: a host advertising form elicitation is additionally
+ * served the gated `delete_repository`, which is where the earlier count of 86
+ * came from. This capture is the no-form-elicitation configuration, so
+ * regenerating it against an elicitation-capable host will not reproduce these
+ * counts.
  */
 export function loadGithubFixture(serverName = "github"): McpTool[] {
   const path = fileURLToPath(new URL("./fixtures/github-85.json", import.meta.url));
