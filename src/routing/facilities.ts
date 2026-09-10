@@ -295,7 +295,7 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "bash",
       title: "bash and external programs",
       useWhen:
-        "Use when the task touches the real machine: reading or writing files, running git, package managers, compilers, formatters or test runners, moving data between programs, or producing an artifact with a program such as Pandoc that has to exist on disk afterwards.",
+        "Use when the task touches the real machine: files, git, package managers, compilers, tests, shell pipelines, or artifacts produced by external programs such as Pandoc.",
       provides: [
         bashCapabilities(state.bash.kind === "registered" ? state.bash.profile : undefined),
         "Every external program installed on the host, composed with pipes, redirection, loops, globs, and exit codes.",
@@ -312,7 +312,7 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "code_mode",
       title: "Code mode (code_execute, code_search)",
       useWhen:
-        "Use when the task needs exact computation or control flow across MCP results: arithmetic, date maths, parsing, filtering, aggregation, pagination loops, joins, or compact data reduction — for example, fetching open and closed issue counts and summing them in one code_execute.",
+        "Use when exact computation or control flow spans MCP results: arithmetic, filtering, aggregation, pagination, joins, or compact reduction in one code_execute.",
       provides: [
         "code_execute, which runs vanilla JavaScript in a sandboxed V8 isolate and returns the value you return.",
         "code_search, which queries the MCP tool catalogue so you can find dispatchable tools before writing code.",
@@ -353,7 +353,6 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       ],
       doesNotProvide: [
         "A tool of its own. tool-cli is a program you run with the bash tool, never something you call directly.",
-        "A substitute for Code mode's exact multi-call filtering, aggregation, joins, or arithmetic. Do not fetch MCP data through tool-cli plus jq loops merely to calculate a result.",
         "Any authority the host has not already granted — every call is re-authorised before it reaches a server.",
         "Access to `skill://` resources, which remain isolated behind skill discovery and load_skill.",
       ],

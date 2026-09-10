@@ -72,7 +72,7 @@ describe("shipped github toolset vocabulary", () => {
     // budget that quietly crept toward its ceiling.
     const section = renderPromptSection({ namespaces, sandboxAvailable: true });
     expect(estimateTokens(full)).toBe(529);
-    expect(estimateTokens(section)).toBe(1872);
+    expect(estimateTokens(section)).toBe(1097);
   });
 
   it("names no tool, at any vocabulary size", () => {

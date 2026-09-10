@@ -133,7 +133,7 @@ describe("execution routing section", () => {
 
     it("describes bash as the filesystem and artifact substrate", () => {
       const result = formatExecutionRouting(fullState());
-      expect(result).toContain("reading or writing files");
+      expect(result).toContain("task touches the real machine: files");
       expect(result).toContain(
         "the only facility that can create, modify, or inspect files and artifacts",
       );
@@ -142,21 +142,18 @@ describe("execution routing section", () => {
     it("explains that tool-cli and bash compose in one command", () => {
       const result = formatExecutionRouting(fullState());
       expect(result).toContain("Composing facilities");
-      expect(result).toContain("single bash command rather than two rival");
+      expect(result).toContain("Run tool-cli inside bash");
     });
 
-    it("makes the live profile, issue-total, and Pandoc demo routes explicit", () => {
+    it("keeps the direct, exact-compute, and artifact routes explicit", () => {
       const result = formatExecutionRouting(fullState());
 
-      expect(result).toContain("provider-native deferred tool search");
+      expect(result).toContain("provider-native deferred search");
       expect(result).toContain("direct proxy");
-      expect(result).toContain("get_me");
-      expect(result).toContain("open and closed issue counts");
       expect(result).toContain("one code_execute");
       expect(result).toContain("Pandoc");
-      expect(result).toContain("MCP input inside a real shell pipeline");
-      expect(result).toContain("tool-cli plus jq loops");
-      expect(result).toContain("belongs in Code mode");
+      expect(result).toContain("shell, file, or artifact pipelines");
+      expect(result).toContain("multi-call exact arithmetic");
     });
   });
 
@@ -385,14 +382,13 @@ describe("execution routing section", () => {
 
     it("says explicitly that the order is not a ranking", () => {
       const result = formatExecutionRouting(fullState());
-      expect(result).toContain("not by");
-      expect(result).toContain("none of them is a default");
-      expect(result).toContain("no sequence to try them in");
+      expect(result).toContain("by task shape, not rank");
+      expect(result).toContain("none is a default");
     });
 
     it("tells the agent not to fabricate output from an unavailable facility", () => {
       const result = formatExecutionRouting(zeroServerState());
-      expect(result).toContain("never describe or summarise output it did not produce");
+      expect(result).toContain("do not invoke it or claim output from it");
     });
   });
 

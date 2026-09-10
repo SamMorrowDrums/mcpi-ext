@@ -94,7 +94,7 @@ describe("turn-0 prompt budget", () => {
       sandboxAvailable: true,
     });
 
-    expect(section).toContain("raw MCP CallToolResult envelope");
+    expect(section).toContain("raw MCP `CallToolResult` envelope");
     expect(section).toContain("result.structuredContent");
     expect(section).toContain("result.structuredContent === undefined");
     expect(section).not.toContain("result.items");
@@ -106,9 +106,10 @@ describe("turn-0 prompt budget", () => {
       sandboxAvailable: true,
     });
 
-    expect(section).toContain("Plan discovery first, then make one `code_execute`");
-    expect(section).toContain("one bounded inspection execution and one corrected retry");
-    expect(section).toContain("not a way around the per-execution tool-call budget");
+    expect(section).toContain("Plan discovery first, then use one `code_execute`");
+    expect(section).toContain("one bounded inspection execution");
+    expect(section).toContain("corrected retry");
+    expect(section).toContain("do not expand the per-execution tool-call budget");
   });
 });
 

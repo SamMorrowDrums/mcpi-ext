@@ -83,9 +83,9 @@ describe("formatToolCliForPrompt", () => {
     expect(result).toContain("2 server(s) reported by the verified bridge handshake");
   });
 
-  it("leads with intent rather than a mechanism description", () => {
+  it("leaves task routing to the execution routing section", () => {
     const result = formatToolCliForPrompt(verifiedState());
-    expect(result).toContain("Use when");
+    expect(result).not.toContain("Use when");
   });
 
   it("does not assert a fixed precedence over skills", () => {
@@ -109,14 +109,13 @@ describe("formatToolCliForPrompt", () => {
 
   it("keeps shell examples focused on one-shots and external artifact pipelines", () => {
     const result = formatToolCliForPrompt(verifiedState());
-    expect(result).toContain("get_me");
     expect(result).toContain("|");
-    expect(result).toContain("jq");
     expect(result).toContain("pandoc");
-    expect(result).toContain("Code Mode");
-    expect(result).toContain("one Code Mode execution");
+    expect(result).toContain("export_csv");
+    expect(result).toContain("sort");
     expect(result).not.toContain("xargs");
     expect(result).not.toContain("for city in");
+    expect(result).not.toContain("Code Mode");
   });
 
   it("documents policy-authorized resource discovery, reads, and binary output", () => {

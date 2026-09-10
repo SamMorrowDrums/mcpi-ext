@@ -19,6 +19,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shell composition, and bash/external artifact pipelines without imposing a global precedence.
 - Code Mode guidance now favors discovery followed by one execution, with at most a bounded
   inspect-and-correct retry for an unknown result shape rather than repeated runs around call limits.
+- The fixed routing, tool-cli, and Code Mode prompt now has an `o200k_base` token snapshot and
+  remains below the public 1.1.0 turn-zero cost after adding the corrected result and snapshot rules.
 
 ## [1.1.0] — 2026-09-10
 
