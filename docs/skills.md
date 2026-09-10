@@ -1,12 +1,24 @@
 # Skills
 
-MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill gates. On connection, the extension discovers all skills and registers their tools with `deferred: true`.
+MCP servers can ship `skill://` resources: SKILL.md files with frontmatter declaring which tools a skill references. On connection, the extension discovers all skills and registers their direct tool proxies with `deferred: true`.
 
-Use a skill when the task matches a documented domain workflow the server has authored — the skill supplies the sequencing and conventions alongside the tools. Loading one **enables its declared tools only after the grant is approved**; the declaration alone confers nothing. For choosing between skills and the other execution facilities, see the `<execution_routing>` section described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting) — it compares facilities by task shape, and there is no rule that skills should be tried first.
+Use a skill when the task matches a documented domain workflow the server has authored — the skill supplies the sequencing and conventions alongside the tools. For choosing between skills and the other execution facilities, see the `<execution_routing>` section described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting) — it compares facilities by task shape, and skills hold no privileged position among them. A tool being available is not a reason to load a skill; a coherent procedural workflow the server has documented is.
 
-## How deferred tool gating works
+## What deferral is, and what it is not
 
-Three mechanisms work together to keep tools hidden until the right moment — while preserving prompt cache:
+Deferral is **visibility**. It decides which tool definitions the model has been shown on the direct proxy surface, and nothing else.
+
+It is not authorization. A deferred tool is not forbidden, it is unread:
+
+- Code Mode and tool-cli discover and call every tool in the catalogue regardless of skill state. Neither requires `load_skill`.
+- A tool referenced by no skill at all is still callable from every surface.
+- `allowed-tools` is an exposure list, never an execution grant.
+
+Whether a call is allowed is decided at execution, by tool annotations, in `McpPolicy` — the same decision on every surface. Loading a skill does not widen it, and never asks the user for anything, because reading a procedure is not doing anything.
+
+## How deferral works
+
+Two mechanisms work together to keep definitions unread until the right moment — while preserving prompt cache:
 
 ### 1. `deferred: true`
 
@@ -21,13 +33,13 @@ mcpi's providers map `deferred: true` to their native deferred loading mechanism
 
 Both tested with Claude Opus 4.7 and GPT-5.4. Since the tools array never changes, prompt cache is preserved on both providers.
 
-### 3. `tool_call` hook gating
+### 3. Activation through the conversation tail
 
-The extension registers a `tool_call` event handler that blocks premature calls to skill-gated tools. If the model tries to call a gated tool before loading its skill, the handler returns an error:
+`load_skill` returns the skill body and sets `addedToolNames` on its tool result. The host reads that field and emits a `tool_reference` block in the transcript at the position of the result, which expands the named schemas for the model.
 
-> _"Tool X requires loading a skill first. Call load_skill with: Y"_
+Nothing mutates the registered tools array or the system prompt, so the prompt prefix stays byte-identical for the whole conversation and the cache survives activation. The names are emitted once, deduplicated, and persist in the transcript.
 
-This creates a natural feedback loop and serves as the enforcement layer across all providers — including those without native `defer_loading` support.
+There is **no `tool_call` gate**. The extension previously registered a handler that refused calls to skill-referenced tools until their skill was loaded, and returned _"Tool X requires loading a skill first"_. That conflated not-yet-shown with not-allowed: it made deferral into an authorization rule, refused calls the provider grammar legitimately permitted, and blocked Code Mode and tool-cli from tools they had every right to reach. It is gone.
 
 ## Flow
 
@@ -61,23 +73,27 @@ Skills reach the host by one of two routes, and they are never mixed on the same
 | ----------- | --------------------------------------- | ---------------------------------------------------- |
 | Discovery   | `resources/list` filtered by URI scheme | `skills/list`                                        |
 | Trust model | URI shape                               | SHA-256 digest + declared byte size                  |
-| Status      | Compatibility fallback                  | Draft, opt-in                                        |
+| Status      | Compatibility fallback                  | Draft, negotiated by default, explicit opt-out       |
 | Used when   | The server declares no extension        | The server declares `io.modelcontextprotocol/skills` |
 
-### ⚠️ SEP-2640 support is DRAFT and off by default
+### ⚠️ SEP-2640 support is DRAFT
 
 This client targets **[SEP-2640](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2640) revision `753b9f2be43e07fdd070e535d75f190cff14beea`** — an unratified proposal on the Extensions Track. The wire format can change without notice, and nothing here should be read as support for a finalized specification.
 
-It is therefore gated, and the gate defaults to **off**:
+Negotiation is nevertheless **on by default**. Requiring a flag to discover skills a server already advertises makes the ordinary case a configuration problem, and the failure is silent: the server publishes a workflow, the client never asks, and nothing says why. The draft status is handled by _saying so_ — a visible diagnostic names the pinned revision whenever the contract is in use — rather than by hiding the feature behind an opt-in nobody knows to set.
+
+Opting out is explicit:
 
 ```jsonc
 // mcp config
-{ "experimental": { "skillsExtension": true } }
+{ "experimental": { "skillsExtension": false } }
 ```
 
 ```sh
-mcpi --extension ./dist/index.js --mcp-skills-extension
+mcpi --extension ./dist/index.js --no-mcp-skills-extension
 ```
+
+Either way, support is re-resolved from each server's declared capabilities before every request, so a server that never declared the extension is never spoken to in it.
 
 With the gate off the extension is never advertised at `initialize`, so no server can negotiate it and the legacy path always applies. With the gate on, the host logs a visible diagnostic naming the revision and status at startup, and logs the negotiated outcome per server.
 
@@ -106,11 +122,15 @@ Every skill entry must publish a `resources` array of `{uri, digest, size}` or t
 
 Digests are not a security boundary; they prove the bytes match what was advertised, not that what was advertised is safe.
 
-### Approval is bound to content, not to a name
+### Activation is bound to content, not to a name
 
-An MCP-origin skill's `allowed-tools` stays **inert until the user explicitly approves it**. The grant key includes a fingerprint of the skill's resource set, so a server that rotates its content after approval produces a different key and is re-prompted rather than inheriting the old answer. At load time the grant is rebuilt from the entry the server _just_ served, so an `allowed-tools` list that grew since discovery cannot ride in on an approval given for a smaller one.
+Activation reveals definitions; it does not grant permission, and it does not prompt. It is still content-bound. The activation key includes a fingerprint of the skill's resource set, so a server that rotates its content produces a different key and reveals what it publishes **now** rather than what it published at discovery. At load time the reference set is rebuilt from the entry the server _just_ served, so an `allowed-tools` list that grew since discovery cannot ride in on the earlier, smaller one.
 
-Content is fetched lazily — never on connection, never at listing, never at approval. SKILL.md is read when the skill loads; a supporting file when it is actually read.
+That binding decides _which definitions appear_, never whether anything may run. Execution is decided at execution, from annotations, on every surface alike — so a widened `allowed-tools` cannot escalate anything: the extra names reveal extra schemas, and each of those tools still faces its own confirmation when called.
+
+Names in `allowed-tools` that match no discovered tool reveal nothing and are reported as `unresolvedTools` diagnostics, so a typo or a stale reference is visible to the server author instead of failing silently.
+
+Content is fetched lazily — never on connection, never at listing. SKILL.md is read when the skill loads; a supporting file when it is actually read.
 
 Nothing in a skill is executed. Helper code and host-execution instructions in a SKILL.md body are content, not commands.
 
