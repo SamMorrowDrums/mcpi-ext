@@ -110,6 +110,8 @@ jobs:
         run: node scripts/verify-package.mjs
 
       # Registry-dependent checks are deferred to the publish workflow, which is
-      # the only place their answers can change the outcome.
+      # the only place their answers can change the outcome. The package verifier
+      # compiles test fixture servers, so rebuild the release tree before checking
+      # that dist contains no development-only output.
       - name: Release preflight
-        run: node scripts/release-check.mjs --offline
+        run: node --run build:release && node scripts/release-check.mjs --offline
