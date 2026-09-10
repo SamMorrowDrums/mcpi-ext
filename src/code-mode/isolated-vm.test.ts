@@ -78,7 +78,12 @@ describe("executeInSandbox without the native addon", () => {
       reason: "the optional isolated-vm native addon is not installed",
     });
 
-    const result = await executeInSandbox("1 + 1", [], async () => undefined);
+    const result = await executeInSandbox({
+      code: "1 + 1",
+      aliases: {},
+      dispatch: () => Promise.resolve(undefined),
+      discover: () => Promise.resolve(undefined),
+    });
 
     expect(result.result).toBeUndefined();
     expect(result.errorDetails?.error).toBe(SANDBOX_UNAVAILABLE_ERROR);

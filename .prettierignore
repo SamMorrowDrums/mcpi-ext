@@ -2,3 +2,8 @@ dist/
 node_modules/
 aube-lock.yaml
 *.tsbuildinfo
+
+# Captured verbatim from a running MCP server. Restyling it to our rules would
+# make it a formatted copy rather than a faithful capture, and every re-capture
+# would then arrive as a large spurious diff.
+src/code-mode/fixtures/

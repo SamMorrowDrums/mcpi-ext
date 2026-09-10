@@ -1,0 +1,150 @@
+[
+  {
+    "v": 1,
+    "id": "actions",
+    "title": "Actions",
+    "summary": "GitHub Actions workflows and CI/CD operations",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "code_quality",
+    "title": "Code quality",
+    "summary": "Code quality findings raised against a repository",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "code_security",
+    "title": "Code security",
+    "summary": "Code security related tools, such as GitHub Code Scanning",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "context",
+    "title": "Context",
+    "summary": "Tools that provide context about the current user and GitHub context you are operating in",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "copilot",
+    "title": "Copilot",
+    "summary": "Delegating issues and pull request reviews to Copilot",
+    "effect": "write"
+  },
+  {
+    "v": 1,
+    "id": "copilot_issue_intents",
+    "title": "Copilot issue intents",
+    "summary": "Opt-in Copilot issue assignment tools that carry intent metadata (rationale, confidence, suggestion)",
+    "effect": "write",
+    "parent": "copilot"
+  },
+  {
+    "v": 1,
+    "id": "dependabot",
+    "title": "Dependabot",
+    "summary": "Dependabot alerts for vulnerable dependencies",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "discussions",
+    "title": "Discussions",
+    "summary": "Repository discussions, their categories, comments and replies",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "gists",
+    "title": "Gists",
+    "summary": "Standalone code snippets published as gists",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "git",
+    "title": "Git",
+    "summary": "GitHub Git API related tools for low-level Git operations",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "issues",
+    "title": "Issues",
+    "summary": "Issue tracking: filing, updating, commenting, and linking issues to one another",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "labels",
+    "title": "Labels",
+    "summary": "Repository label definitions and the label scheme they form",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "notifications",
+    "title": "Notifications",
+    "summary": "The authenticated user's notification inbox, its read state and subscriptions",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "orgs",
+    "title": "Organizations",
+    "summary": "Discovering GitHub organizations and their public metadata",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "projects",
+    "title": "Projects",
+    "summary": "GitHub Projects boards, their items, fields and views",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "pull_requests",
+    "title": "Pull requests",
+    "summary": "Pull request lifecycle: review, comment, status and merge",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "repos",
+    "title": "Repositories",
+    "summary": "Repository contents, branches, commits, tags, releases and collaborators",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "secret_protection",
+    "title": "Secret protection",
+    "summary": "Secret protection related tools, such as GitHub Secret Scanning",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "security_advisories",
+    "title": "Security advisories",
+    "summary": "Published security advisories, both global and repository-scoped",
+    "effect": "read"
+  },
+  {
+    "v": 1,
+    "id": "stargazers",
+    "title": "Stargazers",
+    "summary": "Starring repositories on behalf of the authenticated user",
+    "effect": "mixed"
+  },
+  {
+    "v": 1,
+    "id": "users",
+    "title": "Users",
+    "summary": "Discovering GitHub user accounts and their public profiles",
+    "effect": "read"
+  }
+]

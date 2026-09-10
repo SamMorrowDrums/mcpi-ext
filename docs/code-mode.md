@@ -1,17 +1,24 @@
 # Code mode
 
-Code Mode is always available for pure JavaScript computation, even when no MCP servers are configured. Its discovery catalog and generated type hints include every MCP tool, but host dispatch is allowed only when `annotations.readOnlyHint === true` and `annotations.destructiveHint !== true`.
+Code Mode is always available for pure JavaScript computation, even when no MCP servers are configured. Its catalog indexes every MCP tool. What the model may _call_ is decided per call by `McpPolicy`, not by what discovery shows: visibility is not authority, and hiding a tool the policy would have permitted only makes the model guess.
+
+The system prompt carries namespaces, never tools. Schemas are fetched on demand.
 
 ## How it works
 
 The model writes JavaScript that chains MCP tool calls. The code runs in a V8 isolate via `isolated-vm`:
 
 ```javascript
-const issues = await codemode.list_issues({ repo: "owner/repo", state: "open" });
+const issues = await codemode.call("github", "list_issues", { repo: "owner/repo", state: "open" });
 const critical = issues.filter((i) => i.labels.includes("critical"));
-const details = await Promise.all(critical.map((i) => codemode.get_issue({ number: i.number })));
+const details = [];
+for (const issue of critical) {
+  details.push(await codemode.call("github", "get_issue", { number: issue.number }));
+}
 return details.map((d) => ({ title: d.title, assignee: d.assignee }));
 ```
+
+Tools are addressed by canonical `server/tool` reference. A bare name still works when it is unique across every connected server; when it is not, the call is refused and names the candidates, because guessing between two servers is how you comment on the wrong repository.
 
 ## Sandbox isolation
 
@@ -20,29 +27,80 @@ return details.map((d) => ({ title: d.title, assignee: d.assignee }));
 - Tool calls dispatch to the host via `Reference` callbacks — MCP execution happens outside the sandbox
 - ~15ms overhead, negligible vs network I/O
 
-## Catalog, schemas, and dispatch
+## Progressive discovery
 
 Code Mode keeps discovery separate from permission enforcement, and separate from skills:
 
-1. Every MCP tool appears in `codemode.listTools()` and the generated type hints — every discovered tool, whether or not any skill references it. Code Mode never requires `load_skill`.
+1. Every discovered MCP tool is searchable through `code_search`, whether or not any skill references it. Code Mode never requires `load_skill`.
 2. Read-only, non-destructive tools dispatch unattended.
 3. Every tool without an `outputSchema` receives an internal permissive JSON Schema survival floor. Its output type is `unknown`, and the source MCP tool remains unchanged. This applies to write tools too: a tool the model can call is a tool it needs a return type for.
-4. A write or destructive tool **pauses mid-script for user approval** at `McpPolicy`, the same confirmation any other surface raises, and the script continues with the value it returns. A decline surfaces as a legible error naming the tool.
+4. A write or destructive tool **pauses mid-script for user approval** at `McpPolicy`, the same confirmation any other surface raises, and the script continues with the value it returns. A decline surfaces as a legible error naming the tool and the annotations that made it ask.
 
 Point 4 used to read the other way — the sandbox refused writes outright rather than prompting. That was not the conservative choice it looked like: it took a decision away from the person entitled to make it and left scripts able to see work they could never finish. Sandbox restrictions (no fs, no network, no process) are a separate matter and unchanged; they constrain what the _isolate_ can reach, not what the user may authorise.
 
-Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and is never added to MCP traffic. Code Mode diagnostics and the type-hint header report declared and synthesized counts so schema degradation is visible without prompting.
+Discovery itself used to be paid for the same way. Earlier releases injected a TypeScript signature for every discovered tool into the system prompt on every turn. Against the real 85-tool server that is 33,133 tokens of catalog the model had not asked for, paid again each turn, describing tools it would never call. It also defeated the point of a discovery API: nothing was left to discover.
+
+The prompt now carries only namespaces — 529 tokens for the same server — and the model fetches what it needs:
+
+| Operation                         | Answers                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `codemode.browse()`               | Which namespaces exist, with a one-line summary and effect class for each |
+| `codemode.search(query, options)` | Tools ranked against a query; exact and prefix matches first, then BM25   |
+| `codemode.list({ namespace })`    | One page of tools within a namespace, server, or effect class             |
+| `codemode.describe(refs)`         | Exact parameters and output type for specific tools                       |
+| `codemode.inspect(value)`         | The real shape of a value that came back, computed inside the isolate     |
+
+The same four operations are available as the `code_search` tool for use outside a script. Both surfaces answer from one catalog snapshot, so a script and the tool never disagree.
+
+`list` requires a namespace, server, or effect filter. An unfiltered list would be the full catalog arriving through the back door, which is the thing this surface exists to prevent.
+
+### The prompt is pinned
+
+The namespace section is rendered once at session start and is byte-identical for the rest of the session. A server that connects at turn 20 is immediately reachable through `search` and `describe`, but it does not rewrite the prompt: doing so would invalidate the provider's prefix cache for every remaining turn, which costs far more than the announcement is worth.
+
+Namespaces come from declarations, in order: server-declared toolset metadata, then operator-curated `namespaces` in the MCP config, then a stable server-only fallback. Nothing is inferred from tool names. Name-derived grouping was measured against a real catalog and produced a usable head with a long tail of garbage (`branche`, `or`, `me`, `sub`); garbage in a cached prompt prefix is permanent, whereas the same garbage in a search result is cheap.
+
+## Schemas and honesty
+
+Output schemas are reported as they are, not as we wish they were:
+
+- A **declared** `outputSchema` becomes a real type in `describe`.
+- An **absent** one is reported as `unknown`, never as `Record<string, unknown>`. Every tool on the released github-mcp-server declares no output schema; asserting an object shape nobody promised is how a model indexes into `undefined` with confidence.
+- `codemode.inspect(value)` is the answer for those tools. It summarizes the actual result shape — keys, types, array lengths, sampled elements — entirely inside the isolate, with no host call and no egress.
+
+Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and never added to MCP traffic.
 
 Approval posture is classified separately from the boolean, as `read_only`, `write`, `destructive`, or `contradictory_annotations`, with a normalized reason set. `McpPolicy` remains the sole authority on whether a call prompts; the classification describes that decision for diagnostics and for the catalog's definition fingerprint, so a tool that acquires `destructiveHint` invalidates a cached snapshot rather than inheriting its old classification.
 
 ## Tools
 
-| Tool           | Purpose                                                          |
-| -------------- | ---------------------------------------------------------------- |
-| `code_search`  | Discover available tools across the full discovered catalogue    |
-| `code_execute` | Chain tool calls — write JS that calls `codemode.toolName(args)` |
+| Tool           | Purpose                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `code_search`  | Structured catalog query: `op` is `browse`, `search`, `list`, or `describe`. Runs no code. |
+| `code_execute` | Chain tool calls — write JS that calls `codemode.call("server/tool", args)`                |
 
-With zero callable MCP tools, `code_search` names `code_execute` and `tool-cli` as alternatives. `code_execute` still handles arithmetic, parsing, and deterministic transforms.
+`code_search` takes typed parameters, not JavaScript. It previously accepted code and ran it through the full execution path, which made a dispatch surface wear a discovery label; it now answers from the local snapshot without contacting a server or starting an isolate.
+
+## Identity and snapshot consistency
+
+A tool is addressed by two separate strings, a server name and a tool name, all the way down to the policy call. The `server/tool` ref is display and input syntax only. The distinction is not cosmetic: a server chooses its own tool names, so a tool called `b/echo` on server `a` renders the same ref as tool `echo` on server `a/b`. Refs are built by joining two attacker-influenced strings, so a colliding ref resolves to neither tool — it is refused, naming both — while `codemode.call("a/b", "echo", {})` still works, because a structured identity cannot be forged by a name.
+
+One execution sees one catalog. The snapshot is captured when the run starts, and every `browse`, `search`, `describe`, alias binding, and dispatch inside the run reads that exact snapshot. Refreshing mid-run would let a script describe a tool from one catalog and call into another.
+
+Across turns, `code_execute` accepts the optional `snapshotId` returned by `code_search`. If the catalog has moved since, the run is refused with `stale_snapshot` before the isolate starts, rather than calling against parameters that may have changed. Omitting it captures whatever is current.
+
+The snapshot fingerprint covers identity, namespace, schemas and their provenance, effect class, and callability — not schemas alone. A server flipping `readOnlyHint` changes what a call means without changing any schema, so a fingerprint that ignored it would call two different catalogs the same.
+
+## Budgets
+
+An execution is bounded so a runaway script degrades into a refusal rather than a large bill:
+
+- 64 tool calls per execution, 8 concurrent reads per server
+- Writes are serialized, so a script that fans out mutations cannot ask for several approvals at once with no order to reason about
+- Search returns 5 results by default and at most 20; `describe` accepts at most 20 refs
+- Discovery responses are capped at 24 KB and returned values at 48 KB
+
+An oversized return value is refused with an explanation, not silently truncated: half a serialized object is worse than none. Cancellation reaches the policy and the upstream MCP call, and disposes the isolate.
 
 ## When to use
 

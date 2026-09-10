@@ -1,5 +1,9 @@
-import type { McpTool } from "../mcp/index.js";
-import { getCodeModeDiagnostics, toCodeModeTool, type CodeModeTool } from "./eligibility.js";
+// Renders a JSON Schema as a TypeScript type string.
+//
+// This is a formatter, not a disclosure mechanism. It backs the compact
+// signatures returned by an explicit `describe`; nothing here is rendered
+// into the system prompt. The eager `generateTypeHints` catalog that used
+// to do that was removed with the pinned namespace prompt.
 
 type JsonSchema = Record<string, unknown>;
 
@@ -154,115 +158,4 @@ function arrayToTs(
 /** Ensure property name is a valid JS identifier, quote otherwise. */
 function safeName(name: string): string {
   return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
-}
-
-/** Sanitize a tool name to be a valid JS identifier. */
-export function sanitizeToolName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_$]/g, "_");
-}
-
-/**
- * Generate TypeScript type declarations for a set of MCP tools.
- *
- * Produces a `declare const codemode: { ... }` block with type-safe
- * method signatures the model can use when writing code.
- */
-export function generateTypeHints(tools: readonly (McpTool | CodeModeTool)[]): string {
-  const codeModeTools = tools.map(normalizeCodeModeTool);
-  const diagnostics = getCodeModeDiagnostics(codeModeTools);
-  const methods: string[] = [];
-
-  for (const codeModeTool of codeModeTools) {
-    const tool = codeModeTool.tool;
-    const safeName = sanitizeToolName(tool.name);
-    const inputSchema = tool.inputSchema as JsonSchema;
-    const outputSchema = codeModeTool.outputSchema as JsonSchema | undefined;
-    const definitions = (inputSchema.$defs ??
-      inputSchema.definitions ??
-      outputSchema?.$defs ??
-      outputSchema?.definitions) as Record<string, JsonSchema> | undefined;
-
-    // Build input type
-    const inputType = generateInputType(safeName, inputSchema, definitions);
-
-    // Build output type
-    const outputType = outputSchema ? jsonSchemaToTypeString(outputSchema, definitions) : "unknown";
-
-    // Build JSDoc
-    const jsdoc = buildJsDoc(codeModeTool, inputSchema);
-
-    methods.push(`${jsdoc}  ${safeName}: (input: ${inputType}) => Promise<${outputType}>;`);
-  }
-
-  const toolListType =
-    codeModeTools.length > 0
-      ? codeModeTools.map((entry) => `"${escapeStr(entry.tool.name)}"`).join(" | ")
-      : "never";
-
-  return [
-    "// Code mode type hints — auto-generated from MCP tool schemas",
-    "// Available tools are accessed via the `codemode` namespace",
-    `// MCP catalog: ${diagnostics.totalTools} tool(s); ${diagnostics.unattendedTools} run unattended, ${diagnostics.approvalGatedTools} pause for approval`,
-    `// Output schemas: ${diagnostics.declaredOutputSchemas} declared, ${diagnostics.synthesizedOutputSchemas} synthesized, ${diagnostics.unavailableOutputSchemas} unavailable`,
-    "",
-    `declare const codemode: {`,
-    `  /** List all available code mode tool names. */`,
-    `  listTools: () => Promise<(${toolListType})[]>;`,
-    `  /** Get full type information for specific tools. */`,
-    `  describeTools: (names: string[]) => Promise<string>;`,
-    ...methods.map((m) => m),
-    `};`,
-  ].join("\n");
-}
-
-function generateInputType(
-  _toolSafeName: string,
-  inputSchema: JsonSchema,
-  definitions: Record<string, JsonSchema> | undefined,
-): string {
-  const properties = inputSchema.properties as Record<string, JsonSchema> | undefined;
-  if (!properties || Object.keys(properties).length === 0) {
-    return "Record<string, never>";
-  }
-
-  // Always inline the type — avoids emitting unreferenced named type aliases
-  const typeStr = jsonSchemaToTypeString(inputSchema, definitions);
-  return typeStr;
-}
-
-function buildJsDoc(codeModeTool: CodeModeTool, inputSchema: JsonSchema): string {
-  const tool = codeModeTool.tool;
-  const lines: string[] = ["  /**"];
-
-  if (tool.description) {
-    lines.push(`   * ${tool.description}`);
-  }
-
-  if (codeModeTool.runsUnattended) {
-    lines.push("   * Approval: runs unattended (annotated read-only and non-destructive).");
-  } else {
-    lines.push("   * Approval: pauses for user approval before the call reaches the server.");
-  }
-  lines.push(`   * Output schema provenance: ${codeModeTool.outputSchemaProvenance}.`);
-
-  const properties = inputSchema.properties as Record<string, JsonSchema> | undefined;
-  if (properties) {
-    for (const [key, propSchema] of Object.entries(properties)) {
-      const desc = propSchema.description as string | undefined;
-      if (desc) {
-        lines.push(`   * @param input.${key} - ${desc}`);
-      }
-    }
-  }
-
-  lines.push("   */");
-  return lines.join("\n") + "\n";
-}
-
-function escapeStr(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ");
-}
-
-function normalizeCodeModeTool(tool: McpTool | CodeModeTool): CodeModeTool {
-  return "tool" in tool && "outputSchemaProvenance" in tool ? tool : toCodeModeTool(tool);
 }

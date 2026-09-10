@@ -24,6 +24,40 @@ export const RemoteServerConfig = Type.Object({
   ),
 });
 
+/**
+ * An operator-curated namespace for a server that declares none itself.
+ *
+ * A trusted declaration, on the same footing as server metadata: it is written
+ * by the person running the host, so it can be rendered into the pinned prompt
+ * without inferring anything from tool names. Server metadata still wins where
+ * both exist, because the server knows its own toolsets.
+ */
+export const NamespaceConfig = Type.Object({
+  id: Type.String({ description: "Stable namespace id, unique within the server" }),
+  title: Type.Optional(Type.String({ description: "Short human-readable label" })),
+  summary: Type.Optional(
+    Type.String({ description: "One line describing what this namespace covers" }),
+  ),
+  effects: Type.Optional(
+    Type.String({ description: "Declared effect class, e.g. 'read' or 'read, write'" }),
+  ),
+  parent: Type.Optional(Type.String({ description: "Parent namespace id, for hierarchy" })),
+});
+
+/**
+ * How far the operator has vetted a server.
+ *
+ * `untrusted` is the default and is not a judgement — it is the accurate
+ * description of a server nobody has reviewed. Raising it is a deliberate act.
+ */
+export const ServerTrust = Type.Union(
+  [Type.Literal("untrusted"), Type.Literal("reviewed"), Type.Literal("managed")],
+  {
+    description:
+      "untrusted (default): unvetted. reviewed: an operator has read what it exposes. managed: operator-controlled deployment.",
+  },
+);
+
 /** A single MCP server entry — either stdio or remote. */
 export const ServerConfig = Type.Union([StdioServerConfig, RemoteServerConfig]);
 
@@ -32,6 +66,18 @@ export const McpConfig = Type.Object({
   mcpServers: Type.Record(Type.String(), ServerConfig, {
     description: "Named MCP server configurations",
   }),
+  trust: Type.Optional(
+    Type.Record(Type.String(), ServerTrust, {
+      description:
+        "Operator-declared trust level per server name. Servers not listed here are untrusted.",
+    }),
+  ),
+  namespaces: Type.Optional(
+    Type.Record(Type.String(), Type.Array(NamespaceConfig), {
+      description:
+        "Operator-curated namespaces, keyed by server name. Used only for servers that declare no toolset metadata of their own.",
+    }),
+  ),
   experimental: Type.Optional(
     Type.Object(
       {
@@ -50,6 +96,8 @@ export const McpConfig = Type.Object({
 export type StdioServerConfig = Static<typeof StdioServerConfig>;
 export type RemoteServerConfig = Static<typeof RemoteServerConfig>;
 export type ServerConfig = Static<typeof ServerConfig>;
+export type NamespaceConfig = Static<typeof NamespaceConfig>;
+export type ServerTrust = Static<typeof ServerTrust>;
 export type McpConfig = Static<typeof McpConfig>;
 
 /**

@@ -95,14 +95,18 @@ describe("mcpi-ext", () => {
 
     const search = await codeSearch?.execute?.(
       "call-2",
-      { code: "return await codemode.listTools();" },
+      // The registry array is heterogeneous, so `find` narrows to the first
+      // tool's parameter type rather than code_search's.
+      { op: "browse" } as unknown as { code: string },
       undefined,
       undefined,
       {},
     );
-    expect(search?.details).toMatchObject({
-      error: "no_tools",
-      alternatives: ["code_execute", "tool-cli"],
+    // Discovery answers honestly from an empty catalog rather than erroring.
+    expect(search?.details).toMatchObject({ op: "browse" });
+    expect(search?.content[0]).toEqual({
+      type: "text",
+      text: "No MCP namespaces are available. No servers are connected, or none expose callable tools.",
     });
   });
 });

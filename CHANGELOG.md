@@ -5,6 +5,81 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+#### Code Mode no longer injects the whole tool catalog into every prompt
+
+Every discovered MCP tool's full TypeScript signature was rendered into the system prompt,
+and that section was re-rendered on every turn. Against the real 85-tool
+`github-mcp-server` surface with `GITHUB_TOOLSETS=all` that was 33,133 tokens of
+declarations resent each turn, growing with every server added — and because the section
+changed whenever a server reconnected, it also defeated prompt-prefix caching.
+
+Code Mode now renders a declaration-only namespace block once, at session start, and never
+re-renders it. Namespaces come only from declared sources — server `_meta` or operator
+configuration — never inferred from tool names. Servers that connect later stay fully
+searchable and callable, but no longer mutate the prompt.
+
+#### `code_search` is a structured discovery API rather than an arbitrary code entry point
+
+It accepted free-form JavaScript and ran it through the full execution path, which made
+"search" indistinguishable from "execute". It now takes an explicit `op` — `browse`,
+`list`, `search`, or `describe` — with bounded paging, and answers without entering the
+sandbox at all. `list` requires a namespace, server, or effect filter, since an unfiltered
+list is the eager catalog through the back door.
+
+`codemode.describeTools()` previously existed as a stub that returned nothing. Exact
+schemas are now fetched on demand and returned into the conversation, not into the tool
+definitions.
+
+### Removed
+
+#### The eager type-hint catalog renderer
+
+`generateTypeHints` — the function that produced the 33,133-token `declare const codemode`
+block — and `sanitizeToolName`, which existed only to turn tool names into JavaScript
+identifiers for it, are gone rather than merely unused. Nothing called them once the pinned
+namespace prompt landed, but a dead catalog renderer that still compiles is an invitation to
+call it again.
+
+The JSON Schema to TypeScript formatter they shared is still needed, since `describe` returns
+compact signatures, so it now lives in `json-schema-to-ts.ts` under its own name. It has no
+MCP imports and is not reachable from the prompt. Neither removed symbol was public API: the
+package exports only the extension entry point.
+
+### Fixed
+
+#### A server could impersonate another server's tool through its tool name
+
+Tools were addressed by the string `${server}/${tool}`, and tool names are chosen by the
+server. A server registered as `a` shipping a tool named `b/echo` produced exactly the
+reference that server `a/b` shipping `echo` produced. Authority now travels as a structured
+identity record, index keys are length-prefixed, and any reference two identities could
+produce resolves to neither — returning `ambiguous_tool` naming both candidates.
+
+#### A script could describe one schema and call another
+
+Discovery from inside a running script read the live catalog while dispatch had already
+resolved against an older one. Each run now pins a single frozen catalog snapshot, and
+`code_execute` accepts the `snapshotId` returned by `code_search`, refusing `stale_snapshot`
+before the sandbox starts. A tool whose schema changed after it was described now fails as
+`schema_changed` with instructions to re-describe, rather than inviting a retry that cannot
+succeed.
+
+### Added
+
+- Per-server trust levels (`untrusted`, `reviewed`, `managed`; default `untrusted`) and a
+  `definitionDigest` covering everything the model can read — descriptions and annotations
+  included, not only schemas, since a server can rewrite a description into an instruction
+  without touching a schema.
+- A coarse run-level provenance record of which servers a run read before it wrote, so
+  whoever approves a side effect can see whether the data came from somewhere unvetted.
+- Discovery funnel counters, including a blind-call rate and a browse ratio, so the
+  progressive-discovery claim is measurable rather than asserted.
+- Operator-curated namespaces in `mcp.json`, for servers that declare no toolset metadata.
+
 ## [1.0.2] — 2026-09-08
 
 ### Fixed

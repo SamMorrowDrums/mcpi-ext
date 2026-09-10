@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { executeInSandbox, normalizeCode } from "./executor.js";
+import { CodeModeDispatchError, executeInSandbox, normalizeCode } from "./executor.js";
+import type { DiscoverFn, ToolDispatchFn, ToolTarget } from "./executor.js";
 
 describe("normalizeCode", () => {
   it("strips markdown code fences", () => {
@@ -33,28 +34,40 @@ describe("normalizeCode", () => {
   });
 });
 
+interface RunOverrides {
+  aliases?: Record<string, string>;
+  dispatch?: ToolDispatchFn;
+  discover?: DiscoverFn;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+function run(code: string, overrides: RunOverrides = {}) {
+  return executeInSandbox({
+    code,
+    aliases: overrides.aliases ?? {},
+    dispatch: overrides.dispatch ?? (() => Promise.resolve({})),
+    discover: overrides.discover ?? (() => Promise.resolve({})),
+    timeoutMs: overrides.timeoutMs ?? 5000,
+    ...(overrides.signal ? { signal: overrides.signal } : {}),
+  });
+}
+
 describe("executeInSandbox", () => {
   it("executes simple code and returns result", async () => {
-    const result = await executeInSandbox("return 2 + 2;", [], async () => ({}), {
-      timeoutMs: 5000,
-    });
+    const result = await run("return 2 + 2;");
 
     expect(result.result).toBe(4);
     expect(result.error).toBeUndefined();
   });
 
   it("does not expose filesystem, network, or process entry points", async () => {
-    const result = await executeInSandbox(
-      `return {
-        process: typeof process,
-        require: typeof require,
-        fetch: typeof fetch,
-        XMLHttpRequest: typeof XMLHttpRequest
-      };`,
-      [],
-      async () => ({}),
-      { timeoutMs: 5000 },
-    );
+    const result = await run(`return {
+      process: typeof process,
+      require: typeof require,
+      fetch: typeof fetch,
+      XMLHttpRequest: typeof XMLHttpRequest
+    };`);
 
     expect(result.error).toBeUndefined();
     expect(result.result).toEqual({
@@ -65,74 +78,72 @@ describe("executeInSandbox", () => {
     });
   });
 
-  it("captures console.log output", async () => {
-    const result = await executeInSandbox(
-      'console.log("hello", "world"); return 1;',
-      [],
-      async () => ({}),
-      { timeoutMs: 5000 },
-    );
-
-    expect(result.result).toBe(1);
-    expect(result.logs).toContain("hello world");
-  });
-
-  it("dispatches tool calls through the callback", async () => {
-    const dispatched: { name: string; args: Record<string, unknown> }[] = [];
-
-    const dispatch = async (name: string, args: Record<string, unknown>) => {
-      dispatched.push({ name, args });
-      return { results: ["doc1", "doc2"] };
+  it("calls tools by canonical ref", async () => {
+    const dispatched: { target: ToolTarget; args: Record<string, unknown> }[] = [];
+    const dispatch: ToolDispatchFn = (target, args) => {
+      dispatched.push({ target, args });
+      return Promise.resolve({ results: ["doc1", "doc2"] });
     };
 
-    const code = `
-      const result = await codemode.search_docs({ query: "test" });
-      return result;
-    `;
-
-    const result = await executeInSandbox(code, ["search_docs"], dispatch, { timeoutMs: 5000 });
+    const result = await run(
+      `return await codemode.call("docs", "search_docs", { query: "test" });`,
+      { dispatch },
+    );
 
     expect(result.error).toBeUndefined();
     expect(result.result).toEqual({ results: ["doc1", "doc2"] });
-    expect(dispatched).toHaveLength(1);
-    expect(dispatched[0].name).toBe("search_docs");
-    expect(dispatched[0].args).toEqual({ query: "test" });
+    // Server and tool stay separate all the way to the host, so no tool name
+    // can merge itself into another server's address.
+    expect(dispatched).toEqual([
+      {
+        target: { kind: "identity", serverName: "docs", toolName: "search_docs" },
+        args: { query: "test" },
+      },
+    ]);
   });
 
-  it("handles tools with special characters in names", async () => {
-    const dispatched: string[] = [];
-
-    const dispatch = async (name: string) => {
-      dispatched.push(name);
-      return { ok: true };
+  it("exposes unambiguous aliases that dispatch to canonical refs", async () => {
+    const dispatched: ToolTarget[] = [];
+    const dispatch: ToolDispatchFn = (target) => {
+      dispatched.push(target);
+      return Promise.resolve({ ok: true });
     };
 
-    const code = `
-      const result = await codemode.github_list_repos({});
-      return result;
-    `;
-
-    const result = await executeInSandbox(code, ["github.list-repos"], dispatch, {
-      timeoutMs: 5000,
+    const result = await run(`return await codemode.list_repos({});`, {
+      aliases: { list_repos: "github/list-repos" },
+      dispatch,
     });
 
     expect(result.error).toBeUndefined();
-    expect(dispatched).toContain("github.list-repos");
+    expect(dispatched).toEqual([{ kind: "ref", ref: "github/list-repos" }]);
+  });
+
+  it("surfaces structured dispatch errors without turning them into success", async () => {
+    const dispatch: ToolDispatchFn = () =>
+      Promise.reject(
+        new CodeModeDispatchError({
+          error: "ambiguous_tool",
+          message: 'Tool "list_issues" is published by 2 servers.',
+          candidates: ["github/list_issues", "gitlab/list_issues"],
+        }),
+      );
+
+    const result = await run(`return await codemode.callRef("list_issues", {});`, { dispatch });
+
+    expect(result.result).toBeUndefined();
+    expect(result.errorDetails?.error).toBe("ambiguous_tool");
+    expect(result.errorDetails?.candidates).toEqual(["github/list_issues", "gitlab/list_issues"]);
   });
 
   it("returns error for invalid code", async () => {
-    const result = await executeInSandbox("throw new Error('boom');", [], async () => ({}), {
-      timeoutMs: 5000,
-    });
+    const result = await run("throw new Error('boom');");
 
     expect(result.error).toContain("boom");
     expect(result.result).toBeUndefined();
   });
 
   it("enforces timeout", async () => {
-    const result = await executeInSandbox("while(true) {}", [], async () => ({}), {
-      timeoutMs: 100,
-    });
+    const result = await run("while(true) {}", { timeoutMs: 100 });
 
     expect(result.error).toBeDefined();
     expect(result.result).toBeUndefined();
@@ -140,27 +151,25 @@ describe("executeInSandbox", () => {
 
   it("chains multiple tool calls", async () => {
     const calls: string[] = [];
-
-    const dispatch = async (name: string, args: Record<string, unknown>) => {
+    const dispatch: ToolDispatchFn = (target, args) => {
+      const name = target.kind === "identity" ? target.toolName : target.ref;
       calls.push(name);
-      if (name === "list_items") return { items: ["a", "b", "c"] };
-      if (name === "get_details") return { detail: `info for ${args.id}` };
-      return {};
+      if (name === "list_items") return Promise.resolve({ items: ["a", "b", "c"] });
+      if (name === "get_details") return Promise.resolve({ detail: `info for ${String(args.id)}` });
+      return Promise.resolve({});
     };
 
     const code = `
-      const { items } = await codemode.list_items({});
+      const { items } = await codemode.call("s", "list_items", {});
       const details = [];
       for (const id of items) {
-        const d = await codemode.get_details({ id });
+        const d = await codemode.call("s", "get_details", { id });
         details.push(d.detail);
       }
       return details;
     `;
 
-    const result = await executeInSandbox(code, ["list_items", "get_details"], dispatch, {
-      timeoutMs: 5000,
-    });
+    const result = await run(code, { dispatch });
 
     expect(result.error).toBeUndefined();
     expect(result.result).toEqual(["info for a", "info for b", "info for c"]);
@@ -168,23 +177,74 @@ describe("executeInSandbox", () => {
   });
 
   it("prevents imports", async () => {
-    const code = 'import("fs")';
-    const result = await executeInSandbox(code, [], async () => ({}), { timeoutMs: 5000 });
+    const result = await run('import("fs")');
 
     expect(result.error).toBeDefined();
   });
 
-  it("listTools returns available tools", async () => {
+  it("routes discovery through the host without contacting a server", async () => {
+    const asked: { op: string; payload: Record<string, unknown> }[] = [];
+    const discover: DiscoverFn = (op, payload) => {
+      asked.push({ op, payload });
+      return Promise.resolve({ op, ok: true });
+    };
+    const dispatch: ToolDispatchFn = () => Promise.reject(new Error("must not dispatch"));
+
     const code = `
-      const tools = await codemode.listTools();
-      return tools;
+      const browsed = await codemode.browse();
+      const found = await codemode.search("issues", { limit: 3 });
+      const described = await codemode.describe("github/list_issues");
+      return [browsed.op, found.op, described.op];
     `;
 
-    const result = await executeInSandbox(code, ["search", "execute"], async () => ({}), {
-      timeoutMs: 5000,
-    });
+    const result = await run(code, { discover, dispatch });
 
     expect(result.error).toBeUndefined();
-    expect(result.result).toEqual(["search", "execute"]);
+    expect(result.result).toEqual(["browse", "search", "describe"]);
+    expect(asked.map((entry) => entry.op)).toEqual(["browse", "search", "describe"]);
+    expect(asked[1].payload).toEqual({ limit: 3, query: "issues" });
+    expect(asked[2].payload).toEqual({ refs: ["github/list_issues"] });
+  });
+
+  it("inspects real result shapes in-isolate for tools that declare no output schema", async () => {
+    const dispatch: ToolDispatchFn = () =>
+      Promise.resolve({ items: [{ number: 7, title: "a bug" }], nextPage: null });
+
+    const code = `
+      const result = await codemode.call("github", "list_issues", {});
+      return codemode.inspect(result);
+    `;
+
+    const result = await run(code, { dispatch });
+
+    expect(result.error).toBeUndefined();
+    expect(String(result.result)).toContain("items: array(1)");
+    expect(String(result.result)).toContain("number: number: 7");
+  });
+
+  it("refuses an oversized return value instead of truncating it", async () => {
+    const result = await run(`return "x".repeat(60000);`);
+
+    expect(result.result).toBeUndefined();
+    expect(result.errorDetails?.error).toBe("budget_exceeded");
+  });
+
+  it("reports cancellation when the host aborts", async () => {
+    const controller = new AbortController();
+    const dispatch: ToolDispatchFn = () => {
+      controller.abort();
+      return new Promise(() => {
+        /* never settles; the isolate is disposed by the abort */
+      });
+    };
+
+    const result = await run(`return await codemode.call("s", "slow", {});`, {
+      dispatch,
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    });
+
+    expect(result.result).toBeUndefined();
+    expect(result.errorDetails?.error).toBe("cancelled");
   });
 });

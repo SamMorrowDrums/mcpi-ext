@@ -1,5 +1,21 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
+import { CODE_MODE_ERRORS, MAX_CHILD_CALLS, MAX_CONCURRENT_READS_PER_SERVER } from "./budgets.js";
+import {
+  buildCatalogSnapshot,
+  resolveIdentity,
+  resolveTool,
+  type CatalogEntry,
+  type CatalogSnapshot,
+  type ServerTrust,
+  type ServerTrustConfig,
+} from "./catalog.js";
+import {
+  browseNamespaces,
+  describeTools as describeFromCatalog,
+  listTools as listFromCatalog,
+  searchTools as searchFromCatalog,
+} from "./discovery.js";
 import {
   getCodeModeDiagnostics,
   getCodeModeTools,
@@ -7,10 +23,18 @@ import {
   type CodeModeTool,
 } from "./eligibility.js";
 import type { ExecuteResult, ExecutorOptions } from "./executor.js";
-import { CodeModeDispatchError, executeInSandbox, type CodeModeErrorDetails } from "./executor.js";
+import {
+  CodeModeDispatchError,
+  executeInSandbox,
+  type CodeModeErrorDetails,
+  type RunProvenance,
+  type ToolTarget,
+} from "./executor.js";
 import { loadIsolatedVm } from "./isolated-vm.js";
+import type { OperatorNamespaces } from "./namespaces.js";
+import { renderPromptSection } from "./prompt.js";
+import { DiscoveryTelemetry, type DiscoveryFunnel } from "./telemetry.js";
 import { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
-import { generateTypeHints } from "./type-hints.js";
 
 export {
   APPROVAL_POSTURE_SCHEMA_VERSION,
@@ -30,8 +54,14 @@ export type {
   CodeModeTool,
   OutputSchemaProvenance,
 } from "./eligibility.js";
-export type { CodeModeErrorDetails, ExecuteResult, ExecutorOptions } from "./executor.js";
+export type {
+  CodeModeErrorDetails,
+  ExecuteResult,
+  ExecutorOptions,
+  SandboxRequest,
+} from "./executor.js";
 export { SANDBOX_UNAVAILABLE_ERROR, executeInSandbox, normalizeCode } from "./executor.js";
+export type { RunProvenance } from "./executor.js";
 export {
   loadIsolatedVm,
   peekIsolatedVm,
@@ -41,20 +71,38 @@ export {
   type IsolatedVmModule,
 } from "./isolated-vm.js";
 export { createCodeExecuteTool, createCodeSearchTool } from "./tools.js";
-export { generateTypeHints, jsonSchemaToTypeString, sanitizeToolName } from "./type-hints.js";
+export { jsonSchemaToTypeString } from "./json-schema-to-ts.js";
+export {
+  DEFAULT_SERVER_TRUST,
+  buildCatalogSnapshot,
+  canonicalRef,
+  identityKey,
+  resolveIdentity,
+  resolveTool,
+  toolEffect,
+  type CatalogEntry,
+  type CatalogSnapshot,
+  type ServerTrust,
+  type ServerTrustConfig,
+  type ToolIdentity,
+} from "./catalog.js";
+export { CODE_MODE_ERRORS, type CodeModeErrorCode } from "./budgets.js";
+export { renderNamespaceBlock, renderPromptSection, hashNamespaceBlock } from "./prompt.js";
+export { renderCompactSignature, renderSearchRow } from "./signatures.js";
+export { deriveNamespaces, readToolsetDeclaration, type NamespaceSummary } from "./namespaces.js";
+export { DiscoveryTelemetry, type DiscoveryFunnel } from "./telemetry.js";
+export type { DiscoveryQuery } from "./tools.js";
 
 export interface CodeModeManagerOptions extends ExecutorOptions {
   /** Log function for status messages. */
   log?: (msg: string) => void;
   /** Test seam for proving pre-isolate refusals. */
   sandboxExecutor?: typeof executeInSandbox;
+  /** Operator-curated namespace declarations, keyed by server name. */
+  namespaces?: OperatorNamespaces;
+  /** Operator-declared trust levels, keyed by server name. */
+  trust?: ServerTrustConfig;
 }
-
-const NO_TOOLS_ERROR: CodeModeErrorDetails = {
-  error: "no_tools",
-  message: "code_search has no discovered MCP tools to search.",
-  alternatives: ["code_execute", "tool-cli"],
-};
 
 /**
  * Whether the sandbox backend can run code.
@@ -84,21 +132,26 @@ const SANDBOX_NATIVE: SandboxAvailability = {
 };
 
 /**
- * Orchestrates code mode: catalogs tools, generates type hints,
- * and executes model-generated code in a sandbox with tool dispatch.
+ * Orchestrates code mode: owns the catalog snapshot, answers discovery queries,
+ * and executes model-generated code with policy-checked tool dispatch.
  */
 export class CodeModeManager {
   private mcpManager: McpClientManager | null = null;
   private policy: McpPolicy | null = null;
   private codeModeTools: CodeModeTool[] = [];
   private diagnostics: CodeModeDiagnostics = getCodeModeDiagnostics([]);
-  private typeHints = generateTypeHints([]);
+  private snapshot: CatalogSnapshot = buildCatalogSnapshot([]);
+  private pinnedSection: string | undefined;
+  private pinnedSnapshotId: string | undefined;
+  private readonly telemetry = new DiscoveryTelemetry();
   private readonly options: CodeModeManagerOptions;
   private readonly sandboxExecutor: typeof executeInSandbox;
   private log: ((msg: string) => void) | undefined;
   private lastDiagnosticSummary = "";
   private sandbox: SandboxAvailability;
   private sandboxProbe: Promise<SandboxAvailability> | undefined;
+  private operatorNamespaces: OperatorNamespaces | undefined;
+  private serverTrust: ServerTrustConfig | undefined;
 
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
@@ -107,6 +160,8 @@ export class CodeModeManager {
     // An injected executor is the sandbox. Probing the native addon in that
     // case would report on a backend this manager will never call.
     this.sandbox = options.sandboxExecutor ? SANDBOX_INJECTED : SANDBOX_UNPROBED;
+    this.operatorNamespaces = options.namespaces;
+    this.serverTrust = options.trust;
   }
 
   /**
@@ -147,7 +202,20 @@ export class CodeModeManager {
     return this.sandboxProbe;
   }
 
-  /** Initialize with MCP manager and policy, catalog tools, and generate type hints. */
+  /**
+   * Supply operator-curated namespaces, which rank below server-declared
+   * metadata and above the server-only fallback. Call before `initialize`.
+   */
+  configureNamespaces(namespaces: OperatorNamespaces | undefined): void {
+    this.operatorNamespaces = namespaces;
+  }
+
+  /** Supply operator-declared server trust levels. Call before `initialize`. */
+  configureTrust(trust: ServerTrustConfig | undefined): void {
+    this.serverTrust = trust;
+  }
+
+  /** Initialize with MCP manager and policy, and build the first snapshot. */
   initialize(mcpManager: McpClientManager, policy: McpPolicy, log?: (msg: string) => void): void {
     this.mcpManager = mcpManager;
     this.policy = policy;
@@ -155,28 +223,53 @@ export class CodeModeManager {
     this.refresh();
   }
 
-  /** Refresh the complete tool catalog and type hints (call on tools/list_changed). */
+  /**
+   * Rebuild the catalog snapshot (call on tools/list_changed).
+   *
+   * Deliberately does not touch the pinned prompt. A server that connects at
+   * turn 20 becomes reachable through search and describe immediately, but
+   * rewriting the system prompt mid-conversation would invalidate the provider
+   * prefix cache for every remaining turn — paying a large, permanent cost to
+   * announce something discovery already surfaces on demand.
+   */
   refresh(): void {
     this.codeModeTools = this.mcpManager ? getCodeModeTools(this.mcpManager) : [];
     this.diagnostics = getCodeModeDiagnostics(this.codeModeTools);
-    this.typeHints = generateTypeHints(this.codeModeTools);
+
+    const previous = this.snapshot.snapshotId;
+    this.snapshot = buildCatalogSnapshot(this.codeModeTools, {
+      ...(this.operatorNamespaces ? { operator: this.operatorNamespaces } : {}),
+      ...(this.serverTrust ? { trust: this.serverTrust } : {}),
+    });
+
+    if (this.pinnedSnapshotId && this.snapshot.snapshotId !== previous) {
+      this.log?.(
+        `[code-mode] catalog changed (${this.snapshot.entries.length} tool(s), snapshot ` +
+          `${this.snapshot.snapshotId.slice(0, 12)}). Reachable via code_search; the pinned prompt is unchanged.`,
+      );
+    }
 
     const summary =
-      `[code-mode] ${this.diagnostics.totalTools} tool(s): ` +
+      `[code-mode] ${this.diagnostics.totalTools} tool(s) across ` +
+      `${this.snapshot.servers.length} server(s), ${this.snapshot.namespaces.length} namespace(s); ` +
       `${this.diagnostics.unattendedTools} unattended, ${this.diagnostics.approvalGatedTools} approval-gated; ` +
       `output schemas: ${this.diagnostics.declaredOutputSchemas} declared, ` +
       `${this.diagnostics.synthesizedOutputSchemas} synthesized, ` +
-      `${this.diagnostics.unavailableOutputSchemas} unavailable; ` +
-      `${this.typeHints.length} chars of type hints`;
+      `${this.diagnostics.unavailableOutputSchemas} unavailable`;
     if (summary !== this.lastDiagnosticSummary) {
       this.log?.(summary);
       this.lastDiagnosticSummary = summary;
     }
   }
 
-  /** Get the type hints string for injection into system prompt. */
-  getTypeHints(): string {
-    return this.typeHints;
+  /** The current catalog snapshot. */
+  getSnapshot(): CatalogSnapshot {
+    return this.snapshot;
+  }
+
+  /** Discovery funnel counters, including blind-call rate. */
+  getTelemetry(): DiscoveryFunnel {
+    return this.telemetry.read();
   }
 
   /** Tools that dispatch from the sandbox without a human approval prompt. */
@@ -193,29 +286,6 @@ export class CodeModeManager {
     return this.diagnostics;
   }
 
-  /** Execute code in search mode (tool catalog queries). */
-  async searchTools(code: string): Promise<ExecuteResult> {
-    this.refresh();
-    if (this.diagnostics.totalTools === 0) {
-      return {
-        result: undefined,
-        error: NO_TOOLS_ERROR.message,
-        errorDetails: {
-          ...NO_TOOLS_ERROR,
-          alternatives: [...(NO_TOOLS_ERROR.alternatives ?? [])],
-        },
-        logs: [],
-      };
-    }
-    return this.execute(code);
-  }
-
-  /** Execute code that chains MCP tool calls. */
-  async executeCode(code: string): Promise<ExecuteResult> {
-    this.refresh();
-    return this.execute(code);
-  }
-
   /** Create the Pi tool definitions for code_search and code_execute. */
   createTools() {
     return {
@@ -224,114 +294,278 @@ export class CodeModeManager {
     };
   }
 
-  /** Format a system prompt section for code mode. */
-  formatSystemPromptSection(): string {
-    return [
-      "",
-      "<code_mode>",
-      "## Code mode",
-      "",
-      "Use when a task needs exact computation or control flow: math, aggregation, looping over",
-      "results, data transformation, or chaining several MCP tool calls with logic in between.",
-      "",
-      "`code_execute` runs vanilla JavaScript in a sandboxed V8 isolate. Concretely, that covers:",
-      "",
-      "1. **Arbitrary computation** — math, string manipulation, date arithmetic, data transformation,",
-      "   or any calculation the user asks for. No MCP tools needed; plain JS works.",
-      "2. **Multi-tool aggregation** — counting, filtering, trending, or transforming results across",
-      "   many tool calls. Write a loop inside one `code_execute` instead of making many separate tool calls.",
-      "3. **Pagination** — fetch batches in a loop until exhausted, then compute over the full dataset.",
-      "",
-      "Use `code_search` first to discover which MCP tools are reachable from inside the sandbox.",
-      "",
-      "`code_search` and `code_execute` are always registered and never gated.",
-      "",
-      "After producing a result, verify it makes sense — run a quick sanity check or spot-check values.",
-      "",
-      "### How to write code",
-      "",
-      "Write vanilla JavaScript (not TypeScript, not Node.js). No `require`, `import`, `fetch`,",
-      "`fs`, `process`, or any Node.js/browser APIs. The only external API is the `codemode` namespace",
-      "for MCP tool calls (optional — pure computation works without it). Always `return` the final result.",
-      "",
-      "**Write ONE `code_execute` call that does the whole job.** Loops, comparisons, pagination,",
-      "and aggregation all happen inside a single execution.",
-      "",
-      "```javascript",
-      "// Pure computation — no tools needed",
-      "const factorial = (n) => n <= 1 ? 1 : n * factorial(n - 1);",
-      "return { result: factorial(20), formatted: factorial(20).toLocaleString() };",
-      "```",
-      "",
-      "```javascript",
-      "// Aggregate across paginated MCP tool results",
-      "const counts = {};",
-      "let page = 1;",
-      "while (true) {",
-      "  const result = await codemode.list_items({ page, perPage: 100 });",
-      "  for (const item of result.items) {",
-      "    counts[item.category] = (counts[item.category] || 0) + 1;",
-      "  }",
-      "  if (result.items.length < 100) break;",
-      "  page++;",
-      "}",
-      "return counts;",
-      "```",
-      "",
-      "### Available tools",
-      "",
-      "```typescript",
-      this.typeHints,
-      "```",
-      "</code_mode>",
-    ].join("\n");
+  /**
+   * Freeze the system prompt section for the session.
+   *
+   * Called once, at session start. Every later turn returns these exact bytes.
+   */
+  pinPromptSnapshot(): string {
+    this.pinnedSection ??= renderPromptSection({
+      namespaces: this.snapshot.namespaces,
+      sandboxAvailable: this.sandbox.state !== "unavailable",
+    });
+    this.pinnedSnapshotId ??= this.snapshot.snapshotId;
+    return this.pinnedSection;
   }
 
-  private async execute(code: string): Promise<ExecuteResult> {
+  /** The pinned system prompt section. Byte-identical for the whole session. */
+  formatSystemPromptSection(): string {
+    return this.pinPromptSnapshot();
+  }
+
+  /**
+   * Answer a catalog query.
+   *
+   * The single discovery entry point, shared by the structured `code_search`
+   * tool and the sandbox's `codemode.*` discovery bindings, so both surfaces
+   * see identical results and both are counted in the same funnel.
+   *
+   * Never reaches an MCP server.
+   */
+  discover(
+    operation: string,
+    payload: Record<string, unknown> = {},
+    pinned?: CatalogSnapshot,
+  ): unknown {
+    if (!pinned) this.refresh();
+    const snapshot = pinned ?? this.snapshot;
+
+    switch (operation) {
+      case "browse": {
+        this.telemetry.recordBrowse();
+        const parent = typeof payload.parent === "string" ? payload.parent : undefined;
+        return browseNamespaces(snapshot, parent ? { parent } : {});
+      }
+      case "list": {
+        this.telemetry.recordList();
+        return listFromCatalog(snapshot, readOptions(payload));
+      }
+      case "search": {
+        this.telemetry.recordSearch();
+        const query = typeof payload.query === "string" ? payload.query : "";
+        return searchFromCatalog(snapshot, query, readOptions(payload));
+      }
+      case "describe": {
+        const refs = Array.isArray(payload.refs)
+          ? payload.refs.filter((ref): ref is string => typeof ref === "string")
+          : [];
+        const result = describeFromCatalog(snapshot, refs);
+        if ("signatures" in result) {
+          this.telemetry.recordDescribe(
+            result.signatures.map((entry) => ({ ref: entry.ref, schemaHash: entry.schemaHash })),
+          );
+        }
+        return result;
+      }
+      default:
+        return {
+          error: CODE_MODE_ERRORS.INVALID_ARGUMENTS,
+          message: `Unknown discovery operation "${operation}". Use browse, search, list, or describe.`,
+        };
+    }
+  }
+
+  /**
+   * Execute code that chains MCP tool calls.
+   *
+   * `expectedSnapshotId` pins the run to the catalog the model actually looked
+   * at. Describing a tool in one turn and calling it in the next is otherwise a
+   * race: the schema can change in between, and the call would be made against
+   * a shape nobody checked. Supplying it turns that into a refusal before the
+   * isolate starts; omitting it captures whatever is current.
+   */
+  async executeCode(
+    code: string,
+    signal?: AbortSignal,
+    expectedSnapshotId?: string,
+  ): Promise<ExecuteResult> {
+    this.refresh();
+
+    if (expectedSnapshotId && expectedSnapshotId !== this.snapshot.snapshotId) {
+      const message =
+        `The catalog changed since snapshot ${expectedSnapshotId.slice(0, 12)} ` +
+        `(now ${this.snapshot.snapshotId.slice(0, 12)}). Re-run code_search and check the ` +
+        "parameters you depend on before executing.";
+      return {
+        result: undefined,
+        error: message,
+        errorDetails: { error: CODE_MODE_ERRORS.STALE_SNAPSHOT, message },
+        logs: [],
+      };
+    }
+
+    return this.execute(code, signal);
+  }
+
+  private async execute(code: string, signal?: AbortSignal): Promise<ExecuteResult> {
     const policy = this.policy;
-    const toolNames = this.codeModeTools.map((entry) => entry.tool.name);
+    // Captured once. Every discovery, binding, and dispatch in this run reads
+    // this exact catalog, so the run is internally consistent even if a server
+    // reconnects underneath it.
+    const snapshot = this.snapshot;
 
-    const dispatch = async (toolName: string, args: Record<string, unknown>) => {
-      const codeModeTool = this.codeModeTools.find((entry) => entry.tool.name === toolName);
-      if (!codeModeTool) {
-        throw new Error(`Tool "${toolName}" not found in the code mode tool catalog`);
-      }
+    const aliases: Record<string, string> = {};
+    for (const [alias, entry] of snapshot.byAlias) aliases[alias] = entry.ref;
 
-      if (!policy) {
-        throw new Error("Code mode MCP policy is not initialized");
-      }
+    let childCalls = 0;
+    const readSlots = new Map<string, number>();
+    const writeQueue = { chain: Promise.resolve() };
 
-      try {
-        // The sandbox never reaches a server itself. The call is made here, in
-        // the harness, which is what makes a mid-script approval prompt
-        // possible at all: the script awaits while the user decides.
-        const terminal = await policy.callTool({
-          source: "code-mode",
-          serverName: codeModeTool.tool.serverName,
-          toolName: codeModeTool.tool.name,
-          args,
+    // Coarse run-level provenance. Recorded before dispatch so that a write
+    // is judged against everything the run had already read, not against
+    // whatever happened to complete first.
+    const readServers = new Map<string, ServerTrust>();
+    let attemptedWrite = false;
+
+    const dispatch = async (target: ToolTarget, args: Record<string, unknown>) => {
+      if (signal?.aborted) throw cancelled();
+
+      childCalls += 1;
+      if (childCalls > MAX_CHILD_CALLS) {
+        throw new CodeModeDispatchError({
+          error: CODE_MODE_ERRORS.BUDGET_EXCEEDED,
+          message: `This execution exceeded its budget of ${String(MAX_CHILD_CALLS)} tool calls. Narrow the query or paginate more coarsely.`,
         });
-        return terminal.result;
-      } catch (error) {
-        throw toCodeModeDispatchError(error, codeModeTool);
+      }
+
+      // Authority comes from the structured identity where the script gave
+      // one. A ref is resolved through the catalog, never parsed into one.
+      const resolved =
+        target.kind === "identity"
+          ? resolveIdentity(snapshot, target)
+          : resolveTool(snapshot, target.ref);
+      if (!resolved.ok) {
+        throw new CodeModeDispatchError({
+          error: resolved.error,
+          message: resolved.message,
+          ...(resolved.candidates ? { candidates: [...resolved.candidates] } : {}),
+        });
+      }
+
+      const entry = resolved.entry;
+      if (!policy) throw new Error("Code mode MCP policy is not initialized");
+
+      // Described in an earlier turn, changed since. The model's arguments were
+      // shaped against something that no longer exists, so retrying the same
+      // call cannot succeed — say what happened and send it back to describe.
+      const describedHash = this.telemetry.describedSchemaHash(entry.ref);
+      if (describedHash !== undefined && describedHash !== entry.schemaHash) {
+        throw new CodeModeDispatchError({
+          error: CODE_MODE_ERRORS.SCHEMA_CHANGED,
+          message:
+            `The schema for ${entry.ref} changed since you described it. ` +
+            "Call code_search with op=describe for this tool and rebuild the arguments; " +
+            "re-running the same call will fail the same way.",
+        });
+      }
+
+      this.telemetry.recordCall(entry.ref);
+
+      if (entry.effect === "read") readServers.set(entry.serverName, entry.trust);
+      else attemptedWrite = true;
+
+      const call = async () => {
+        try {
+          const terminal = await policy.callTool({
+            source: "code-mode",
+            serverName: entry.serverName,
+            toolName: entry.toolName,
+            args,
+            ...(signal !== undefined ? { signal } : {}),
+          });
+          return terminal.result;
+        } catch (error) {
+          throw toCodeModeDispatchError(error, entry);
+        }
+      };
+
+      // Writes are serialized globally: a script that fans out mutations in
+      // parallel would ask the user to approve several at once, with no stable
+      // order to reason about. Reads are bounded per server instead.
+      if (entry.effect !== "read") {
+        const run = writeQueue.chain.then(call, call);
+        writeQueue.chain = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      }
+
+      const inFlight = readSlots.get(entry.serverName) ?? 0;
+      if (inFlight >= MAX_CONCURRENT_READS_PER_SERVER) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      readSlots.set(entry.serverName, inFlight + 1);
+      try {
+        return await call();
+      } finally {
+        readSlots.set(entry.serverName, (readSlots.get(entry.serverName) ?? 1) - 1);
       }
     };
 
-    return this.sandboxExecutor(code, toolNames, dispatch, {
-      memoryLimit: this.options.memoryLimit,
-      timeoutMs: this.options.timeoutMs,
+    // Discovery inside an execution reads the snapshot dispatch resolves
+    // against. Refreshing here would let a script describe a tool from one
+    // catalog and call into another.
+    const discover = (operation: string, payload: Record<string, unknown>) =>
+      Promise.resolve(this.discover(operation, payload, snapshot));
+
+    const result = await this.sandboxExecutor({
+      code,
+      aliases,
+      dispatch,
+      discover,
+      ...(signal !== undefined ? { signal } : {}),
+      ...(this.options.memoryLimit !== undefined ? { memoryLimit: this.options.memoryLimit } : {}),
+      ...(this.options.timeoutMs !== undefined ? { timeoutMs: this.options.timeoutMs } : {}),
     });
+
+    return { ...result, provenance: summarizeProvenance(readServers, attemptedWrite) };
   }
+}
+
+const TRUST_ORDER: readonly ServerTrust[] = ["untrusted", "reviewed", "managed"];
+
+function summarizeProvenance(
+  readServers: ReadonlyMap<string, ServerTrust>,
+  attemptedWrite: boolean,
+): RunProvenance {
+  let lowest: ServerTrust = "managed";
+  for (const trust of readServers.values()) {
+    if (TRUST_ORDER.indexOf(trust) < TRUST_ORDER.indexOf(lowest)) lowest = trust;
+  }
+  return {
+    readServers: [...readServers.keys()].sort((left, right) => (left < right ? -1 : 1)),
+    lowestTrust: readServers.size === 0 ? "none" : lowest,
+    attemptedWrite,
+  };
+}
+
+function readOptions(payload: Record<string, unknown>) {
+  return {
+    ...(typeof payload.namespace === "string" ? { namespace: payload.namespace } : {}),
+    ...(typeof payload.server === "string" ? { server: payload.server } : {}),
+    ...(typeof payload.effect === "string" ? { effect: payload.effect } : {}),
+    ...(typeof payload.limit === "number" ? { limit: payload.limit } : {}),
+    ...(typeof payload.cursor === "string" ? { cursor: payload.cursor } : {}),
+  };
+}
+
+function cancelled(): CodeModeDispatchError {
+  return new CodeModeDispatchError({
+    error: CODE_MODE_ERRORS.CANCELLED,
+    message: "Execution was cancelled before this tool call started.",
+  });
 }
 
 /**
  * Translate a policy denial into Code Mode's structured dispatch error.
  *
- * A declined approval is the interesting case: the script asked to do something
- * the user said no to, so the error names the annotations that made it ask,
- * rather than implying the tool was never reachable.
+ * Failures stay failures: nothing here converts a denial into a text result
+ * that a model could mistake for success. A declined approval is the
+ * interesting case — the error names the annotations that made the call ask
+ * for confirmation, rather than implying the tool was never reachable.
  */
-function toCodeModeDispatchError(error: unknown, codeModeTool: CodeModeTool): unknown {
+function toCodeModeDispatchError(error: unknown, entry: CatalogEntry): unknown {
   if (!(error instanceof McpPolicyError)) return error;
 
   const approvalRefused =
@@ -340,9 +574,9 @@ function toCodeModeDispatchError(error: unknown, codeModeTool: CodeModeTool): un
     error: error.reason,
     message: error.message,
     alternatives: [...error.alternatives],
-    toolName: codeModeTool.tool.name,
-    ...(approvalRefused ? { reason: formatApprovalReasons(codeModeTool) } : {}),
-  });
+    toolName: entry.toolName,
+    ...(approvalRefused ? { reason: formatApprovalReasons(entry.entry) } : {}),
+  } satisfies CodeModeErrorDetails);
 }
 
 function formatApprovalReasons(codeModeTool: CodeModeTool): string {
