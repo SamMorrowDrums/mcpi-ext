@@ -3,14 +3,14 @@
   // so the integration scripts in scripts/ can run against dist/test-servers/,
   // which is right for development and wrong for a published tarball.
   //
-  // This config drops tests, fixture servers, and source maps. Maps in
-  // particular would point at src/, which is not published, so shipping them
-  // only adds bytes and broken references.
+  // This config drops tests, test-only fixture helpers, fixture servers, and
+  // source maps. Maps in particular would point at src/, which is not
+  // published, so shipping them only adds bytes and broken references.
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "declarationMap": false,
     "sourceMap": false
   },
   "include": ["src"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/test-servers"]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/fixtures.ts", "src/test-servers"]
 }

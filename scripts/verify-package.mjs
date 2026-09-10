@@ -8,7 +8,15 @@
 // Those are exactly the failures that only appear after an immutable publish.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -40,6 +48,13 @@ function run(command, args, options = {}) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function listRelativeFiles(root, prefix = "") {
+  return readdirSync(join(root, prefix), { withFileTypes: true }).flatMap((entry) => {
+    const path = join(prefix, entry.name);
+    return entry.isDirectory() ? listRelativeFiles(root, path) : path.replaceAll("\\", "/");
+  });
 }
 
 function createIsolatedUserEnvironment(root) {
@@ -87,6 +102,7 @@ console.log(`Node ${process.version}\n`);
 
 console.log("Building release tree...");
 run("node", ["--run", "build:release"], { cwd: repoRoot });
+const releasePaths = listRelativeFiles(join(repoRoot, "dist"));
 
 const packDir = mkdtempSync(join(tmpdir(), "mcpi-ext-pack-"));
 const packJson = run("npm", ["pack", "--json", "--pack-destination", packDir], {
@@ -102,6 +118,11 @@ console.log(`Packed ${packed.filename} — ${packed.entryCount} files, ${packed.
 // Tarball contents
 // ---------------------------------------------------------------------------
 
+check("release build emits no test fixture modules", () => {
+  const leaked = releasePaths.filter((path) => /(^|\/)fixtures\.(js|d\.ts)$/.test(path));
+  assert(leaked.length === 0, `found ${leaked.join(", ")}`);
+});
+
 check("tarball ships no test files", () => {
   const leaked = packedPaths.filter((path) => /\.test\.(js|d\.ts)$/.test(path));
   assert(leaked.length === 0, `found ${leaked.join(", ")}`);
@@ -109,6 +130,11 @@ check("tarball ships no test files", () => {
 
 check("tarball ships no fixture servers", () => {
   const leaked = packedPaths.filter((path) => path.includes("test-servers/"));
+  assert(leaked.length === 0, `found ${leaked.join(", ")}`);
+});
+
+check("tarball ships no test fixture modules", () => {
+  const leaked = packedPaths.filter((path) => /(^|\/)fixtures\.(js|d\.ts)$/.test(path));
   assert(leaked.length === 0, `found ${leaked.join(", ")}`);
 });
 
@@ -128,6 +154,12 @@ check("package declares its managed extension entry point", () => {
     JSON.stringify(packageManifest.pi?.extensions) === JSON.stringify(["./dist/index.js"]),
     `pi.extensions is ${JSON.stringify(packageManifest.pi?.extensions)}`,
   );
+});
+
+check("package excludes test fixture modules from publication", () => {
+  for (const exclusion of ["!dist/**/fixtures.js", "!dist/**/fixtures.d.ts"]) {
+    assert(packageManifest.files?.includes(exclusion), `missing files rule ${exclusion}`);
+  }
 });
 
 check("published JavaScript has no runtime reference to the mcpi peer", () => {

@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const offline = process.argv.includes("--offline");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const buildConfig = readFileSync(join(root, "tsconfig.build.json"), "utf8");
 
 const failures = [];
 const notes = [];
@@ -62,6 +63,22 @@ check("managed extension manifest", () => {
   ok("managed package declares ./dist/index.js");
 });
 
+check("test fixture exclusions", () => {
+  const expectedPackageExclusions = ["!dist/**/fixtures.js", "!dist/**/fixtures.d.ts"];
+  const missingPackageExclusions = expectedPackageExclusions.filter(
+    (pattern) => !pkg.files?.includes(pattern),
+  );
+  if (missingPackageExclusions.length > 0) {
+    throw new Error(
+      `package files must exclude test-only fixture modules: ${missingPackageExclusions.join(", ")}`,
+    );
+  }
+  if (!buildConfig.includes('"src/**/fixtures.ts"')) {
+    throw new Error("tsconfig.build.json must exclude test-only src/**/fixtures.ts modules");
+  }
+  ok("test-only fixture modules excluded from the release build and tarball");
+});
+
 check("pinned dependencies", () => {
   const deps = pkg.dependencies ?? {};
   if (deps["@modelcontextprotocol/client"] !== "2.0.0") {
@@ -102,7 +119,10 @@ check("packed contents", () => {
   const files = JSON.parse(raw)[0].files.map((f) => f.path);
   const leaked = files.filter(
     (f) =>
-      /\.test\.(js|d\.ts)$/.test(f) || f.startsWith("dist/test-servers/") || f.endsWith(".map"),
+      /\.test\.(js|d\.ts)$/.test(f) ||
+      /(^|\/)fixtures\.(js|d\.ts)$/.test(f) ||
+      f.startsWith("dist/test-servers/") ||
+      f.endsWith(".map"),
   );
   if (leaked.length > 0) {
     throw new Error(`tarball would ship non-production files: ${leaked.join(", ")}`);
