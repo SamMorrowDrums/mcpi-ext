@@ -5,6 +5,7 @@ import {
   buildCatalogSnapshot,
   resolveIdentity,
   resolveTool,
+  type CatalogEntry,
   type CatalogSnapshot,
   type ServerTrust,
   type ServerTrustConfig,
@@ -586,5 +587,4 @@ function formatApprovalReasons(codeModeTool: CodeModeTool): string {
         : "annotations.readOnlyHint is not true",
     )
     .join("; ");
-}
 }

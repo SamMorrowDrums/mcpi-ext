@@ -214,11 +214,14 @@ describe("CodeModeManager reliability", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
-  it("surfaces a policy denial as a structured failure rather than a text success", async () => {
+  it("surfaces a declined approval as a structured failure rather than a text success", async () => {
     const callTool = vi.fn(async () =>
       adaptTerminalCallToolResult({ content: [{ type: "text", text: "closed" }] }),
     );
     const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    // The user is asked and says no. A write is no longer refused before it is
+    // put to them, so declining is the only way a denial arises — and it must
+    // still reach the script as an error, never as a plausible-looking result.
     initCodeMode(
       codeMode,
       [
@@ -227,7 +230,7 @@ describe("CodeModeManager reliability", () => {
         }),
       ],
       callTool,
-      true,
+      false,
     );
 
     const denied = await codeMode.executeCode(
@@ -235,8 +238,13 @@ describe("CodeModeManager reliability", () => {
     );
 
     expect(denied.result).toBeUndefined();
-    expect(denied.errorDetails?.error).toBe("permission_denied");
+    expect(denied.errorDetails?.error).toBe("approval_declined");
     expect(denied.errorDetails?.toolName).toBe("write_records");
+    // The error names the annotations that made the call ask, so a declined
+    // write reads as "you said no to this", not "that tool was unreachable".
+    expect(denied.errorDetails?.reason).toBe(
+      "annotations.readOnlyHint is not true; annotations.destructiveHint is true",
+    );
     expect(callTool).not.toHaveBeenCalled();
   });
 
@@ -278,16 +286,16 @@ describe("CodeModeManager reliability", () => {
         name: "reporting",
         uri: "skill://reporting",
         serverName: "fixture",
-        allowedTools: ["gated_search"],
+        referencedTools: ["gated_search"],
       },
     ]);
     codeMode.initialize(manager, policy);
 
-    expect(policy.isGated("gated_search")).toBe(true);
+    expect(policy.isDeferred("gated_search")).toBe(true);
 
-    // Skill exposure decides what the model may *call* without loading a
-    // skill. Letting it also decide what Code Mode can *see* would hide a
-    // tool from search while the policy would have allowed the call.
+    // Skill references decide which schemas the model can *read* on the direct
+    // proxy surface. Letting that also decide what Code Mode can *see* would
+    // hide a tool from search while the policy would have allowed the call.
     const found = codeMode.discover("search", { query: "search" }) as {
       hits: { ref: string }[];
     };
@@ -316,7 +324,7 @@ describe("CodeModeManager reliability", () => {
       name: "reporting",
       uri: "skill://reporting",
       serverName: "fixture",
-      allowedTools: ["gated_search"],
+      referencedTools: ["gated_search"],
     };
     policy.registerSkills([skill]);
     codeMode.initialize(manager, policy);
@@ -324,9 +332,9 @@ describe("CodeModeManager reliability", () => {
     const query = { query: "search", limit: 10 };
     const before = JSON.stringify(codeMode.discover("search", { ...query }));
 
-    const outcome = await policy.activateSkillGrant(skill);
-    expect(outcome.status).toBe("granted");
-    expect(policy.isGated("gated_search")).toBe(false);
+    const outcome = policy.activateSkillReference(skill);
+    expect(outcome.status).toBe("activated");
+    expect(policy.isDeferred("gated_search")).toBe(false);
 
     const after = JSON.stringify(codeMode.discover("search", { ...query }));
 

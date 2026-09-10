@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { McpTool } from "../mcp/index.js";
-import type { CodeModeTool } from "./eligibility.js";
+import { approvalPosture, serializeApprovalPosture, type CodeModeTool } from "./eligibility.js";
 import {
   deriveNamespaces,
   namespaceForTool,
@@ -59,6 +59,15 @@ export interface CatalogEntry {
    * invalidates approvals keyed to it.
    */
   readonly definitionDigest: string;
+  /**
+   * Serialized approval posture — effect class, unattended flag, and the
+   * normalized reasons behind it.
+   *
+   * Carried explicitly rather than recomputed at each use, so that a change in
+   * how a tool is approved is visible in the snapshot id itself and not only
+   * inside an opaque digest.
+   */
+  readonly approval: string;
   readonly effect: ToolEffect;
   /** Operator-declared trust in the server that published this tool. */
   readonly trust: ServerTrust;
@@ -135,6 +144,7 @@ export function buildCatalogSnapshot(
         ...(unique ? { alias: sanitizeIdentifier(tool.name) } : {}),
         schemaHash: hashSchemas(entry),
         definitionDigest: hashDefinition(entry, namespace),
+        approval: serializeApprovalPosture(approvalPosture(entry)),
         effect: toolEffect(tool),
         trust: options.trust?.[tool.serverName] ?? DEFAULT_SERVER_TRUST,
         tool,
@@ -353,7 +363,7 @@ function hashDefinition(entry: CodeModeTool, namespace: string): string {
       provenance: entry.outputSchemaProvenance,
       annotations: tool.annotations ?? null,
       meta: tool._meta ?? null,
-      callable: entry.callable,
+      approval: serializeApprovalPosture(approvalPosture(entry)),
     }),
   );
 }
@@ -379,7 +389,7 @@ function computeSnapshotId(entries: readonly CatalogEntry[]): string {
     .map(
       (entry) =>
         `${entry.serverName}\t${entry.namespace}\t${entry.toolName}\t${entry.schemaHash}\t` +
-        `${entry.definitionDigest}\t${entry.effect}\t${entry.trust}\t${String(entry.entry.callable)}`,
+        `${entry.definitionDigest}\t${entry.effect}\t${entry.trust}\t${entry.approval}`,
     )
     .sort(compareStrings);
   return sha256(lines.join("\n"));
