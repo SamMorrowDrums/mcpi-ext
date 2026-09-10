@@ -76,6 +76,18 @@ export interface DeriveNamespacesOptions {
   readonly identities?: Readonly<Record<string, ServerIdentity>>;
 }
 
+/**
+ * Contract version this client understands.
+ *
+ * A declaration carrying a higher major version is ignored rather than parsed
+ * optimistically. The fields might well line up, but "the keys I know are still
+ * there" is not the same as "the meaning is unchanged" — and a v2 that redefined
+ * `effect` would be silently misread as a v1 safety claim. Falling through to
+ * operator config or the server-only summary is the honest failure: it says
+ * "this client does not understand you" instead of guessing.
+ */
+export const SUPPORTED_TOOLSET_VERSION = 1;
+
 const MAX_SUMMARY_CHARS = 160;
 const MAX_TITLE_CHARS = 60;
 const MAX_EFFECTS_CHARS = 40;
@@ -107,6 +119,10 @@ export function readToolsetDeclaration(tool: McpTool): NamespaceDeclaration | un
       const record = raw as Record<string, unknown>;
       const id = typeof record.id === "string" ? record.id.trim() : "";
       if (!id) continue;
+      // Absent `v` is treated as v1: the field was added to the contract after
+      // the shape was, and a server that omits it is not claiming v2.
+      const version = typeof record.v === "number" ? record.v : SUPPORTED_TOOLSET_VERSION;
+      if (!Number.isInteger(version) || version > SUPPORTED_TOOLSET_VERSION) continue;
       // `namespace` is read as display metadata only, never as identity: the
       // server cannot know the name an operator configured it under, so the
       // canonical path is always built client-side from serverName + id.

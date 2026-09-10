@@ -16,6 +16,51 @@ export function loadGithubFixture(serverName = "github"): McpTool[] {
   return tools.map((tool) => ({ ...tool, serverName }) as McpTool);
 }
 
+/** The `_meta` key the experimental github-mcp-server publishes toolsets under. */
+export const GITHUB_TOOLSET_KEY = "com.github.mcp.experimental/toolset";
+
+/** One shipped toolset declaration, exactly as it appears on the wire. */
+export interface ShippedToolset {
+  readonly v: number;
+  readonly id: string;
+  readonly title?: string;
+  readonly summary?: string;
+  readonly effect?: string;
+  readonly parent?: string;
+}
+
+/**
+ * The 21 toolsets the experimental github-mcp-server publishes.
+ *
+ * Transcribed from the shipped server rather than invented here. Budget gates
+ * that run against a handful of made-up namespaces prove nothing: the real
+ * vocabulary is seven times larger, carries titles and prose summaries, and
+ * includes a parent edge — all of which cost tokens that a small sample hides.
+ *
+ * Note the published set is not the declared set: `copilot_spaces` and
+ * `github_support_docs_search` are feature-flagged off, so 23 declared toolsets
+ * publish as 21.
+ */
+export function loadGithubToolsets(): ShippedToolset[] {
+  const path = fileURLToPath(new URL("./fixtures/github-toolsets-21.json", import.meta.url));
+  return JSON.parse(readFileSync(path, "utf8")) as ShippedToolset[];
+}
+
+/**
+ * Spread tools across the shipped toolsets so every namespace is populated.
+ *
+ * Which tool lands in which toolset does not matter for a prompt budget — the
+ * rendered block carries no tool names and no counts, which is the property
+ * under test. What matters is that all 21 declarations are present.
+ */
+export function withShippedToolsets(tools: readonly McpTool[]): McpTool[] {
+  const toolsets = loadGithubToolsets();
+  return tools.map((tool, index) => {
+    const toolset = toolsets[index % toolsets.length] as ShippedToolset;
+    return { ...tool, _meta: { [GITHUB_TOOLSET_KEY]: toolset } } as McpTool;
+  });
+}
+
 /** Conservative token estimate. Deliberately an under-count, so gates bite early. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
