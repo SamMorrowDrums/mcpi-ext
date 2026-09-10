@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicy } from "../mcp/policy.js";
-import type { ExecuteResult } from "./executor.js";
+import { CodeModeDispatchError, type ExecuteResult, type SandboxRequest } from "./executor.js";
 import { CodeModeManager } from "./index.js";
 
 const structuredValues: CallToolResult["structuredContent"][] = [
@@ -271,6 +271,98 @@ describe("CodeModeManager reliability", () => {
     },
   );
 
+  it.each([false, 0, "", null])(
+    "preserves falsey declared structuredContent inside the terminal envelope: %j",
+    async (structuredContent) => {
+      const protocolResult: CallToolResult = { content: [], structuredContent };
+      const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+      const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+      initCodeMode(
+        codeMode,
+        [
+          makeTool("declared_read", {
+            annotations: { readOnlyHint: true },
+            outputSchema: {},
+          }),
+        ],
+        callTool,
+      );
+
+      const result = await codeMode.executeCode(`
+        const terminal = await codemode.declared_read({});
+        return terminal.structuredContent;
+      `);
+
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual(structuredContent);
+    },
+  );
+
+  it("preserves a declared mixed-content error envelope when structuredContent is absent", async () => {
+    const protocolResult: CallToolResult = {
+      content: [
+        { type: "text", text: "GitHub rejected the query" },
+        {
+          type: "resource_link",
+          uri: "https://api.github.com/issues/1",
+          name: "issue",
+        },
+        {
+          type: "resource",
+          resource: {
+            uri: "file:///diagnostic.txt",
+            text: "query diagnostic",
+            mimeType: "text/plain",
+          },
+        },
+      ],
+      isError: true,
+      _meta: { requestId: "request-123" },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("declared_read", {
+          annotations: { readOnlyHint: true },
+          outputSchema: {
+            type: "object",
+            properties: { total_count: { type: "number" } },
+            required: ["total_count"],
+          },
+        }),
+      ],
+      callTool,
+    );
+
+    const result = await codeMode.executeCode("return await codemode.declared_read({});");
+
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual(protocolResult);
+    expect(result.result).not.toHaveProperty("structuredContent");
+  });
+
+  it("preserves a synthesized text-only result without inventing structuredContent", async () => {
+    const protocolResult: CallToolResult = {
+      content: [{ type: "text", text: "plain text only" }],
+      _meta: { source: "fixture" },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    initCodeMode(
+      codeMode,
+      [makeTool("schema_less_read", { annotations: { readOnlyHint: true } })],
+      callTool,
+    );
+
+    const result = await codeMode.executeCode("return await codemode.schema_less_read({});");
+
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual(protocolResult);
+    expect(result.result).not.toHaveProperty("structuredContent");
+  });
+
   it("indexes and ranks skill-gated tools, because visibility is not authority", () => {
     const codeMode = new CodeModeManager();
     const manager = fakeManager(
@@ -445,6 +537,143 @@ describe("CodeModeManager reliability", () => {
     expect(result.result).toEqual([pinned, pinned]);
   });
 
+  it("refuses a target definition changed after the run snapshot was captured", async () => {
+    const original = makeTool("read_records", {
+      description: "Read the captured records.",
+      annotations: { readOnlyHint: true },
+    });
+    const unrelated = makeTool("list_projects", {
+      description: "List projects.",
+      annotations: { readOnlyHint: true },
+    });
+    let tools = [original, unrelated];
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn(async (request: SandboxRequest): Promise<ExecuteResult> => {
+      tools = [
+        makeTool("read_records", {
+          description: "Read a materially different set of records.",
+          annotations: { readOnlyHint: true },
+        }),
+        unrelated,
+      ];
+      return dispatchOnce(request, "read_records");
+    });
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+
+    expect(result.errorDetails).toMatchObject({
+      error: "stale_snapshot",
+      toolName: "read_records",
+    });
+    expect(callTool).not.toHaveBeenCalled();
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "read_records",
+      decision: "denied",
+      reason: "stale_snapshot",
+    });
+  });
+
+  it("revalidates a write definition after approval before dispatch", async () => {
+    const original = makeTool("write_records", {
+      description: "Write the captured records.",
+      annotations: { readOnlyHint: false },
+    });
+    let tools = [original];
+    let resolveApproval!: (approved: boolean | undefined) => void;
+    const confirm = vi.fn(
+      () =>
+        new Promise<boolean | undefined>((resolve) => {
+          resolveApproval = resolve;
+        }),
+    );
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn((request: SandboxRequest) =>
+      dispatchOnce(request, "write_records"),
+    );
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager, approvals: { confirm } });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const execution = codeMode.executeCode("return 1;", undefined, snapshotId);
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    tools = [
+      makeTool("write_records", {
+        description: "Write a materially different set of records.",
+        annotations: { readOnlyHint: false },
+      }),
+    ];
+    resolveApproval(true);
+    const result = await execution;
+
+    expect(result.errorDetails).toMatchObject({
+      error: "stale_snapshot",
+      toolName: "write_records",
+    });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(callTool).not.toHaveBeenCalled();
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "write_records",
+      decision: "denied",
+      reason: "stale_snapshot",
+      approval: "granted",
+    });
+  });
+
+  it("continues when only an unrelated live definition changes", async () => {
+    const target = makeTool("read_records", {
+      description: "Read records.",
+      annotations: { readOnlyHint: true },
+    });
+    let tools = [
+      target,
+      makeTool("list_projects", {
+        description: "List the captured projects.",
+        annotations: { readOnlyHint: true },
+      }),
+    ];
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult({ content: [] }));
+    const sandboxExecutor = vi.fn(async (request: SandboxRequest): Promise<ExecuteResult> => {
+      tools = [
+        target,
+        makeTool("list_projects", {
+          description: "List a different set of projects.",
+          annotations: { readOnlyHint: true },
+        }),
+      ];
+      return dispatchOnce(request, "read_records");
+    });
+    const manager = mutableFakeManager(() => tools, callTool);
+    const policy = new McpPolicy({ gateway: manager });
+    const codeMode = new CodeModeManager({ sandboxExecutor });
+    codeMode.initialize(manager, policy);
+    const snapshotId = codeMode.getSnapshot().snapshotId;
+
+    const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+
+    expect(result.error).toBeUndefined();
+    expect(callTool).toHaveBeenCalledTimes(1);
+    expect(policy.getAuditLog()).toHaveLength(1);
+    expect(policy.getAuditLog()[0]).toMatchObject({
+      source: "code-mode",
+      operation: "tool",
+      toolName: "read_records",
+      decision: "allowed",
+    });
+  });
+
   it("moves the snapshot id when an effect class changes but schemas do not", () => {
     const outputSchema = { type: "object", properties: { ok: { type: "boolean" } } } as const;
     const read = new CodeModeManager();
@@ -469,7 +698,7 @@ describe("CodeModeManager reliability", () => {
     expect(read.getSnapshot().snapshotId).not.toBe(write.getSnapshot().snapshotId);
   });
 
-  it("refuses a stale snapshot pin before starting the isolate", async () => {
+  it("refuses every supplied nonmatching snapshot id before starting the isolate", async () => {
     const sandboxExecutor = vi.fn(async (): Promise<ExecuteResult> => ({
       result: "ran anyway",
       logs: [],
@@ -481,19 +710,170 @@ describe("CodeModeManager reliability", () => {
       vi.fn(),
     );
 
-    const result = await codeMode.executeCode("return 1;", undefined, "sha256-of-an-older-catalog");
-
-    expect(result.errorDetails?.error).toBe("stale_snapshot");
+    const current = codeMode.getSnapshot();
+    const wrongFullHash = `${current.snapshotId[0] === "0" ? "1" : "0"}${current.snapshotId.slice(1)}`;
+    const invalidSnapshotIds = [
+      "",
+      current.snapshotId.slice(0, 12),
+      current.entries[0].schemaHash,
+      "g".repeat(64),
+      wrongFullHash,
+    ];
+    for (const snapshotId of invalidSnapshotIds) {
+      const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
+      expect(result.errorDetails?.error).toBe("stale_snapshot");
+    }
     expect(sandboxExecutor).not.toHaveBeenCalled();
 
     // The current id is accepted, so pinning is not a one-way trap.
-    const fresh = await codeMode.executeCode(
-      "return 1;",
-      undefined,
-      codeMode.getSnapshot().snapshotId,
-    );
+    const fresh = await codeMode.executeCode("return 1;", undefined, current.snapshotId);
     expect(fresh.errorDetails).toBeUndefined();
     expect(sandboxExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands a full describe snapshot to execution and recovers once after catalog drift", async () => {
+    const searchOutputSchema = {
+      type: "object",
+      properties: {
+        total_count: { type: "number" },
+        incomplete_results: { type: "boolean" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { number: { type: "number" } },
+            required: ["number"],
+          },
+        },
+      },
+      required: ["total_count", "incomplete_results", "items"],
+    } as const;
+    let tools = [
+      makeTool("search_issues", {
+        annotations: { readOnlyHint: true },
+        outputSchema: searchOutputSchema,
+      }),
+    ];
+    const protocolResult: CallToolResult = {
+      content: [
+        {
+          type: "text",
+          text: '{"total_count":73,"incomplete_results":false,"items":[{"number":1}]}',
+        },
+      ],
+      structuredContent: {
+        total_count: 73,
+        incomplete_results: false,
+        items: [{ number: 1 }],
+      },
+      isError: false,
+      _meta: { serverInfo: { name: "github-mcp-server" } },
+    };
+    const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
+    const manager = mutableFakeManager(() => tools, callTool);
+    const codeMode = new CodeModeManager({ timeoutMs: 5000 });
+    codeMode.initialize(manager, new McpPolicy({ gateway: manager }));
+    const { codeSearch, codeExecute } = codeMode.createTools();
+    const runCode = (snapshotId: string, code: string) =>
+      codeExecute.execute("execute", { code, snapshotId }, undefined, undefined, {} as never);
+
+    const firstDescribe = await codeSearch.execute(
+      "describe-1",
+      { op: "describe", refs: ["fixture/search_issues"] },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const firstText = firstDescribe.content.find((block) => block.type === "text")?.text ?? "";
+    const firstSnapshot =
+      /snapshotId \(full; pass as code_execute\.snapshotId\): ([a-f0-9]{64})/.exec(firstText)?.[1];
+    expect(firstSnapshot).toBeDefined();
+    if (!firstSnapshot) return;
+
+    const firstRun = await runCode(
+      firstSnapshot,
+      `
+        const result = await codemode.search_issues({ query: "is:issue is:open" });
+        return {
+          total: result.structuredContent.total_count,
+          contentType: result.content[0].type,
+          isError: result.isError,
+          server: result._meta.serverInfo.name,
+        };
+      `,
+    );
+    const firstResultText = firstRun.content.find((block) => block.type === "text")?.text;
+    expect(firstResultText ? JSON.parse(firstResultText) : undefined).toEqual({
+      total: 73,
+      contentType: "text",
+      isError: false,
+      server: "github-mcp-server",
+    });
+    expect(callTool).toHaveBeenCalledTimes(1);
+
+    tools = [
+      makeTool("search_issues", {
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          ...searchOutputSchema,
+          properties: {
+            ...searchOutputSchema.properties,
+            page_count: { type: "number" },
+          },
+        },
+      }),
+    ];
+    callTool.mockClear();
+
+    const stale = await runCode(
+      firstSnapshot,
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(stale.details.error).toBe("stale_snapshot");
+    expect(stale.details.message).toContain("relevant code_search");
+    expect(stale.details.message).toContain("new full snapshotId");
+    expect(stale.details.message).toContain("intentional unpinned execution");
+    expect(stale.details.message).toContain("gives up stale-catalog protection");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const currentSchemaHash = codeMode.getSnapshot().entries[0].schemaHash;
+    const schemaHashAttempt = await runCode(
+      currentSchemaHash,
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(schemaHashAttempt.details.error).toBe("stale_snapshot");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const truncatedAttempt = await runCode(
+      firstSnapshot.slice(0, 12),
+      "return await codemode.search_issues({ query: 'is:issue' });",
+    );
+    expect(truncatedAttempt.details.error).toBe("stale_snapshot");
+    expect(callTool).not.toHaveBeenCalled();
+
+    const secondDescribe = await codeSearch.execute(
+      "describe-2",
+      { op: "describe", refs: ["fixture/search_issues"] },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    const secondText = secondDescribe.content.find((block) => block.type === "text")?.text ?? "";
+    const secondSnapshot =
+      /snapshotId \(full; pass as code_execute\.snapshotId\): ([a-f0-9]{64})/.exec(secondText)?.[1];
+    expect(secondSnapshot).toBeDefined();
+    expect(secondSnapshot).not.toBe(firstSnapshot);
+    if (!secondSnapshot) return;
+
+    const fresh = await runCode(
+      secondSnapshot,
+      `
+        const result = await codemode.search_issues({ query: "is:issue is:open" });
+        return result.structuredContent.total_count;
+      `,
+    );
+    expect(fresh.content.find((block) => block.type === "text")?.text).toBe("73");
+    expect(callTool).toHaveBeenCalledTimes(1);
   });
 
   it("forwards host cancellation into the policy call", async () => {
@@ -522,14 +902,39 @@ function makeTool(name: string, overrides: Partial<McpTool> = {}): McpTool {
 }
 
 function fakeManager(tools: McpTool[], callTool: ReturnType<typeof vi.fn>): McpClientManager {
+  return mutableFakeManager(() => tools, callTool);
+}
+
+function mutableFakeManager(
+  readTools: () => McpTool[],
+  callTool: ReturnType<typeof vi.fn>,
+): McpClientManager {
   return {
-    getTools: () => tools,
-    getConnectedServers: () => [...new Set(tools.map((t) => t.serverName))],
-    getToolsForServer: (name: string) => tools.filter((t) => t.serverName === name),
+    getTools: () => readTools(),
+    getConnectedServers: () => [...new Set(readTools().map((tool) => tool.serverName))],
+    getToolsForServer: (name: string) => readTools().filter((tool) => tool.serverName === name),
     callTool,
     listResources: async () => [],
     readResource: async () => ({ contents: [] }),
   } as unknown as McpClientManager;
+}
+
+async function dispatchOnce(request: SandboxRequest, toolName: string): Promise<ExecuteResult> {
+  try {
+    const result = await request.dispatch(
+      { kind: "identity", serverName: "fixture", toolName },
+      {},
+    );
+    return { result, logs: [] };
+  } catch (error) {
+    if (!(error instanceof CodeModeDispatchError)) throw error;
+    return {
+      result: undefined,
+      error: error.message,
+      errorDetails: error.details,
+      logs: [],
+    };
+  }
 }
 
 /** Wire a fake manager through the real policy, mirroring production wiring. */

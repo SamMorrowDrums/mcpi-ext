@@ -10,8 +10,12 @@ import type {
   SkillsListResult,
 } from "../skills/sep2640/protocol.js";
 import { SKILLS_EXTENSION_NAME } from "../skills/sep2640/spec.js";
+import { computeDefinitionDigest } from "../code-mode/catalog.js";
 import type { TerminalCallToolResult } from "./call-tool-result.js";
 import type { McpTool } from "./client-manager.js";
+import { isReadOnlyToolCall } from "./tool-call-classification.js";
+
+export { isReadOnlyToolCall } from "./tool-call-classification.js";
 
 /**
  * Which execution path asked for an MCP operation. Recorded on every audit
@@ -35,6 +39,7 @@ export type McpPolicyDenialReason =
   | "server_not_connected"
   | "tool_not_discovered"
   | "invalid_arguments"
+  | "stale_snapshot"
   | "approval_declined"
   | "approval_unavailable"
   | "cancelled"
@@ -173,6 +178,14 @@ export interface McpToolCallRequest {
   serverName: string;
   toolName: string;
   args: Record<string, unknown>;
+  /**
+   * Code Mode's captured target definition. Proxy and tool-cli calls omit this
+   * because they intentionally authorize against the current live definition.
+   */
+  expectedDefinition?: {
+    readonly definitionDigest: string;
+    readonly namespace: string;
+  };
   signal?: AbortSignal;
 }
 
@@ -510,9 +523,14 @@ export class McpPolicy {
    * by a Code Mode script, and by tool-cli.
    */
   async callTool(request: McpToolCallRequest): Promise<TerminalCallToolResult> {
-    const { source, serverName, toolName, args, signal } = request;
+    const { source, serverName, toolName, args, expectedDefinition, signal } = request;
 
-    const deny = (reason: McpPolicyDenialReason, message: string, alternatives?: string[]) => {
+    const deny = (
+      reason: McpPolicyDenialReason,
+      message: string,
+      alternatives?: string[],
+      approval?: McpApprovalOutcome,
+    ) => {
       this.record({
         source,
         operation: "tool",
@@ -520,6 +538,7 @@ export class McpPolicy {
         toolName,
         decision: "denied",
         reason,
+        ...(approval !== undefined ? { approval } : {}),
       });
       return new McpPolicyError({
         reason,
@@ -531,22 +550,56 @@ export class McpPolicy {
       });
     };
 
-    if (!this.gateway.getConnectedServers().includes(serverName)) {
-      throw deny(
-        "server_not_connected",
-        `MCP server "${serverName}" is not connected, so "${toolName}" cannot be called.`,
+    const staleDefinition = (approval?: McpApprovalOutcome) =>
+      deny(
+        "stale_snapshot",
+        `The MCP catalog changed after Code Mode captured "${serverName}/${toolName}". ` +
+          "Re-run the relevant code_search operation, check the definition you depend on, and " +
+          "pass its new full snapshotId to code_execute. The changed definition was not dispatched.",
+        undefined,
+        approval,
       );
-    }
 
-    // Discovery check: an undiscovered tool name never reaches upstream.
-    const tool = this.gateway
-      .getToolsForServer(serverName)
-      .find((candidate) => candidate.name === toolName);
-    if (!tool) {
-      throw deny(
-        "tool_not_discovered",
-        `Tool "${toolName}" was not discovered on MCP server "${serverName}". Only discovered tools can be called.`,
-      );
+    const requireExpectedDefinition = (approval?: McpApprovalOutcome): McpTool => {
+      if (!this.gateway.getConnectedServers().includes(serverName)) {
+        throw staleDefinition(approval);
+      }
+      const liveTool = this.gateway
+        .getToolsForServer(serverName)
+        .find((candidate) => candidate.name === toolName);
+      if (
+        !liveTool ||
+        !expectedDefinition ||
+        computeDefinitionDigest(liveTool, expectedDefinition.namespace) !==
+          expectedDefinition.definitionDigest
+      ) {
+        throw staleDefinition(approval);
+      }
+      return liveTool;
+    };
+
+    let tool: McpTool;
+    if (expectedDefinition) {
+      tool = requireExpectedDefinition();
+    } else {
+      if (!this.gateway.getConnectedServers().includes(serverName)) {
+        throw deny(
+          "server_not_connected",
+          `MCP server "${serverName}" is not connected, so "${toolName}" cannot be called.`,
+        );
+      }
+
+      // Discovery check: an undiscovered tool name never reaches upstream.
+      const discoveredTool = this.gateway
+        .getToolsForServer(serverName)
+        .find((candidate) => candidate.name === toolName);
+      if (!discoveredTool) {
+        throw deny(
+          "tool_not_discovered",
+          `Tool "${toolName}" was not discovered on MCP server "${serverName}". Only discovered tools can be called.`,
+        );
+      }
+      tool = discoveredTool;
     }
 
     const invalid = validateToolArguments(tool.inputSchema, args);
@@ -607,6 +660,11 @@ export class McpPolicy {
     if (signal?.aborted) {
       throw deny("cancelled", `Call to "${toolName}" was cancelled before dispatch.`);
     }
+
+    // Approval may suspend this call while the server reconnects or publishes a
+    // new catalog. A Code Mode call is authorized only for the exact definition
+    // captured by its run, so re-read and compare immediately before dispatch.
+    if (expectedDefinition) requireExpectedDefinition(approval);
 
     const terminal = await this.gateway.callTool(serverName, toolName, args, signal);
     this.record({
@@ -1112,15 +1170,6 @@ export class McpPolicy {
     }
     this.onAudit?.(entry);
   }
-}
-
-/**
- * A tool call is treated as read-only only when the server explicitly declares
- * it read-only and does not also declare it destructive. This is the same
- * predicate Code Mode uses for dispatch eligibility.
- */
-export function isReadOnlyToolCall(tool: McpTool): boolean {
-  return tool.annotations?.readOnlyHint === true && tool.annotations.destructiveHint !== true;
 }
 
 function isSkillResourceUri(resource: Resource): boolean {

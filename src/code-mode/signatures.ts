@@ -5,11 +5,14 @@ type JsonSchema = Record<string, unknown>;
 
 /** Honest description of what a caller may assume about a tool's result. */
 export const UNKNOWN_OUTPUT_NOTE =
-  "output: unknown — this server declared no output schema. Call it, then use codemode.inspect(result) to learn the shape.";
+  "result note: this server declared no output schema, so structuredContent is optional unknown. Use codemode.inspect(result), then codemode.inspect(result.structuredContent) when it is present.";
 
 const SEARCH_DESCRIPTION_CHARS = 120;
 const DESCRIBE_DESCRIPTION_CHARS = 400;
 const PARAM_DESCRIPTION_CHARS = 160;
+const PARAM_TYPE_CHARS = 200;
+const STRUCTURED_CONTENT_TYPE_CHARS = 360;
+const CONTENT_BLOCK_TYPE = "Array<{ type: string } & Record<string, unknown>>";
 
 /**
  * One compact line naming a tool's parameters without their schemas.
@@ -38,13 +41,15 @@ export function renderSearchRow(entry: CatalogEntry): string {
 /**
  * A full compact signature for one tool.
  *
- * Measured at roughly 46% of the raw JSON schema for the same tool, and it is
- * only ever produced for refs the caller explicitly asked about.
+ * Only produced for refs the caller explicitly asked about. Large nested
+ * schemas are summarized at valid type boundaries so one tool cannot consume
+ * the whole discovery response budget.
  */
 export function renderCompactSignature(entry: CatalogEntry): string {
   const lines: string[] = [];
   lines.push(`${entry.ref} [${entry.effect}]`);
-  lines.push(`  namespace: ${entry.namespace}  schemaHash: ${entry.schemaHash.slice(0, 12)}`);
+  lines.push(`  namespace: ${entry.namespace}`);
+  lines.push(`  schemaHash (not snapshotId): ${entry.schemaHash.slice(0, 12)}`);
 
   const description = clamp(entry.tool.description, DESCRIBE_DESCRIPTION_CHARS);
   if (description) lines.push(`  ${description}`);
@@ -61,8 +66,13 @@ export function renderCompactSignature(entry: CatalogEntry): string {
     for (const name of names) {
       const schema = properties[name] as JsonSchema;
       const optional = required.has(name) ? "" : "?";
-      const type = jsonSchemaToTypeString(schema, definitions);
-      lines.push(`    ${name}${optional}: ${collapseType(type)}`);
+      lines.push(
+        `    ${safePropertyName(name)}${optional}: ${boundedSchemaType(
+          schema,
+          definitions,
+          PARAM_TYPE_CHARS,
+        )}`,
+      );
       const paramDescription = clamp(
         typeof schema.description === "string" ? schema.description : undefined,
         PARAM_DESCRIPTION_CHARS,
@@ -72,23 +82,42 @@ export function renderCompactSignature(entry: CatalogEntry): string {
   }
 
   lines.push(`  ${renderOutputNote(entry)}`);
+  lines.push(`  ${renderResultGuard(entry)}`);
   return lines.join("\n");
 }
 
 /**
- * Say what is actually known about the output.
+ * Render the asynchronous result as the raw MCP envelope Code Mode returns.
  *
- * A declared schema becomes a real type. An absent one is reported as unknown,
- * never as `Record<string, unknown>` — claiming an object shape a server never
- * promised is how a model ends up indexing into undefined with confidence.
+ * The declared output schema types `structuredContent`, not the top level.
+ * Unknown and future envelope fields remain representable through the index
+ * signature, while `content`, `isError`, and `_meta` stay visible.
  */
 export function renderOutputNote(entry: CatalogEntry): string {
+  const structuredContentType =
+    entry.entry.outputSchemaProvenance === "declared" && entry.entry.outputSchema
+      ? boundedSchemaType(
+          entry.entry.outputSchema as JsonSchema,
+          readDefinitions(entry.entry.outputSchema as JsonSchema),
+          STRUCTURED_CONTENT_TYPE_CHARS,
+        )
+      : "unknown";
+  return (
+    `returns: Promise<{ content: ${CONTENT_BLOCK_TYPE}; ` +
+    `structuredContent?: ${structuredContentType}; isError?: boolean; ` +
+    `_meta?: Record<string, unknown>; [field: string]: unknown }>`
+  );
+}
+
+function renderResultGuard(entry: CatalogEntry): string {
   if (entry.entry.outputSchemaProvenance !== "declared" || !entry.entry.outputSchema) {
     return UNKNOWN_OUTPUT_NOTE;
   }
-  const schema = entry.entry.outputSchema as JsonSchema;
-  const type = jsonSchemaToTypeString(schema, readDefinitions(schema));
-  return `output (declared): ${collapseType(type)}`;
+  return (
+    "result guard: successful non-error structuredContent is MCP-client validated, but an " +
+    "isError envelope may omit it. Check result.isError || " +
+    "result.structuredContent === undefined before reading declared fields."
+  );
 }
 
 function readProperties(schema: JsonSchema | undefined): {
@@ -110,13 +139,106 @@ function readDefinitions(schema: JsonSchema | undefined): Record<string, JsonSch
   return (schema.$defs ?? schema.definitions) as Record<string, JsonSchema> | undefined;
 }
 
-/** Flatten a multi-line generated type onto one line, with a length guard. */
+/**
+ * Render a schema as a syntactically complete compact type.
+ *
+ * Large nested definitions are summarized rather than sliced mid-token. The
+ * old character truncation could emit invalid source such as an unterminated
+ * object type; a bounded approximation is both valid and more honest.
+ */
+function boundedSchemaType(
+  schema: JsonSchema,
+  definitions: Record<string, JsonSchema> | undefined,
+  maxChars: number,
+): string {
+  const complete = collapseType(jsonSchemaToTypeString(schema, definitions));
+  if (complete.length <= maxChars) return complete;
+
+  const { properties, required } = readProperties(schema);
+  if (Object.keys(properties).length === 0) return coarseSchemaType(schema, definitions);
+
+  const pieces: string[] = [];
+  let omitted = 0;
+  for (const [name, value] of Object.entries(properties)) {
+    const propertySchema = value as JsonSchema;
+    const completeProperty = collapseType(jsonSchemaToTypeString(propertySchema, definitions));
+    const propertyType =
+      completeProperty.length <= 100
+        ? completeProperty
+        : coarseSchemaType(propertySchema, definitions);
+    const piece = `${safePropertyName(name)}${required.has(name) ? "" : "?"}: ${propertyType};`;
+    const candidate = `{ ${[...pieces, piece].join(" ")} }`;
+    if (candidate.length > maxChars - 35) {
+      omitted += 1;
+      continue;
+    }
+    pieces.push(piece);
+  }
+
+  if (omitted > 0) {
+    pieces.push(`[field: string]: unknown; /* ${String(omitted)} declared field(s) omitted */`);
+  }
+  const summarized = `{ ${pieces.join(" ")} }`;
+  return summarized.length <= maxChars
+    ? summarized
+    : "unknown /* declared schema exceeds compact signature budget */";
+}
+
+function coarseSchemaType(
+  schema: JsonSchema,
+  definitions: Record<string, JsonSchema> | undefined,
+  depth = 0,
+): string {
+  if (depth > 4) return "unknown";
+  if (typeof schema.$ref === "string") {
+    const name = schema.$ref.replace(/^#\/(definitions|components\/schemas|\$defs)\//, "");
+    const resolved = definitions?.[name];
+    return resolved ? coarseSchemaType(resolved, definitions, depth + 1) : "unknown";
+  }
+
+  const type = schema.type;
+  if (Array.isArray(type)) {
+    return [
+      ...new Set(
+        type.map((variant) =>
+          typeof variant === "string"
+            ? coarseSchemaType({ ...schema, type: variant }, definitions, depth + 1)
+            : "unknown",
+        ),
+      ),
+    ].join(" | ");
+  }
+
+  switch (type) {
+    case "array": {
+      const items = schema.items;
+      if (!items || Array.isArray(items) || typeof items !== "object") return "unknown[]";
+      return `${coarseSchemaType(items as JsonSchema, definitions, depth + 1)}[]`;
+    }
+    case "object":
+      return "Record<string, unknown>";
+    case "integer":
+    case "number":
+      return "number";
+    case "string":
+    case "boolean":
+    case "null":
+      return type;
+    default:
+      return schema.properties ? "Record<string, unknown>" : "unknown";
+  }
+}
+
+/** Flatten a multi-line generated type onto one line without truncating syntax. */
 function collapseType(type: string): string {
-  const collapsed = type
+  return type
     .replace(/\s*\n\s*/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return collapsed.length <= 200 ? collapsed : `${collapsed.slice(0, 199)}…`;
+}
+
+function safePropertyName(name: string): string {
+  return /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : JSON.stringify(name);
 }
 
 function clamp(value: string | undefined, max: number): string | undefined {

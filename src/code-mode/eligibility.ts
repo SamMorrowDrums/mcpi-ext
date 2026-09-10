@@ -1,5 +1,5 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
-import { isReadOnlyToolCall } from "../mcp/policy.js";
+import { isReadOnlyToolCall } from "../mcp/tool-call-classification.js";
 
 export const SYNTHESIZED_OUTPUT_SCHEMA = Object.freeze({}) as NonNullable<McpTool["outputSchema"]>;
 
@@ -150,7 +150,8 @@ export interface CodeModeDiagnostics {
  * Build the internal Code Mode catalog without mutating source MCP tool definitions.
  *
  * An output schema is synthesized for every tool, not just the unattended ones:
- * a write tool the model can call is a write tool it needs a return type for.
+ * a write tool the model can call is a write tool whose result contract must
+ * still be represented honestly.
  */
 export function toCodeModeTool(tool: McpTool): CodeModeTool {
   // Whether the call prompts is asked of the policy, never re-derived here.
@@ -168,7 +169,7 @@ export function toCodeModeTool(tool: McpTool): CodeModeTool {
     runsUnattended: posture.runsUnattended,
     effect: posture.effect,
     // Explanatory only: these say *why* the boundary will ask, for diagnostics
-    // and type hints. They never decide it.
+    // and discovery signatures. They never decide it.
     approvalReasons: posture.reasons,
     outputSchema: declaredOutputSchema ?? SYNTHESIZED_OUTPUT_SCHEMA,
     outputSchemaProvenance: declaredOutputSchema ? "declared" : "synthesized",

@@ -252,8 +252,8 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Inject execution routing, MCP skills, tool-cli usage docs, and code mode
-  // type hints into the system prompt.
+  // Inject execution routing, MCP skills, tool-cli usage docs, and the pinned
+  // Code Mode namespace/discovery guide into the system prompt.
   pi.on("before_agent_start", async (event: BeforeAgentStartEvent) => {
     let extra = "";
 

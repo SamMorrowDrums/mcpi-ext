@@ -9,16 +9,40 @@ The system prompt carries namespaces, never tools. Schemas are fetched on demand
 The model writes JavaScript that chains MCP tool calls. The code runs in a V8 isolate via `isolated-vm`:
 
 ```javascript
-const issues = await codemode.call("github", "list_issues", { repo: "owner/repo", state: "open" });
-const critical = issues.filter((i) => i.labels.includes("critical"));
-const details = [];
-for (const issue of critical) {
-  details.push(await codemode.call("github", "get_issue", { number: issue.number }));
+const issueResult = await codemode.call("github", "list_issues", {
+  owner: "owner",
+  repo: "repo",
+  state: "OPEN",
+  fields: ["number", "title", "labels", "assignees"],
+  perPage: 100,
+});
+if (issueResult.isError || issueResult.structuredContent === undefined) {
+  return { isError: issueResult.isError, content: issueResult.content };
 }
-return details.map((d) => ({ title: d.title, assignee: d.assignee }));
+const issues = issueResult.structuredContent.issues ?? [];
+const critical = issues.filter((issue) => issue.labels?.some((label) => label.name === "critical"));
+return critical.map((issue) => ({
+  number: issue.number,
+  title: issue.title,
+  assignees: issue.assignees,
+}));
 ```
 
 Tools are addressed by canonical `server/tool` reference. A bare name still works when it is unique across every connected server; when it is not, the call is refused and names the candidates, because guessing between two servers is how you comment on the wrong repository.
+
+Every call returns the raw MCP `CallToolResult` envelope:
+
+```typescript
+type CodeModeResult<StructuredContent = unknown> = {
+  content: Array<{ type: string } & Record<string, unknown>>;
+  structuredContent?: StructuredContent;
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+  [field: string]: unknown;
+};
+```
+
+The declared `outputSchema`, when present, supplies `StructuredContent`; without one it remains `unknown`. It does not replace the envelope. Text, image, audio, resource-link, embedded-resource, mixed-content, and text-only results remain in `content`, while `_meta`, `isError`, falsey structured values, and extension fields are preserved.
 
 ## Sandbox isolation
 
@@ -47,7 +71,7 @@ The prompt now carries only namespaces — 529 tokens for the same server — an
 | `codemode.browse()`               | Which namespaces exist, with a one-line summary and effect class for each |
 | `codemode.search(query, options)` | Tools ranked against a query; exact and prefix matches first, then BM25   |
 | `codemode.list({ namespace })`    | One page of tools within a namespace, server, or effect class             |
-| `codemode.describe(refs)`         | Exact parameters and output type for specific tools                       |
+| `codemode.describe(refs)`         | Exact parameters and result-envelope type for specific tools              |
 | `codemode.inspect(value)`         | The real shape of a value that came back, computed inside the isolate     |
 
 The same four operations are available as the `code_search` tool for use outside a script. Both surfaces answer from one catalog snapshot, so a script and the tool never disagree.
@@ -64,9 +88,10 @@ Namespaces come from declarations, in order: server-declared toolset metadata, t
 
 Output schemas are reported as they are, not as we wish they were:
 
-- A **declared** `outputSchema` becomes a real type in `describe`.
-- An **absent** one is reported as `unknown`, never as `Record<string, unknown>`. Every tool on the released github-mcp-server declares no output schema; asserting an object shape nobody promised is how a model indexes into `undefined` with confidence.
-- `codemode.inspect(value)` is the answer for those tools. It summarizes the actual result shape — keys, types, array lengths, sampled elements — entirely inside the isolate, with no host call and no egress.
+- A **declared** `outputSchema` becomes the type of `result.structuredContent` in `describe`. The MCP v2 client validates successful non-error structured output against that schema.
+- `structuredContent` remains optional at the JavaScript boundary because a tool-level `isError` envelope may omit it. Check `result.isError || result.structuredContent === undefined` before reading declared fields.
+- An **absent** output schema is rendered as `structuredContent?: unknown`, never as a made-up top-level object. Use `codemode.inspect(result)` first, then inspect `result.structuredContent` when present.
+- `codemode.inspect(value)` summarizes the actual shape — keys, types, array lengths, sampled elements — entirely inside the isolate, with no host call and no egress.
 
 Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and never added to MCP traffic.
 
@@ -87,7 +112,9 @@ A tool is addressed by two separate strings, a server name and a tool name, all 
 
 One execution sees one catalog. The snapshot is captured when the run starts, and every `browse`, `search`, `describe`, alias binding, and dispatch inside the run reads that exact snapshot. Refreshing mid-run would let a script describe a tool from one catalog and call into another.
 
-Across turns, `code_execute` accepts the optional `snapshotId` returned by `code_search`. If the catalog has moved since, the run is refused with `stale_snapshot` before the isolate starts, rather than calling against parameters that may have changed. Omitting it captures whatever is current.
+Across turns, every successful `code_search` response prints its full executable `snapshotId`, including `browse`, `search`, `list`, and `describe`. Pass that exact full value as `code_execute.snapshotId`. A tool's separately labelled `schemaHash`, or a truncated ID, is not a snapshot ID and will fail the pin check.
+
+If the catalog has moved since discovery, the run is refused with `stale_snapshot` before the isolate starts and before any MCP dispatch. Rerun the relevant `code_search` operation, re-check the parameters you use, and pass the new full `snapshotId`. Omitting it is allowed only as an intentional unpinned execution against the current catalog; the tradeoff is that you give up protection against a catalog change between discovery and execution.
 
 The snapshot fingerprint covers identity, namespace, schemas and their provenance, effect class, and callability — not schemas alone. A server flipping `readOnlyHint` changes what a call means without changing any schema, so a fingerprint that ignored it would call two different catalogs the same.
 
@@ -102,10 +129,13 @@ An execution is bounded so a runaway script degrades into a refusal rather than 
 
 An oversized return value is refused with an explanation, not silently truncated: half a serialized object is worse than none. Cancellation reaches the policy and the upstream MCP call, and disposes the isolate.
 
+Plan discovery first, then make one `code_execute` call containing the complete calculation. If an undeclared result shape blocks the first attempt, one bounded inspection execution followed by one corrected retry is reasonable. Repeated executions are not extra call-budget allotments; narrow the query or paginate more coarsely instead.
+
 ## When to use
 
 Code Mode shines when you need real computation across many calls: pagination loops, aggregation, joining results, math. For example:
 
+- Fetch open and closed issue counts, read each `structuredContent.total_count`, and add them exactly in one execution
 - 876 issues across 9 pages, counting labels per issue, building a histogram
 - For each open PR, fetch reviews and compute average time-to-first-review
 - Paginate all items, filter, group, and summarize

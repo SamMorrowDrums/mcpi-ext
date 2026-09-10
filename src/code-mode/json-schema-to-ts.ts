@@ -65,8 +65,10 @@ export function jsonSchemaToTypeString(
 
   // Handle type arrays (e.g. ["string", "null"])
   if (Array.isArray(type)) {
-    const types = type.map((t: string) => primitiveToTs(t));
-    return types.join(" | ");
+    const types = type.map((variant: string) =>
+      jsonSchemaToTypeString({ ...schema, type: variant }, definitions, depth + 1, new Set(seen)),
+    );
+    return [...new Set(types)].join(" | ");
   }
 
   switch (type) {

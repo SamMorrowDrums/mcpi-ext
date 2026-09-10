@@ -295,7 +295,7 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "bash",
       title: "bash and external programs",
       useWhen:
-        "Use when the task touches the real machine: reading or writing files, running git, package managers, compilers, formatters or test runners, moving data between programs, or producing an artifact that has to exist on disk afterwards.",
+        "Use when the task touches the real machine: files, git, package managers, compilers, tests, shell pipelines, or artifacts produced by external programs such as Pandoc.",
       provides: [
         bashCapabilities(state.bash.kind === "registered" ? state.bash.profile : undefined),
         "Every external program installed on the host, composed with pipes, redirection, loops, globs, and exit codes.",
@@ -312,7 +312,7 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "code_mode",
       title: "Code mode (code_execute, code_search)",
       useWhen:
-        "Use when the task needs exact computation or control flow: arithmetic, date maths, parsing, filtering, aggregation, pagination loops, or joining results — anywhere an approximated answer would simply be wrong.",
+        "Use when exact computation or control flow spans MCP results: arithmetic, filtering, aggregation, pagination, joins, or compact reduction in one code_execute.",
       provides: [
         "code_execute, which runs vanilla JavaScript in a sandboxed V8 isolate and returns the value you return.",
         "code_search, which queries the MCP tool catalogue so you can find dispatchable tools before writing code.",
@@ -344,12 +344,12 @@ export function buildExecutionFacilities(state: ExecutionRoutingState): Executio
       id: "tool_cli",
       title: "tool-cli (MCP-to-shell on-ramp)",
       useWhen:
-        "Use when you need to reach a specific MCP tool directly and no documented skill covers the task, or when you want to discover which servers and tools exist before committing to an approach.",
+        "Use when shell discovery or composition is itself useful, when MCP output must become input to a real shell pipeline, or for a deliberate one-shot MCP call from bash.",
       provides: [
         "An authenticated command-line on-ramp to the same MCP tools the host already authorises, invoked through the host bash tool as `tool-cli ...`.",
         "Progressive discovery: servers, then a server's tools, then one tool's schema, so you read only what you need.",
         "Policy-authorized MCP resource listing, templates, and reads, including binary output written with `--out`.",
-        "Plain text and JSON on stdout, so results compose with jq, grep, pipes, and loops inside the same bash command.",
+        "Plain text and JSON on stdout for shell-native artifact and external-program pipelines, including grep, redirection, and Pandoc.",
       ],
       doesNotProvide: [
         "A tool of its own. tool-cli is a program you run with the bash tool, never something you call directly.",

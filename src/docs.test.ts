@@ -428,6 +428,28 @@ describe("mechanisms, facilities, and degradation", () => {
     }
   });
 
+  it("documents the deterministic live-demo routes without pretending to test a model", () => {
+    expect(readme).toMatch(/provider-native deferred tool search/);
+    expect(readme).toMatch(/direct `get_me` proxy call/);
+    expect(readme).toMatch(/one `code_execute`/);
+    expect(readme).toMatch(/structuredContent\.total_count/);
+    expect(readme).toMatch(/Markdown or\s*\n?Pandoc artifact/);
+    expect(readme).toMatch(
+      /tool-cli only when MCP data is an input to that real shell\s*\n?pipeline/,
+    );
+  });
+
+  it("documents the raw Code Mode result envelope rather than a top-level output schema", () => {
+    const codeMode = docFiles.find((doc) => doc.name === "docs/code-mode.md")?.body ?? "";
+    expect(codeMode).toContain("raw MCP `CallToolResult` envelope");
+    expect(codeMode).toContain("result.structuredContent");
+    expect(codeMode).toContain("isError");
+    expect(codeMode).toContain("_meta");
+    expect(codeMode).not.toMatch(
+      /const issues = await[\s\S]{0,120}\nconst critical = issues\.filter/,
+    );
+  });
+
   it("describes tool-cli bridge credentials as session-scoped", () => {
     expect(readme).toContain("TOOL_CLI_PORT");
     expect(readme).toContain("TOOL_CLI_TOKEN");

@@ -103,10 +103,17 @@ describe("mcpi-ext", () => {
       {},
     );
     // Discovery answers honestly from an empty catalog rather than erroring.
-    expect(search?.details).toMatchObject({ op: "browse" });
-    expect(search?.content[0]).toEqual({
-      type: "text",
-      text: "No MCP namespaces are available. No servers are connected, or none expose callable tools.",
+    expect(search?.details).toMatchObject({
+      op: "browse",
+      snapshotId: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     });
+    expect(search?.content[0]).toMatchObject({ type: "text" });
+    expect(search?.content[0]?.type === "text" ? search.content[0].text : "").toContain(
+      "snapshotId (full; pass as code_execute.snapshotId): " +
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    );
+    expect(search?.content[0]?.type === "text" ? search.content[0].text : "").toContain(
+      "No MCP namespaces are available. No servers are connected, or none expose callable tools.",
+    );
   });
 });

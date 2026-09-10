@@ -17,7 +17,8 @@ tool selection. These three mechanisms let the agent discover and call tools pro
 - **[tool-cli](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/tool-cli.md)** — a shell
   on-ramp for progressive discovery: servers → tools → schema → call.
 - **[Code mode](https://github.com/SamMorrowDrums/mcpi-ext/blob/main/docs/code-mode.md)** —
-  sandboxed JavaScript that chains read-only tool calls inside a V8 isolate.
+  sandboxed JavaScript that chains MCP calls and exact computation inside a V8 isolate; writes pause
+  for the same approval as every other surface.
 
 ---
 
@@ -221,16 +222,17 @@ config is separate, at `~/.config/mcpi-ext/mcp.json`.
 The three mechanisms have different requirements. Only one of them depends on the server, so it is
 worth being precise about which you get.
 
-| Mechanism     | Requires                                              | Works with the official GitHub MCP server? |
-| ------------- | ----------------------------------------------------- | ------------------------------------------ |
-| **tool-cli**  | any MCP server                                        | **Yes**                                    |
-| **Code mode** | tools annotated `readOnlyHint: true`, not destructive | **Yes**, for the read-only subset          |
-| **Skills**    | a server that publishes skills (see below)            | **No** — it publishes none today           |
+| Mechanism     | Requires                                                   | Works with the official GitHub MCP server? |
+| ------------- | ---------------------------------------------------------- | ------------------------------------------ |
+| **tool-cli**  | any MCP server                                             | **Yes**                                    |
+| **Code mode** | any MCP tools; non-read-only calls pause for user approval | **Yes**                                    |
+| **Skills**    | a server that publishes skills (see below)                 | **No** — it publishes none today           |
 
 Measured against `ghcr.io/github/github-mcp-server:latest` (server `v1.12.0`, protocol `2026-07-28`)
-with the default toolset: **45 tools**, of which **26** are read-only and non-destructive and so
-dispatchable from code mode. None declare an `outputSchema`, so code mode gives each one a permissive
-internal survival schema and an `unknown` return type. The server does **not** declare the
+with the default toolset: **45 tools**, of which **26** are read-only and non-destructive and run
+unattended in Code Mode; the rest pause for approval when called. A declared `outputSchema` types
+`result.structuredContent`, while an absent schema is shown honestly as
+`structuredContent?: unknown`. The server does **not** declare the
 `io.modelcontextprotocol/skills` extension, so it contributes **no skills** — mcpi-ext logs the
 negotiation result and falls back to legacy `skill://` discovery, which also finds none.
 
@@ -303,7 +305,9 @@ With servers connected, exercise MCP dispatch:
 > label.
 
 Expect **`code_search`** (finding dispatchable tools) then **`code_execute`** looping over paginated
-results.
+results. Every `code_search` response prints the full `snapshotId`; pass that exact value to
+`code_execute`. Tool calls return the raw MCP envelope, so declared data is under
+`result.structuredContent`, not at the result's top level.
 
 ### tool-cli — works with any MCP server
 
@@ -343,19 +347,27 @@ is a common failure.
 
 bash is not an MCP mechanism. It is the substrate: the only facility that can create, modify, or
 inspect files, run the host's real programs, and leave artifacts behind. It is also how tool-cli is
-invoked, which is why the two compose so closely — fetching MCP data and then filtering it with `jq`
-or writing it to disk is one bash command, not two rival approaches.
+invoked, which is why the two compose so closely for one-shot shell access and real pipelines — for
+example, sending MCP-provided Markdown to Pandoc or writing an export to disk. Exact multi-call
+filtering, joins, aggregation, and arithmetic belong in Code Mode rather than tool-cli plus `jq`
+loops.
 
-| Facility  | Suits work that is…                                                                         |
-| --------- | ------------------------------------------------------------------------------------------- |
-| bash      | touching the real machine: files, git, build tools, data pipelines, artifacts that persist  |
-| Code mode | exact computation or control flow, sandboxed with no filesystem, network, or process access |
-| Skills    | a documented domain workflow — sequencing, conventions, and a curated tool set              |
-| tool-cli  | reaching a specific MCP tool, or discovering what exists — run through the host bash tool   |
+| Facility  | Suits work that is…                                                                          |
+| --------- | -------------------------------------------------------------------------------------------- |
+| bash      | touching the real machine: files, git, build tools, data pipelines, artifacts that persist   |
+| Code mode | exact computation or control flow, sandboxed with no filesystem, network, or process access  |
+| Skills    | a documented domain workflow — sequencing, conventions, and a curated tool set               |
+| tool-cli  | shell discovery, one-shot MCP access, or MCP input to a real shell/external-program pipeline |
 
 The section sorts facilities **by task shape, not by rank**. None is a default, none outranks
 another, and there is no order to try them in. The list is alphabetical by identifier purely so the
 emitted bytes stay stable between turns and never invalidate the prompt cache.
+
+For the live demonstration shape: profile lookup may use provider-native deferred tool search and a
+direct `get_me` proxy call; adding open and closed issue counts should use `code_search` followed by
+one `code_execute` that reads both `structuredContent.total_count` values; producing a Markdown or
+Pandoc artifact should use bash, with tool-cli only when MCP data is an input to that real shell
+pipeline.
 
 Every facility states its own availability. An unavailable one is listed **with its reason** rather
 than silently dropped, and "we could not tell" is reported as `unknown` rather than collapsed into
@@ -525,7 +537,7 @@ src/
   routing/             Execution-facility descriptors, prompt section, host seam
   skills/              Skill registry, discovery, gating, tool proxies, SEP-2640
   tool-cli/            tool-cli RPC server, provider, bridge handshake, prompt
-  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, type hints
+  code-mode/           V8 sandbox executor, lazy isolated-vm adapter, structured discovery
   test-servers/        Test MCP servers (weather, echo, skills fixtures)
 docs/                  Mechanism documentation
 images/                Screenshots

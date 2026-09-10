@@ -12,22 +12,19 @@ import {
 export const EXECUTION_ROUTING_TAG = "execution_routing";
 
 const PREAMBLE: readonly string[] = [
-  "This session exposes four execution facilities. They differ by the *shape* of the work, not by",
-  "rank: none of them is a default, none outranks another, and there is no sequence to try them in.",
-  "Match the facility to what the task actually requires.",
+  "Choose among these facilities by task shape, not rank; none is a default.",
   "",
-  "Every facility below states its own availability. Treat an unavailable facility as absent for",
-  "this session: do not invoke it, and never describe or summarise output it did not produce.",
+  "For one straightforward MCP call, provider-native deferred search plus a direct proxy fits when available.",
+  "",
+  "Treat an unavailable facility as absent: do not invoke it or claim output from it.",
 ];
 
 const COMPOSITION: readonly string[] = [
   "### Composing facilities",
   "",
-  "One task may need more than one facility. tool-cli and bash compose especially closely: tool-cli",
-  "*is* a program you run with the bash tool, so fetching MCP data and then filtering, joining, or",
-  "writing it to disk with ordinary shell programs is a single bash command rather than two rival",
-  "approaches. Code mode composes by handing you an exact value you then act on elsewhere, and a",
-  "skill composes by telling you which tools its workflow expects you to use.",
+  "Run tool-cli inside bash for shell, file, or artifact pipelines such as Pandoc. Use Code mode for",
+  "multi-call exact arithmetic, filtering, aggregation, joins, or reduction. Facilities may compose;",
+  "this is task-shape guidance, not precedence.",
 ];
 
 function formatFacility(facility: ExecutionFacility): string[] {

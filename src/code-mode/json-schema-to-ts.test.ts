@@ -66,6 +66,15 @@ describe("jsonSchemaToTypeString", () => {
     expect(result).toBe("string | number");
   });
 
+  it("preserves array structure inside nullable type arrays", () => {
+    expect(
+      jsonSchemaToTypeString({
+        type: ["null", "array"],
+        items: { type: "object", properties: { id: { type: "number" } }, required: ["id"] },
+      }),
+    ).toBe("null | {\n  id: number;\n}[]");
+  });
+
   it("handles oneOf", () => {
     const result = jsonSchemaToTypeString({
       oneOf: [{ type: "boolean" }, { type: "null" }],

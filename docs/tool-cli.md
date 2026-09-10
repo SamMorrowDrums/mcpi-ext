@@ -1,6 +1,6 @@
 # tool-cli
 
-`tool-cli` is a thin CLI binary that speaks authenticated tool-cli bridge protocol v1 over JSON-RPC 2.0 to the extension. The agent uses it like any shell command — composable with pipes, grep, jq, loops.
+`tool-cli` is a thin CLI binary that speaks authenticated tool-cli bridge protocol v1 over JSON-RPC 2.0 to the extension. The agent uses it like any shell command when shell discovery or composition is itself useful, for a deliberate one-shot MCP call, or to feed MCP data into an external program or artifact pipeline.
 
 ## How the agent invokes it
 
@@ -45,7 +45,7 @@ The v1 bridge supports policy-authorized MCP resources as well as tools:
 tool-cli resource list --server docs
 tool-cli resource templates --server docs
 tool-cli resource read --server docs file:///readme.md
-tool-cli resource read --server media file:///image.png --out /tmp/image.png
+tool-cli resource read --server media file:///image.png --out ./image.png
 ```
 
 Resource metadata and modern text/blob fields are retained losslessly. `--out` base64-decodes binary blobs to the named file. `skill://` resources/templates and SEP-2640-declared skill resources under any URI scheme are deliberately excluded: they carry workflow instructions whose origin and integrity are established by skill discovery, so they remain owned by skill discovery and `load_skill`. The policy also refuses an otherwise ordinary read if any returned content block identifies a skill-owned URI, preventing a server from smuggling hidden instructions in a multi-resource response.
@@ -53,19 +53,18 @@ Resource metadata and modern text/blob fields are retained losslessly. `--out` b
 ## Shell composability
 
 ```sh
-# Chain tool calls
-tool-cli myserver list_items '{}' | jq -r '.[0].id' | \
-  xargs -I{} tool-cli myserver get_item '{"id":"{}"}'
+# One-shot shell access
+tool-cli github get_me '{}' | jq '{login, profile_url}'
 
-# Process collections
-for city in London Tokyo Paris; do
-  echo "=== $city ==="
-  tool-cli weather check_weather '{"city":"'"$city"'"}'
-done
+# Feed MCP-provided Markdown into an external artifact tool
+tool-cli docs export_markdown '{"report":"weekly"}' | \
+  pandoc --from markdown --output weekly-report.pdf
 
-# Combine with the Unix toolbox
-tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 | head -20
+# Persist an export through a real shell pipeline
+tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 > users.csv
 ```
+
+Use Code Mode instead when the goal is an exact value computed across several MCP calls — filtering, aggregation, joins, pagination, or arithmetic. Repeated `tool-cli` calls in `jq`/shell loops are appropriate only when the shell pipeline itself is the deliverable or needs an external program; they are not the calculation path for something like adding open and closed issue totals.
 
 ## Security and compatibility
 
