@@ -9,6 +9,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Large textual and structured results from registered direct MCP proxies are again offloaded to
+  private session-owned files with bounded previews, without changing Code Mode, tool-cli, host
+  tools, or global `tool_result` handling.
 - npm release runs now treat a successful publish as authoritative and warn without failing when
   public-registry visibility remains delayed after bounded confirmation retries.
 

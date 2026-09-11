@@ -158,7 +158,7 @@ export default function (pi: ExtensionAPI) {
         // Pre-register all MCP tools as deferred Pi tool proxies
         // (in tools array for dispatch but excluded from system prompt)
         const allToolNames = tools.map((t) => t.name);
-        registerMcpToolProxies(allToolNames, mcpManager, policy, pi);
+        registerMcpToolProxies(allToolNames, mcpManager, policy, pi, config.trust);
 
         // Discover skills from all connected servers. A server that declares
         // the draft extension is served entirely by it: the legacy skill://

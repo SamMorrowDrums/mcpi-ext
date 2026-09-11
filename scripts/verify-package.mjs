@@ -682,6 +682,89 @@ check("managed entry imports directly with no workspace or peer resolution", () 
   assert(out.trim() === "ok", out);
 });
 
+check("managed direct proxy offloads a deterministic large result exactly", () => {
+  const proxyEntry = join(managedRoot, "dist", "skills", "mcp-tool-proxy.js");
+  const resultSessionDir = join(managedDir, "direct-result-session");
+  const verification = JSON.parse(
+    run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { createHash } from "node:crypto";
+         import { readFile } from "node:fs/promises";
+         const { registerMcpToolProxies } = await import(${JSON.stringify(pathToFileURL(proxyEntry).href)});
+         const output = Array.from(
+           { length: 120 },
+           (_, index) => \`job-\${String(index).padStart(3, "0")}: \${"deterministic log payload ".repeat(9)}\`,
+         ).join("\\n");
+         const terminal = { kind: "terminal", result: { content: [{ type: "text", text: output }] } };
+         const tool = {
+           name: "get_job_logs",
+           serverName: "fixture",
+           inputSchema: { type: "object", properties: {} },
+           annotations: { readOnlyHint: true },
+         };
+         const manager = { getTools: () => [tool] };
+         const policy = {
+           callTool: async (request) => {
+             if (request.source !== "proxy") throw new Error("unexpected source " + request.source);
+             return terminal;
+           },
+         };
+         const registered = [];
+         const pi = {
+           getAllTools: () => [],
+           registerTool: (proxy) => registered.push(proxy),
+         };
+         registerMcpToolProxies(["get_job_logs"], manager, policy, pi);
+         const result = await registered[0].execute(
+           "managed-direct-call",
+           { return_content: true, tail_lines: 120 },
+           undefined,
+           undefined,
+           {
+             sessionManager: {
+               getSessionDir: () => ${JSON.stringify(resultSessionDir)},
+               getSessionId: () => "managed-session",
+             },
+           },
+         );
+         if (result.details?.kind !== "direct-mcp-result-offload") {
+           throw new Error("large direct result was not offloaded");
+         }
+         const stored = await readFile(result.details.output.path, "utf8");
+         const expectedDigest = createHash("sha256").update(output).digest("hex");
+         const pointer = result.content[0]?.text ?? "";
+         process.stdout.write(JSON.stringify({
+           exact: stored === output,
+           bytes: Buffer.byteLength(output),
+           digest: expectedDigest,
+           recordedDigest: result.details.output.sha256,
+           absolutePath: result.details.output.path.startsWith("/"),
+           pointerBounded: Buffer.byteLength(pointer) < 2048,
+           payloadAbsent: !pointer.includes(output) && !JSON.stringify(result.details).includes(output),
+         }));`,
+      ],
+      { cwd: cleanCwd, env: managedEnv },
+    ),
+  );
+
+  assert(verification.exact, "managed result file did not preserve the exact MCP output");
+  assert(verification.bytes > 20_000, `managed fixture was only ${verification.bytes} bytes`);
+  assert(
+    verification.digest === verification.recordedDigest,
+    `managed result digest mismatch: ${verification.recordedDigest} != ${verification.digest}`,
+  );
+  assert(verification.absolutePath, "managed result pointer was not absolute");
+  assert(verification.pointerBounded, "managed result pointer exceeded the inline byte threshold");
+  assert(
+    verification.payloadAbsent,
+    "managed result leaked the complete payload into model metadata",
+  );
+  return `${verification.bytes} bytes, sha256 ${verification.digest}`;
+});
+
 check("managed extension registers both flags in public mcpi help", () => {
   const help = run(mcpiBin, ["--offline", "--help"], {
     cwd: cleanCwd,

@@ -420,6 +420,11 @@ or shells out to `tool-cli`, the actual MCP call is authorized and dispatched by
 
 - **Every tool invocation appears in the agent log** — skills, tool-cli one-shots, and code mode
   sandbox calls alike. Full observability without instrumentation.
+- **Large direct results become session artifacts.** Only registered direct MCP proxies apply this
+  adapter: textual or structured output above 2,048 UTF-8 bytes is atomically written with mode
+  `0600` under `<session-dir>/mcpi-ext-results/<session-id>/`, then replaced by an absolute path,
+  digest, format, size, and bounded untrusted preview. Files persist with the session directory until
+  its normal explicit cleanup. Code Mode and tool-cli keep their existing raw-result mechanisms.
 - **Human-in-the-loop happens at one point, and only at execution.** `McpPolicy` reads tool
   annotations and gates non-read-only calls through user confirmation, whichever mechanism initiated
   them. Nothing else prompts: seeing a schema, loading a skill, or listing a catalogue are not
