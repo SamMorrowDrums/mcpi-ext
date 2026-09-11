@@ -16,8 +16,10 @@ export {
 
 export {
   EXECUTION_ROUTING_TAG,
+  TASK_SHAPE_SELECTION_TAG,
   formatExecutionFacilities,
   formatExecutionRouting,
+  formatTaskShapeSelectionFooter,
 } from "./format.js";
 
 export {

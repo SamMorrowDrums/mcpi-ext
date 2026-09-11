@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Final task-shape routing now appears after all mechanism-specific prompt instructions, directing
+  standalone MCP lookups to provider-native deferred search and direct tools while reserving
+  tool-cli for genuine shell/file/artifact pipelines and Code Mode for computed multi-call work.
+
 ## [1.1.1] — 2026-09-11
 
 ### Fixed
