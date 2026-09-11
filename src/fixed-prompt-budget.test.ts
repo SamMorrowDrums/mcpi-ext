@@ -5,21 +5,15 @@ import { loadGithubFixture, withShippedToolsets } from "./code-mode/fixtures.js"
 import { deriveNamespaces } from "./code-mode/namespaces.js";
 import { renderPromptSection } from "./code-mode/prompt.js";
 import type { ExecutionRoutingState } from "./routing/facilities.js";
-import { formatExecutionRouting } from "./routing/format.js";
+import { formatExecutionRouting, formatTaskShapeSelectionFooter } from "./routing/format.js";
 import { formatToolCliForPrompt } from "./tool-cli/format.js";
 
-const PUBLIC_V1_1_0_TOKENS = {
-  routing: 1207,
-  toolCli: 687,
-  codeMode: 1277,
-  combined: 3169,
-} as const;
-
 const CURRENT_TOKENS = {
-  routing: 1095,
-  toolCli: 455,
+  routing: 1005,
+  toolCli: 422,
   codeMode: 970,
-  combined: 2518,
+  footer: 117,
+  combined: 2511,
 } as const;
 
 const bridgeInfo: BridgeInfo = {
@@ -74,18 +68,24 @@ describe("fixed turn-zero prompt budget", () => {
     namespaces: deriveNamespaces(withShippedToolsets(loadGithubFixture())),
     sandboxAvailable: true,
   });
-  const combined = routing + toolCli + codeMode;
+  const footer = formatTaskShapeSelectionFooter();
+  const combined = routing + toolCli + codeMode + footer;
 
   it("pins actual o200k token counts for each fixed section", () => {
     expect({
       routing: tokens(routing),
       toolCli: tokens(toolCli),
       codeMode: tokens(codeMode),
+      footer: tokens(footer),
       combined: tokens(combined),
     }).toEqual(CURRENT_TOKENS);
   });
 
-  it("stays within 150 tokens of the public v1.1.0 combined prompt", () => {
-    expect(tokens(combined)).toBeLessThanOrEqual(PUBLIC_V1_1_0_TOKENS.combined + 150);
+  it("does not exceed the public v1.1.1 combined prompt", () => {
+    expect(tokens(combined)).toBeLessThanOrEqual(2_518);
+  });
+
+  it("keeps the task-shape footer last", () => {
+    expect(combined.trimEnd().endsWith("</task_shape_selection>")).toBe(true);
   });
 });

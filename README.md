@@ -347,21 +347,22 @@ is a common failure.
 
 bash is not an MCP mechanism. It is the substrate: the only facility that can create, modify, or
 inspect files, run the host's real programs, and leave artifacts behind. It is also how tool-cli is
-invoked, which is why the two compose so closely for one-shot shell access and real pipelines — for
-example, sending MCP-provided Markdown to Pandoc or writing an export to disk. Exact multi-call
+invoked, which is why the two compose for real pipelines — for example, sending MCP-provided
+Markdown to Pandoc or writing an export to disk. Exact multi-call
 filtering, joins, aggregation, and arithmetic belong in Code Mode rather than tool-cli plus `jq`
 loops.
 
-| Facility  | Suits work that is…                                                                          |
-| --------- | -------------------------------------------------------------------------------------------- |
-| bash      | touching the real machine: files, git, build tools, data pipelines, artifacts that persist   |
-| Code mode | exact computation or control flow, sandboxed with no filesystem, network, or process access  |
-| Skills    | a documented domain workflow — sequencing, conventions, and a curated tool set               |
-| tool-cli  | shell discovery, one-shot MCP access, or MCP input to a real shell/external-program pipeline |
+| Facility  | Suits work that is…                                                                         |
+| --------- | ------------------------------------------------------------------------------------------- |
+| bash      | touching the real machine: files, git, build tools, data pipelines, artifacts that persist  |
+| Code mode | exact computation or control flow, sandboxed with no filesystem, network, or process access |
+| Skills    | a documented domain workflow — sequencing, conventions, and a curated tool set              |
+| tool-cli  | shell discovery or MCP input to a real shell/file/external-program pipeline                 |
 
-The section sorts facilities **by task shape, not by rank**. None is a default, none outranks
-another, and there is no order to try them in. The list is alphabetical by identifier purely so the
-emitted bytes stay stable between turns and never invalidate the prompt cache.
+The facility list is alphabetical by identifier purely so its bytes stay stable between turns.
+Selection remains by **task shape, not by rank**: a short `<task_shape_selection>` footer is emitted
+after the detailed Code Mode instructions so the last routing instruction does not impose a
+universal precedence.
 
 For the live demonstration shape: profile lookup may use provider-native deferred tool search and a
 direct `get_me` proxy call; adding open and closed issue counts should use `code_search` followed by

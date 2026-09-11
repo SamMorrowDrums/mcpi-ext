@@ -10,21 +10,10 @@ import {
  * itself for something it can call.
  */
 export const EXECUTION_ROUTING_TAG = "execution_routing";
+export const TASK_SHAPE_SELECTION_TAG = "task_shape_selection";
 
 const PREAMBLE: readonly string[] = [
-  "Choose among these facilities by task shape, not rank; none is a default.",
-  "",
-  "For one straightforward MCP call, provider-native deferred search plus a direct proxy fits when available.",
-  "",
   "Treat an unavailable facility as absent: do not invoke it or claim output from it.",
-];
-
-const COMPOSITION: readonly string[] = [
-  "### Composing facilities",
-  "",
-  "Run tool-cli inside bash for shell, file, or artifact pipelines such as Pandoc. Use Code mode for",
-  "multi-call exact arithmetic, filtering, aggregation, joins, or reduction. Facilities may compose;",
-  "this is task-shape guidance, not precedence.",
 ];
 
 function formatFacility(facility: ExecutionFacility): string[] {
@@ -58,10 +47,30 @@ export function formatExecutionFacilities(facilities: readonly ExecutionFacility
     lines.push(...formatFacility(facility), "");
   }
 
-  lines.push(...COMPOSITION);
   lines.push(`</${EXECUTION_ROUTING_TAG}>`);
 
   return lines.join("\n");
+}
+
+/**
+ * Final routing instruction, appended after every mechanism-specific section.
+ *
+ * Keeping selection here prevents later syntax examples from outweighing the
+ * task-shape rule while preserving composition rather than global precedence.
+ */
+export function formatTaskShapeSelectionFooter(): string {
+  return `
+
+<${TASK_SHAPE_SELECTION_TAG}>
+## Task-shape selection
+
+- Standalone MCP lookup: provider-native deferred search, then direct proxy. Do not open bash/tool-cli or Code Mode merely for that call.
+- Computed multi-call work: use Code Mode.
+- Genuine shell, file, or external-program artifact pipeline: use bash + tool-cli (for example, Pandoc).
+- Skill workflow: load the skill; use revealed direct tools for straightforward steps and Code Mode only for needed computation or control flow.
+
+No universal precedence. Treat unavailable facilities as absent.
+</${TASK_SHAPE_SELECTION_TAG}>`;
 }
 
 /**

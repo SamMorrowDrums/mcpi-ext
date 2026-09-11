@@ -1,16 +1,16 @@
 # tool-cli
 
-`tool-cli` is a thin CLI binary that speaks authenticated tool-cli bridge protocol v1 over JSON-RPC 2.0 to the extension. The agent uses it like any shell command when shell discovery or composition is itself useful, for a deliberate one-shot MCP call, or to feed MCP data into an external program or artifact pipeline.
+`tool-cli` is a thin CLI binary that speaks authenticated tool-cli bridge protocol v1 over JSON-RPC 2.0 to the extension. The agent uses it like any shell command when shell discovery or composition is itself useful, or to feed MCP data into an external program or artifact pipeline. A standalone MCP lookup should use provider-native deferred search and a direct tool when available.
 
 ## How the agent invokes it
 
-`tool-cli` is a **program, not a tool**. There is no `tool-cli` entry in the agent's tool registry. To run it the agent invokes the host **bash tool** with a command line such as `tool-cli github search_code '{"query":"auth"}'`. Emitting `<tool_cli>…</tool_cli>` markup, or writing a plausible-looking transcript of a command and its output, does not run anything — that text is a hallucination, not an invocation.
+`tool-cli` is a **program, not a tool**. There is no `tool-cli` entry in the agent's tool registry. To run it the agent invokes the host **bash tool**. Emitting `<tool_cli>…</tool_cli>` markup, or writing a plausible-looking transcript of a command and its output, does not run anything — that text is a hallucination, not an invocation.
 
 The extension states this directly in the prompt. The usage documentation is emitted under the tag `<tool_cli_usage_docs>`, deliberately named so it does not read like an action the model can perform: it is reference material describing a program, not a call site. (It was previously `<tool_cli>`, which invited exactly the pseudo-call failure above.) `src/routing/tripwire.ts` ships `detectToolCliTripwires` as a regression guard for both shapes of that mistake.
 
 `<tool_cli_usage_docs>` is emitted **only after bash is active and the local bridge completes an authenticated, compatible v1 `getBridgeInfo` handshake**. The handshake reports the tool-cli implementation version, deterministic operations and capabilities, and a live summary of each upstream MCP connection. Handshakes are serialized because the package client reads its endpoint from process environment; their target and the agent subprocess environment are pinned to loopback so an inherited `TOOL_CLI_HOST` cannot receive the fresh bearer token. Inherited port/token credentials are masked until verification succeeds. Startup, authentication, timeout, and major-version compatibility failures withhold the section and appear in `<execution_routing>` with an actionable reason.
 
-For choosing _between_ tool-cli and the other execution facilities, see the `<execution_routing>` section described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting).
+For choosing _between_ tool-cli and the other execution facilities, see the final `<task_shape_selection>` footer described in [AGENTS.md](../AGENTS.md#execution-routing-srcrouting).
 
 ## Architecture
 
@@ -34,7 +34,6 @@ The agent pays only the tokens it needs:
 tool-cli --help                                # What servers exist?
 tool-cli github                               # What tools does this server have?
 tool-cli github search_code                   # What's the schema for this tool?
-tool-cli github search_code '{"query":"auth"}' # Call it
 ```
 
 ## Resources
@@ -53,9 +52,6 @@ Resource metadata and modern text/blob fields are retained losslessly. `--out` b
 ## Shell composability
 
 ```sh
-# One-shot shell access
-tool-cli github get_me '{}' | jq '{login, profile_url}'
-
 # Feed MCP-provided Markdown into an external artifact tool
 tool-cli docs export_markdown '{"report":"weekly"}' | \
   pandoc --from markdown --output weekly-report.pdf

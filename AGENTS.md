@@ -133,7 +133,7 @@ The extension emits exactly one `<execution_routing>` prompt section every time 
 | ------------------------ | ---------------------------------------------------------------------------- |
 | Skills                   | domain workflow guidance authored by a server                                |
 | Code mode                | sandboxed exact computation and control flow — no fs, no network, no process |
-| tool-cli                 | MCP input to shell discovery, one-shots, external programs, and pipelines    |
+| tool-cli                 | MCP input to shell discovery, external programs, and artifact pipelines      |
 | bash + external programs | the filesystem / artifact / data-pipeline substrate                          |
 
 Two invariants hold across the module:
@@ -141,7 +141,7 @@ Two invariants hold across the module:
 - **Task shape, not precedence.** `FACILITY_ORDER` is alphabetical by id specifically so the order cannot be read as a ranking, and so the rendered bytes are stable turn to turn.
 - **Availability is always stated, never silently omitted.** Each facility reports `available` / `unavailable` / `unknown` with a non-empty reason. `unknown` means the host tool registry could not be read — it is not a synonym for absent.
 
-Provider-native deferred tool search and direct proxies sit alongside these facilities: they fit a single straightforward call such as `get_me`. Exact multi-call calculations belong in Code Mode, while tool-cli remains the shell on-ramp when its output is entering a real pipeline or external program such as Pandoc.
+After all mechanism-specific prompt sections, a concise `<task_shape_selection>` footer makes the final routing decision: provider-native deferred search plus a direct proxy for a standalone lookup; Code Mode for computed multi-call work; bash plus tool-cli for a genuine shell/file/external-program artifact pipeline; and skill loading followed by revealed direct tools unless that workflow actually needs computation or control flow. This preserves task-shape selection without declaring a universal precedence.
 
 Availability sources: code mode needs no MCP server, but it does need the optional `isolated-vm` addon, so it is probed at `session_start` and reports the specific failure cause when the addon is missing or fails to load — it never falls back to `node:vm`, because that would downgrade an isolate boundary to same-process execution; skills report their discovered count plus whether the **draft, unratified** SEP-2640 extension is enabled; tool-cli is advertised only after bash is active and its local server completes an authenticated compatible bridge-v1 handshake, with inherited credentials masked until verification succeeds; bash comes from the host's active-tool registry via `getActiveTools()` when that is discoverable.
 
@@ -149,11 +149,11 @@ Availability sources: code mode needs no MCP server, but it does need the option
 
 `src/routing/tripwire.ts` ships `detectToolCliTripwires`, a regression guard for the failure mode where assistant text contains `<tool_cli…` markup or narrates a `tool-cli` transcript without a real bash tool call having run it. It is a test-facing detector; wiring it into the runtime is future work.
 
-Section split: `<execution_routing>` answers _when_; `<tool_cli_usage_docs>` answers _how_, and is emitted only after the verified bridge handshake.
+Section split: `<execution_routing>` reports facilities and availability; `<tool_cli_usage_docs>` answers _how_ and is emitted only after the verified bridge handshake; `<task_shape_selection>` is the final, concise _when_ instruction after Code Mode.
 
 ### tool-cli Architecture
 
-tool-cli is a thin CLI binary that communicates with the extension via JSON-RPC 2.0 over HTTP. The agent uses it as a standard shell command for one-shot discovery and artifact/external-program pipelines.
+tool-cli is a thin CLI binary that communicates with the extension via JSON-RPC 2.0 over HTTP. The agent uses it as a standard shell command for discovery and artifact/external-program pipelines, not as the normal path for a standalone MCP lookup when provider-native direct tools are available.
 
 ```
 Agent (mcpi)

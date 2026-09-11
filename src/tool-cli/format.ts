@@ -3,9 +3,9 @@ import type { BashState, ToolCliState } from "../routing/facilities.js";
 /**
  * Usage documentation for tool-cli.
  *
- * This is the "how", not the "when" — the `<execution_routing>` section decides
- * which facility suits a task, and this section explains how to drive tool-cli
- * once it has been chosen.
+ * This is primarily the "how": the final `<task_shape_selection>` footer decides
+ * which facility suits a task, while this section explains how to drive
+ * tool-cli once a shell or artifact pipeline has actually selected it.
  *
  * Only emitted once the local RPC server has actually started. Advertising the
  * commands before that would teach an agent an invocation it cannot perform.
@@ -33,14 +33,12 @@ export function formatToolCliForPrompt(state: ToolCliPromptState): string {
 tool invocation, and never write out what you expect a command would have printed — run it with the
 bash tool and use the real output.
 
+Do not use tool-cli for a standalone lookup when provider-native direct tools are available.
+
 Discovery (progressive — only fetch what you need):
   tool-cli --help                            # List MCP servers with tool counts
   tool-cli <server>                          # List all tools on a server
   tool-cli <server> <tool>                   # Show full schema for a tool
-
-Calling tools:
-  tool-cli <server> <tool> '{"key":"value"}' # Call a tool with JSON arguments
-  tool-cli <server> <tool> '{}' --out ./result.json  # Save large output to file
 
 Resources:
   tool-cli resource list --server <server>
@@ -48,9 +46,10 @@ Resources:
   tool-cli resource read --server <server> <uri>
   tool-cli resource read --server <server> <uri> --out ./resource.bin
 
-tool-cli outputs plain text or JSON. Use it in genuine shell, file, or external-program pipelines:
+tool-cli accepts JSON arguments and outputs plain text or JSON. Use it in genuine shell, file, or
+external-program pipelines:
   tool-cli docs export_markdown '{"report":"weekly"}' | pandoc --from markdown --output weekly-report.pdf
-  tool-cli myserver export_csv '{"table":"users"}' | sort -t, -k2 > users.csv
+  tool-cli myserver export_csv '{"table":"users"}' --out ./users.csv
 
 Errors go to stderr with exit code 1 — use \`&&\` or \`set -e\` for safe chaining.
 Verified bridge: ${bridgeInfo.serverImplementation.name}@${bridgeInfo.serverImplementation.version};

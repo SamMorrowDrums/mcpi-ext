@@ -107,12 +107,15 @@ describe("formatToolCliForPrompt", () => {
     expect(result).not.toContain("</tool_cli>");
   });
 
-  it("keeps shell examples focused on one-shots and external artifact pipelines", () => {
+  it("keeps shell examples focused on external artifact pipelines", () => {
     const result = formatToolCliForPrompt(verifiedState());
     expect(result).toContain("|");
     expect(result).toContain("pandoc");
     expect(result).toContain("export_csv");
-    expect(result).toContain("sort");
+    expect(result).toContain("--out ./users.csv");
+    expect(result).toContain("standalone lookup");
+    expect(result).toContain("provider-native direct tools");
+    expect(result).not.toContain(`tool-cli <server> <tool> '{"key":"value"}'`);
     expect(result).not.toContain("xargs");
     expect(result).not.toContain("for city in");
     expect(result).not.toContain("Code Mode");

@@ -35,6 +35,7 @@ import type { ToolProvider } from "./tool-cli/index.js";
 import {
   buildExecutionFacilities,
   formatExecutionFacilities,
+  formatTaskShapeSelectionFooter,
   publishExecutionFacilities,
 } from "./routing/index.js";
 import type { BashState, ToolCliState } from "./routing/index.js";
@@ -294,7 +295,8 @@ export default function (pi: ExtensionAPI) {
       extra += codeModeManager.formatSystemPromptSection();
     }
 
-    if (extra.length === 0) return;
+    extra += formatTaskShapeSelectionFooter();
+
     return { systemPrompt: event.systemPrompt + extra };
   });
 

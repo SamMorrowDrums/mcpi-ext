@@ -5,7 +5,12 @@ import {
   FACILITY_ORDER,
   type ExecutionRoutingState,
 } from "./facilities.js";
-import { EXECUTION_ROUTING_TAG, formatExecutionRouting } from "./format.js";
+import {
+  EXECUTION_ROUTING_TAG,
+  TASK_SHAPE_SELECTION_TAG,
+  formatExecutionRouting,
+  formatTaskShapeSelectionFooter,
+} from "./format.js";
 
 const VERIFIED_BRIDGE_INFO: BridgeInfo = {
   bridgeProtocol: { name: "tool-cli-bridge", major: 1, version: "1.0" },
@@ -139,21 +144,10 @@ describe("execution routing section", () => {
       );
     });
 
-    it("explains that tool-cli and bash compose in one command", () => {
+    it("leaves cross-facility selection to the final footer", () => {
       const result = formatExecutionRouting(fullState());
-      expect(result).toContain("Composing facilities");
-      expect(result).toContain("Run tool-cli inside bash");
-    });
-
-    it("keeps the direct, exact-compute, and artifact routes explicit", () => {
-      const result = formatExecutionRouting(fullState());
-
-      expect(result).toContain("provider-native deferred search");
-      expect(result).toContain("direct proxy");
-      expect(result).toContain("one code_execute");
-      expect(result).toContain("Pandoc");
-      expect(result).toContain("shell, file, or artifact pipelines");
-      expect(result).toContain("multi-call exact arithmetic");
+      expect(result).not.toContain("provider-native deferred search");
+      expect(result).not.toContain("Composing facilities");
     });
   });
 
@@ -380,10 +374,18 @@ describe("execution routing section", () => {
       }
     });
 
-    it("says explicitly that the order is not a ranking", () => {
-      const result = formatExecutionRouting(fullState());
-      expect(result).toContain("by task shape, not rank");
-      expect(result).toContain("none is a default");
+    it("keeps task-shape selection without universal precedence in the final footer", () => {
+      const result = formatTaskShapeSelectionFooter();
+      expect(result).toContain(`<${TASK_SHAPE_SELECTION_TAG}>`);
+      expect(result).toContain("Standalone MCP lookup");
+      expect(result).toContain("provider-native deferred search");
+      expect(result).toContain("direct proxy");
+      expect(result).toContain("Computed multi-call work");
+      expect(result).toContain("bash + tool-cli");
+      expect(result).toContain("Pandoc");
+      expect(result).toContain("Skill workflow");
+      expect(result).toContain("No universal precedence");
+      expect(result).toContain(`</${TASK_SHAPE_SELECTION_TAG}>`);
     });
 
     it("tells the agent not to fabricate output from an unavailable facility", () => {
