@@ -91,8 +91,16 @@ Only after all of that does it run lint, format, type-check, tests, the release
 build, the full `release-check.mjs`, and `verify-package.mjs` — which packs the
 tarball, installs it into a throwaway project, and drives the installed
 artefact. The package is published only if the thing a consumer would install
-has already been proven to work. Publication is then confirmed by reading the
-version back from the registry.
+has already been proven to work.
+
+An exit 0 from `npm publish` is the authoritative publication acceptance. The
+workflow records that acceptance before polling the exact public registry with
+fresh caches and bounded backoff. Registry reads are eventually consistent: if
+the exact version is still not visible after the bounded wait, the job succeeds
+with a warning and an explicitly unconfirmed registry state. Do **not** rerun
+the release workflow or publish again after that warning; npm versions are
+immutable, so verify the exact package/version directly with the command in the
+warning instead.
 
 A prerelease GitHub Release publishes under the `next` dist-tag; a normal
 release publishes under `latest`.

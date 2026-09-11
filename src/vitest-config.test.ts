@@ -16,8 +16,8 @@ const CONFIG_PATH = fileURLToPath(new URL("../vitest.config.ts", import.meta.url
 describe("vitest configuration", () => {
   const source = readFileSync(CONFIG_PATH, "utf8");
 
-  it("collects tests from source only", () => {
-    expect(source).toContain('include: ["src/**/*.test.ts"]');
+  it("collects source tests and release workflow tests only", () => {
+    expect(source).toContain('include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"]');
   });
 
   it("excludes the build output", () => {
