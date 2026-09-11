@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 // Pin the source of truth rather than relying on tool defaults.
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
     exclude: ["**/node_modules/**", "**/.git/**", "dist/**"],
   },
 });

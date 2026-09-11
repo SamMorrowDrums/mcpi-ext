@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- npm release runs now treat a successful publish as authoritative and warn without failing when
+  public-registry visibility remains delayed after bounded confirmation retries.
+
 ## [1.1.2] — 2026-09-11
 
 ### Fixed
