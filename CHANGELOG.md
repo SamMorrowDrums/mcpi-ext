@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-09-11
+
 ### Fixed
 
 - Final task-shape routing now appears after all mechanism-specific prompt instructions, directing
