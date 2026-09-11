@@ -67,10 +67,10 @@ mcpi install npm:@sammorrowdrums/mcpi-ext
 ```
 
 That takes the newest `1.x`, which is what most people want. To pin an exact version for a
-reproducible setup, name it — this page documents `1.0.2`:
+reproducible setup, name it — this page documents `1.1.1`:
 
 ```sh
-mcpi install npm:@sammorrowdrums/mcpi-ext@1.1.0
+mcpi install npm:@sammorrowdrums/mcpi-ext@1.1.1
 ```
 
 Confirm it registered:
@@ -81,7 +81,7 @@ mcpi list
 
 ```
 User packages:
-  npm:@sammorrowdrums/mcpi-ext@1.1.0
+  npm:@sammorrowdrums/mcpi-ext@1.1.1
     ~/.cache/mcpi/npm/node_modules/@sammorrowdrums/mcpi-ext
 ```
 
