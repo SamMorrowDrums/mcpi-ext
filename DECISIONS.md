@@ -34,7 +34,12 @@ Record of key architectural and design decisions. Keep this up to date as decisi
 
 **Date:** 2026-04-23
 **Context:** Tool responses can be thousands of tokens, wasting context window.
-**Decision:** Intercept tool results via `pi.on("tool_result", ...)`. If output exceeds ~500 tokens, write to a file and return a pointer to the model.
+**Decision:** Offload only registered direct MCP proxy results at the proxy adapter. Textual or
+structured output above 2,048 UTF-8 bytes (a deterministic approximation of ~500 tokens) is written
+atomically to a private session-owned result directory and replaced with a bounded pointer and
+preview. Code Mode, tool-cli, host tools, and other extension tools retain their own result handling;
+the originally proposed global `pi.on("tool_result", ...)` interception is explicitly superseded
+because it would rewrite unrelated execution surfaces.
 **Rationale:** Controls output token cost the same way skills/football/code-mode control input token cost. The model can read the file if it needs the content.
 
 ## 005 — MCP SDK and JSON config for server connections

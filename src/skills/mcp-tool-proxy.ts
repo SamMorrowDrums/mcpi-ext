@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@sammorrowdrums/mcpi";
 import { Type } from "typebox";
-import { renderTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/client-manager.js";
+import type { ServerTrust } from "../mcp/config.js";
 import type { McpPolicy } from "../mcp/policy.js";
+import { renderDirectMcpProxyResult } from "./direct-result-offload.js";
 
 /**
  * Register MCP tools as deferred mcpi proxies backed by the shared policy boundary.
@@ -12,6 +13,7 @@ export function registerMcpToolProxies(
   manager: McpClientManager,
   policy: McpPolicy,
   pi: ExtensionAPI,
+  trustByServer?: Readonly<Record<string, ServerTrust>>,
 ): string[] {
   const registered: string[] = [];
   const existingTools = new Set(pi.getAllTools().map((tool) => tool.name));
@@ -25,14 +27,16 @@ export function registerMcpToolProxies(
 
     const tool = toolsByName.get(name);
     if (!tool) continue;
-    pi.registerTool(createMcpToolProxy(policy, tool));
+    pi.registerTool(
+      createMcpToolProxy(policy, tool, trustByServer?.[tool.serverName] ?? "untrusted"),
+    );
     registered.push(name);
   }
 
   return registered;
 }
 
-function createMcpToolProxy(policy: McpPolicy, tool: McpTool) {
+function createMcpToolProxy(policy: McpPolicy, tool: McpTool, trust: ServerTrust) {
   return {
     name: tool.name,
     label: tool.name,
@@ -40,11 +44,11 @@ function createMcpToolProxy(policy: McpPolicy, tool: McpTool) {
     deferred: true,
     parameters: Type.Unsafe<Record<string, unknown>>(tool.inputSchema),
     async execute(
-      _toolCallId: string,
+      toolCallId: string,
       params: Record<string, unknown>,
       signal?: AbortSignal,
       _onUpdate?: unknown,
-      _ctx?: ExtensionContext,
+      context?: ExtensionContext,
     ) {
       const terminal = await policy.callTool({
         source: "proxy",
@@ -53,7 +57,13 @@ function createMcpToolProxy(policy: McpPolicy, tool: McpTool) {
         args: params,
         ...(signal ? { signal } : {}),
       });
-      return renderTerminalCallToolResult(terminal);
+      return renderDirectMcpProxyResult(terminal, {
+        serverName: tool.serverName,
+        toolName: tool.name,
+        toolCallId,
+        ...(context ? { context } : {}),
+        trust,
+      });
     },
   };
 }
