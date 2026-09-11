@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-11
+
 ### Fixed
 
 - Code Mode discovery now describes the raw MCP `CallToolResult` envelope and types declared output
