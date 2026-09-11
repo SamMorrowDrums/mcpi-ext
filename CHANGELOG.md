@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.3] — 2026-09-11
+
 ### Fixed
 
 - Large textual and structured results from registered direct MCP proxies are again offloaded to

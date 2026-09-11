@@ -17,7 +17,7 @@ import {
 
 export const MCP_CLIENT_IDENTITY = {
   name: "@sammorrowdrums/mcpi-ext",
-  version: "1.1.2",
+  version: "1.1.3",
 } as const;
 
 export const MCP_CLIENT_POLICY = {
