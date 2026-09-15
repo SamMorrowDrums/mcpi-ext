@@ -132,6 +132,11 @@ An execution is bounded so a runaway script degrades into a refusal rather than 
 
 An oversized return value is refused with an explanation, not silently truncated: half a serialized object is worse than none. Cancellation reaches the policy and the upstream MCP call, and disposes the isolate.
 
+Generated code must run independent read calls concurrently with `Promise.all`. Dependent calls,
+pagination whose next cursor depends on the previous page, and every write stay sequential. The
+runtime owns per-server concurrency and rate-limit backoff, so scripts must not serialize independent
+reads or add their own sleeps or throttling.
+
 The counters admit logical script calls, not transport attempts. Read-only calls automatically retry
 at most 3 times across the execution after structured transport-level 429 responses, without
 spending another logical read. `Retry-After`, standard `RateLimit-Reset`, and GitHub's
