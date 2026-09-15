@@ -631,6 +631,10 @@ export class McpPolicy {
         ...(signal !== undefined ? { signal } : {}),
       });
 
+      if (signal?.aborted) {
+        throw deny("cancelled", `Call to "${toolName}" was cancelled before dispatch.`);
+      }
+
       if (approved !== true) {
         const reason: McpPolicyDenialReason =
           approved === false ? "approval_declined" : "approval_unavailable";
