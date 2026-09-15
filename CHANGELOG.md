@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-09-15
+
 ### Fixed
 
 - Concurrent approval-gated calls now queue their host confirmation prompts in strict FIFO order,
