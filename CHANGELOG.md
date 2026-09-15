@@ -7,6 +7,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-09-15
+
 ### Changed
 
 - Code Mode now budgets each execution independently for up to 1,024 logical read calls and 16
