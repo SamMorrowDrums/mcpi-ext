@@ -84,6 +84,7 @@ export interface CodeModeToolDetails {
   message?: string;
   alternatives?: string[];
   candidates?: string[];
+  serverName?: string;
   toolName?: string;
   reason?: string;
 }

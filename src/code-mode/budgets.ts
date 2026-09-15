@@ -32,6 +32,10 @@ export const MAX_CONCURRENT_WRITES = 1;
 export const MAX_READ_RETRIES_TOTAL = 3;
 /** Automatic retries for write calls. Deliberately zero. */
 export const MAX_WRITE_RETRIES = 0;
+/** First delay when a structured 429 omits Retry-After/reset metadata. */
+export const RATE_LIMIT_FALLBACK_BASE_DELAY_MS = 500;
+/** Maximum exponential fallback delay for one read retry. */
+export const RATE_LIMIT_FALLBACK_MAX_DELAY_MS = 2_000;
 
 /** Bytes of a single tool result inlined before it spills to a ResultRef. */
 export const INLINE_RESULT_BYTE_CAP = 8_000;
@@ -74,6 +78,8 @@ export const CODE_MODE_ERRORS = Object.freeze({
   SANDBOX_UNAVAILABLE: "sandbox_unavailable",
   /** Upstream server or transport failed. */
   UPSTREAM_ERROR: "upstream_error",
+  /** Upstream server returned a structured transport-level rate limit. */
+  RATE_LIMITED: "rate_limited",
 } as const);
 
 export type CodeModeErrorCode = (typeof CODE_MODE_ERRORS)[keyof typeof CODE_MODE_ERRORS];

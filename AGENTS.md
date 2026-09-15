@@ -87,7 +87,12 @@ Every path that reaches an MCP server crosses `McpPolicy` (`src/mcp/policy.ts`) 
 | Skill activation | `skills/load-skill-tool.ts`   | `skill-load`       |
 | SEP-2640 skills  | `skills/sep2640/*`            | `skills-extension` |
 
-The ordered pipeline for a tool call: server connected → tool present in the discovered set → arguments valid against the declared input schema → not cancelled → permission → dispatch. Every denial happens **before** the upstream call, and every outcome (allowed or denied) appends exactly one audit record.
+The ordered pipeline for a tool call: server connected → tool present in the discovered set → arguments valid against the declared input schema → not cancelled → permission → dispatch. Every policy denial happens **before** the upstream call, and every policy decision appends exactly one audit record.
+
+A structured transport-level HTTP 429 is an upstream failure, not a policy denial. It appends a
+`failed`/`rate_limited` audit record. Code Mode may retry only a genuinely read-only call, under its
+shared per-server backoff, serialized recovery probe, and execution-wide retry budget; writes and
+ordinary `isError` tool results never retry.
 
 There is no skill step in that pipeline, and its absence is deliberate. Skill references decide which definitions the model is _shown_ on the direct proxy surface; they never decide what may run. A tool referenced by no skill is callable from every surface.
 

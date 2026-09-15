@@ -33,6 +33,7 @@ export interface CodeModeErrorDetails {
   error: string;
   message: string;
   alternatives?: string[];
+  serverName?: string;
   toolName?: string;
   reason?: string;
   candidates?: string[];
@@ -83,7 +84,7 @@ export interface SandboxRequest extends ExecutorOptions {
 }
 
 const DEFAULT_MEMORY_LIMIT = 128;
-const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_EXECUTION_TIMEOUT_MS = 30_000;
 const STRUCTURED_ERROR_PREFIX = "__CODE_MODE_ERROR__";
 
 /** Error code surfaced when the V8 isolate backend is not installed. */
@@ -104,7 +105,7 @@ export const SANDBOX_UNAVAILABLE_ERROR = CODE_MODE_ERRORS.SANDBOX_UNAVAILABLE;
  */
 export async function executeInSandbox(request: SandboxRequest): Promise<ExecuteResult> {
   const memoryLimit = request.memoryLimit ?? DEFAULT_MEMORY_LIMIT;
-  const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = request.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
 
   if (request.signal?.aborted) return abortedResult();
 

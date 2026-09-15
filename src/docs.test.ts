@@ -45,6 +45,10 @@ describe("Code Mode call-budget guidance", () => {
     );
     expect(codeModeDoc).toContain("8 concurrent upstream calls per server");
     expect(codeModeDoc).toContain("shared FIFO approval queue separately");
+    expect(codeModeDoc).toContain("Retry-After");
+    expect(codeModeDoc).toContain("X-RateLimit-Reset");
+    expect(codeModeDoc).toContain("Writes are never retried");
+    expect(codeModeDoc).toMatch(/text blocks and `isError` results do not trigger a\s+retry/);
   });
 
   it("does not teach repeated code_execute calls as a routine budget bypass", () => {

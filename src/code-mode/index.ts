@@ -1,10 +1,14 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
+import { McpRateLimitError, declaredRateLimitDelayMs } from "../mcp/rate-limit.js";
 import {
   CODE_MODE_ERRORS,
   MAX_CONCURRENT_READS_PER_SERVER,
   MAX_READ_CALLS,
+  MAX_READ_RETRIES_TOTAL,
   MAX_WRITE_CALLS,
+  RATE_LIMIT_FALLBACK_BASE_DELAY_MS,
+  RATE_LIMIT_FALLBACK_MAX_DELAY_MS,
 } from "./budgets.js";
 import {
   buildCatalogSnapshot,
@@ -27,11 +31,13 @@ import {
   type CodeModeDiagnostics,
   type CodeModeTool,
 } from "./eligibility.js";
-import type { ExecuteResult, ExecutorOptions } from "./executor.js";
 import {
   CodeModeDispatchError,
+  DEFAULT_EXECUTION_TIMEOUT_MS,
   executeInSandbox,
   type CodeModeErrorDetails,
+  type ExecuteResult,
+  type ExecutorOptions,
   type RunProvenance,
   type ToolTarget,
 } from "./executor.js";
@@ -107,6 +113,13 @@ export interface CodeModeManagerOptions extends ExecutorOptions {
   namespaces?: OperatorNamespaces;
   /** Operator-declared trust levels, keyed by server name. */
   trust?: ServerTrustConfig;
+  /** Deterministic test seam for rate-limit backoff. */
+  rateLimitScheduler?: RateLimitScheduler;
+}
+
+export interface RateLimitScheduler {
+  now(): number;
+  sleep(delayMs: number, signal?: AbortSignal): Promise<void>;
 }
 
 /**
@@ -151,6 +164,7 @@ export class CodeModeManager {
   private readonly telemetry = new DiscoveryTelemetry();
   private readonly options: CodeModeManagerOptions;
   private readonly sandboxExecutor: typeof executeInSandbox;
+  private readonly rateLimitScheduler: RateLimitScheduler;
   private log: ((msg: string) => void) | undefined;
   private lastDiagnosticSummary = "";
   private sandbox: SandboxAvailability;
@@ -161,6 +175,7 @@ export class CodeModeManager {
   constructor(options: CodeModeManagerOptions = {}) {
     this.options = options;
     this.sandboxExecutor = options.sandboxExecutor ?? executeInSandbox;
+    this.rateLimitScheduler = options.rateLimitScheduler ?? DEFAULT_RATE_LIMIT_SCHEDULER;
     this.log = options.log;
     // An injected executor is the sandbox. Probing the native addon in that
     // case would report on a backend this manager will never call.
@@ -415,9 +430,12 @@ export class CodeModeManager {
     for (const [alias, entry] of snapshot.byAlias) aliases[alias] = entry.ref;
 
     let readCalls = 0;
+    let readRetries = 0;
     let writeCalls = 0;
-    const readGates = new Map<string, ReadGate>();
+    const readStates = new Map<string, ReadServerState>();
     const writeQueue = { chain: Promise.resolve() };
+    const deadlineAtMs =
+      this.rateLimitScheduler.now() + (this.options.timeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS);
 
     // Coarse run-level provenance. Recorded before dispatch so that a write
     // is judged against everything the run had already read, not against
@@ -494,29 +512,32 @@ export class CodeModeManager {
       if (isReadCall) readServers.set(entry.serverName, entry.trust);
       else attemptedWrite = true;
 
-      const call = async () => {
-        try {
-          const terminal = await policy.callTool({
-            source: "code-mode",
-            serverName: entry.serverName,
-            toolName: entry.toolName,
-            args,
-            expectedDefinition: {
-              definitionDigest: entry.definitionDigest,
-              namespace: entry.namespace,
-            },
-            ...(signal !== undefined ? { signal } : {}),
-          });
-          return terminal.result;
-        } catch (error) {
-          throw toCodeModeDispatchError(error, entry);
-        }
+      const invokePolicy = async () => {
+        const terminal = await policy.callTool({
+          source: "code-mode",
+          serverName: entry.serverName,
+          toolName: entry.toolName,
+          args,
+          expectedDefinition: {
+            definitionDigest: entry.definitionDigest,
+            namespace: entry.namespace,
+          },
+          ...(signal !== undefined ? { signal } : {}),
+        });
+        return terminal.result;
       };
 
       // Writes are serialized globally: a script that fans out mutations in
       // parallel would ask the user to approve several at once, with no stable
       // order to reason about. Reads are bounded per server instead.
       if (!isReadCall) {
+        const call = async () => {
+          try {
+            return await invokePolicy();
+          } catch (error) {
+            throw toCodeModeDispatchError(error, entry);
+          }
+        };
         const run = writeQueue.chain.then(call, call);
         writeQueue.chain = run.then(
           () => undefined,
@@ -525,9 +546,41 @@ export class CodeModeManager {
         return run;
       }
 
-      const releaseReadSlot = await acquireReadSlot(readGates, entry.serverName);
+      const state = readServerState(readStates, entry.serverName);
+      const releaseReadSlot = await acquireReadSlot(state);
       try {
-        return await call();
+        while (true) {
+          const completeAdmission = await acquireRateLimitAdmission({
+            state,
+            serverName: entry.serverName,
+            scheduler: this.rateLimitScheduler,
+            deadlineAtMs,
+            ...(signal !== undefined ? { signal } : {}),
+          });
+
+          try {
+            const result = await invokePolicy();
+            completeAdmission(true);
+            if (this.rateLimitScheduler.now() >= state.nextAdmissionAtMs) {
+              state.fallbackExponent = 0;
+            }
+            return result;
+          } catch (error) {
+            if (!(error instanceof McpRateLimitError)) {
+              completeAdmission(true);
+              throw toCodeModeDispatchError(error, entry);
+            }
+
+            registerRateLimit(state, error, this.rateLimitScheduler.now());
+            completeAdmission(false);
+            if (readRetries >= MAX_READ_RETRIES_TOTAL) {
+              throw rateLimitRetriesExhausted(entry);
+            }
+
+            readRetries += 1;
+            this.telemetry.recordReadRetry();
+          }
+        }
       } finally {
         releaseReadSlot();
       }
@@ -553,25 +606,42 @@ export class CodeModeManager {
   }
 }
 
-interface ReadGate {
+interface ReadServerState {
   active: number;
   readonly waiters: (() => void)[];
+  nextAdmissionAtMs: number;
+  fallbackExponent: number;
+  backoffPromise?: Promise<void>;
+  recoveryRequired: boolean;
+  recoveryInFlight: boolean;
+  readonly recoveryWaiters: (() => void)[];
 }
 
-async function acquireReadSlot(
-  gates: Map<string, ReadGate>,
+function readServerState(
+  states: Map<string, ReadServerState>,
   serverName: string,
-): Promise<() => void> {
-  let gate = gates.get(serverName);
-  if (!gate) {
-    gate = { active: 0, waiters: [] };
-    gates.set(serverName, gate);
+): ReadServerState {
+  let state = states.get(serverName);
+  if (!state) {
+    state = {
+      active: 0,
+      waiters: [],
+      nextAdmissionAtMs: 0,
+      fallbackExponent: 0,
+      recoveryRequired: false,
+      recoveryInFlight: false,
+      recoveryWaiters: [],
+    };
+    states.set(serverName, state);
   }
+  return state;
+}
 
-  if (gate.active < MAX_CONCURRENT_READS_PER_SERVER) {
-    gate.active += 1;
+async function acquireReadSlot(state: ReadServerState): Promise<() => void> {
+  if (state.active < MAX_CONCURRENT_READS_PER_SERVER) {
+    state.active += 1;
   } else {
-    await new Promise<void>((resolve) => gate.waiters.push(resolve));
+    await new Promise<void>((resolve) => state.waiters.push(resolve));
   }
 
   let released = false;
@@ -579,7 +649,7 @@ async function acquireReadSlot(
     if (released) return;
     released = true;
 
-    const next = gate.waiters.shift();
+    const next = state.waiters.shift();
     if (next) {
       // Transfer the occupied slot directly. Keeping `active` unchanged means
       // a new arrival cannot overtake a waiter between release and resumption.
@@ -587,9 +657,171 @@ async function acquireReadSlot(
       return;
     }
 
-    gate.active -= 1;
-    if (gate.active === 0) gates.delete(serverName);
+    state.active -= 1;
   };
+}
+
+interface WaitForReadAdmissionOptions {
+  state: ReadServerState;
+  serverName: string;
+  scheduler: RateLimitScheduler;
+  deadlineAtMs: number;
+  signal?: AbortSignal;
+}
+
+async function acquireRateLimitAdmission(
+  options: WaitForReadAdmissionOptions,
+): Promise<(rateLimitCleared: boolean) => void> {
+  const { state, signal } = options;
+  while (true) {
+    await waitForReadAdmission(options);
+    if (!state.recoveryRequired) return () => undefined;
+
+    if (!state.recoveryInFlight) {
+      state.recoveryInFlight = true;
+      let completed = false;
+      return (rateLimitCleared) => {
+        if (completed) return;
+        completed = true;
+        state.recoveryInFlight = false;
+        if (rateLimitCleared) state.recoveryRequired = false;
+        for (const wake of state.recoveryWaiters.splice(0)) wake();
+      };
+    }
+
+    await waitForRecoveryProbe(state, signal);
+  }
+}
+
+async function waitForReadAdmission(options: WaitForReadAdmissionOptions): Promise<void> {
+  const { state, serverName, scheduler, deadlineAtMs, signal } = options;
+  while (true) {
+    if (signal?.aborted) throw cancelled();
+    if (state.nextAdmissionAtMs === 0) return;
+    const nowMs = scheduler.now();
+    if (nowMs >= deadlineAtMs) throw rateLimitDeadlineExceeded(serverName);
+    if (state.nextAdmissionAtMs <= nowMs) {
+      state.nextAdmissionAtMs = 0;
+      return;
+    }
+
+    let backoff = state.backoffPromise;
+    if (!backoff) {
+      backoff = runBackoffWindow(state, serverName, scheduler, deadlineAtMs, signal);
+      state.backoffPromise = backoff;
+    }
+
+    try {
+      await backoff;
+    } catch (error) {
+      if (signal?.aborted) throw cancelled();
+      throw error;
+    } finally {
+      if (state.backoffPromise === backoff) state.backoffPromise = undefined;
+    }
+  }
+}
+
+async function runBackoffWindow(
+  state: ReadServerState,
+  serverName: string,
+  scheduler: RateLimitScheduler,
+  deadlineAtMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  while (true) {
+    if (signal?.aborted) throw cancelled();
+    const nowMs = scheduler.now();
+    if (nowMs >= deadlineAtMs || state.nextAdmissionAtMs >= deadlineAtMs) {
+      throw rateLimitDeadlineExceeded(serverName);
+    }
+    if (state.nextAdmissionAtMs <= nowMs) {
+      state.nextAdmissionAtMs = 0;
+      return;
+    }
+    await scheduler.sleep(state.nextAdmissionAtMs - nowMs, signal);
+  }
+}
+
+function registerRateLimit(state: ReadServerState, error: McpRateLimitError, nowMs: number): void {
+  state.recoveryRequired = true;
+  const declaredDelayMs = declaredRateLimitDelayMs(error, nowMs);
+  if (declaredDelayMs !== undefined) {
+    state.nextAdmissionAtMs = Math.max(state.nextAdmissionAtMs, nowMs + declaredDelayMs);
+    return;
+  }
+
+  // Simultaneous 429s share the active fallback window. Only a new 429 after
+  // that window advances the bounded exponential sequence.
+  if (state.nextAdmissionAtMs > nowMs) return;
+  const delayMs = Math.min(
+    RATE_LIMIT_FALLBACK_BASE_DELAY_MS * 2 ** state.fallbackExponent,
+    RATE_LIMIT_FALLBACK_MAX_DELAY_MS,
+  );
+  state.fallbackExponent += 1;
+  state.nextAdmissionAtMs = nowMs + delayMs;
+}
+
+function waitForRecoveryProbe(state: ReadServerState, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(cancelled());
+
+  return new Promise((resolve, reject) => {
+    const wake = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      const index = state.recoveryWaiters.indexOf(wake);
+      if (index !== -1) state.recoveryWaiters.splice(index, 1);
+      reject(cancelled());
+    };
+    state.recoveryWaiters.push(wake);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function rateLimitRetriesExhausted(entry: CatalogEntry): CodeModeDispatchError {
+  return new CodeModeDispatchError({
+    error: CODE_MODE_ERRORS.RATE_LIMITED,
+    message:
+      `MCP server "${entry.serverName}" kept rate-limiting read call "${entry.toolName}" after ` +
+      `${String(MAX_READ_RETRIES_TOTAL)} automatic retries. Wait for the provider quota to reset, ` +
+      "then aggregate or paginate more coarsely before trying again.",
+    serverName: entry.serverName,
+    toolName: entry.toolName,
+  });
+}
+
+function rateLimitDeadlineExceeded(serverName: string): CodeModeDispatchError {
+  return new CodeModeDispatchError({
+    error: CODE_MODE_ERRORS.DEADLINE_EXCEEDED,
+    message:
+      `Rate-limit backoff for MCP server "${serverName}" would exceed this execution's deadline. ` +
+      "Wait for the provider quota to reset before starting another necessary execution.",
+    serverName,
+  });
+}
+
+const DEFAULT_RATE_LIMIT_SCHEDULER: RateLimitScheduler = {
+  now: () => Date.now(),
+  sleep: sleepWithSignal,
+};
+
+function sleepWithSignal(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(cancelled());
+  if (delayMs <= 0) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(cancelled());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 const TRUST_ORDER: readonly ServerTrust[] = ["untrusted", "reviewed", "managed"];
@@ -635,6 +867,16 @@ function cancelled(): CodeModeDispatchError {
  * for confirmation, rather than implying the tool was never reachable.
  */
 function toCodeModeDispatchError(error: unknown, entry: CatalogEntry): unknown {
+  if (error instanceof McpRateLimitError) {
+    return new CodeModeDispatchError({
+      error: CODE_MODE_ERRORS.RATE_LIMITED,
+      message:
+        `MCP server "${entry.serverName}" rate-limited "${entry.toolName}". ` +
+        "Wait for the provider quota to reset before retrying this call.",
+      serverName: entry.serverName,
+      toolName: entry.toolName,
+    });
+  }
   if (!(error instanceof McpPolicyError)) return error;
 
   const approvalRefused =
@@ -643,6 +885,7 @@ function toCodeModeDispatchError(error: unknown, entry: CatalogEntry): unknown {
     error: error.reason,
     message: error.message,
     alternatives: [...error.alternatives],
+    serverName: entry.serverName,
     toolName: entry.toolName,
     ...(approvalRefused ? { reason: formatApprovalReasons(entry.entry) } : {}),
   } satisfies CodeModeErrorDetails);

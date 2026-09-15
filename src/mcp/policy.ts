@@ -13,6 +13,7 @@ import { SKILLS_EXTENSION_NAME } from "../skills/sep2640/spec.js";
 import { computeDefinitionDigest } from "../code-mode/catalog.js";
 import type { TerminalCallToolResult } from "./call-tool-result.js";
 import type { McpTool } from "./client-manager.js";
+import { toMcpRateLimitError } from "./rate-limit.js";
 import { isReadOnlyToolCall } from "./tool-call-classification.js";
 
 export { isReadOnlyToolCall } from "./tool-call-classification.js";
@@ -98,8 +99,8 @@ export interface McpAuditRecord {
   readonly serverName: string;
   readonly toolName?: string;
   readonly uri?: string;
-  readonly decision: "allowed" | "denied";
-  readonly reason?: McpPolicyDenialReason;
+  readonly decision: "allowed" | "denied" | "failed";
+  readonly reason?: McpPolicyDenialReason | "rate_limited";
   readonly approval?: McpApprovalOutcome;
   readonly timestampMs: number;
 }
@@ -670,7 +671,23 @@ export class McpPolicy {
     // captured by its run, so re-read and compare immediately before dispatch.
     if (expectedDefinition) requireExpectedDefinition(approval);
 
-    const terminal = await this.gateway.callTool(serverName, toolName, args, signal);
+    let terminal: TerminalCallToolResult;
+    try {
+      terminal = await this.gateway.callTool(serverName, toolName, args, signal);
+    } catch (error) {
+      const rateLimit = toMcpRateLimitError(error);
+      if (!rateLimit) throw error;
+      this.record({
+        source,
+        operation: "tool",
+        serverName,
+        toolName,
+        decision: "failed",
+        reason: "rate_limited",
+        ...(approval !== undefined ? { approval } : {}),
+      });
+      throw rateLimit;
+    }
     this.record({
       source,
       operation: "tool",
