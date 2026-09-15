@@ -1,6 +1,11 @@
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
-import { CODE_MODE_ERRORS, MAX_CHILD_CALLS, MAX_CONCURRENT_READS_PER_SERVER } from "./budgets.js";
+import {
+  CODE_MODE_ERRORS,
+  MAX_CONCURRENT_READS_PER_SERVER,
+  MAX_READ_CALLS,
+  MAX_WRITE_CALLS,
+} from "./budgets.js";
 import {
   buildCatalogSnapshot,
   resolveIdentity,
@@ -409,8 +414,9 @@ export class CodeModeManager {
     const aliases: Record<string, string> = {};
     for (const [alias, entry] of snapshot.byAlias) aliases[alias] = entry.ref;
 
-    let childCalls = 0;
-    const readSlots = new Map<string, number>();
+    let readCalls = 0;
+    let writeCalls = 0;
+    const readGates = new Map<string, ReadGate>();
     const writeQueue = { chain: Promise.resolve() };
 
     // Coarse run-level provenance. Recorded before dispatch so that a write
@@ -421,14 +427,6 @@ export class CodeModeManager {
 
     const dispatch = async (target: ToolTarget, args: Record<string, unknown>) => {
       if (signal?.aborted) throw cancelled();
-
-      childCalls += 1;
-      if (childCalls > MAX_CHILD_CALLS) {
-        throw new CodeModeDispatchError({
-          error: CODE_MODE_ERRORS.BUDGET_EXCEEDED,
-          message: `This execution exceeded its budget of ${String(MAX_CHILD_CALLS)} tool calls. Narrow the query or paginate more coarsely.`,
-        });
-      }
 
       // Authority comes from the structured identity where the script gave
       // one. A ref is resolved through the catalog, never parsed into one.
@@ -461,9 +459,39 @@ export class CodeModeManager {
         });
       }
 
+      if (signal?.aborted) throw cancelled();
+
+      // Budget classification is the approval posture captured in the catalog,
+      // which comes from the same predicate used by policy and definition
+      // digests. Unknown targets fail above without consuming a budget; once a
+      // known call is admitted, validation failures and approval denials still
+      // consume its one logical slot.
+      const isReadCall = entry.entry.runsUnattended;
+      if (isReadCall) {
+        if (readCalls >= MAX_READ_CALLS) {
+          throw new CodeModeDispatchError({
+            error: CODE_MODE_ERRORS.BUDGET_EXCEEDED,
+            message:
+              `This execution exceeded its read-call budget of ${MAX_READ_CALLS.toLocaleString("en-US")} logical tool calls. ` +
+              "Aggregate results, paginate more coarsely, or split the work only when one execution cannot safely complete it.",
+          });
+        }
+        readCalls += 1;
+      } else {
+        if (writeCalls >= MAX_WRITE_CALLS) {
+          throw new CodeModeDispatchError({
+            error: CODE_MODE_ERRORS.BUDGET_EXCEEDED,
+            message:
+              `This execution exceeded its write-call budget of ${MAX_WRITE_CALLS.toLocaleString("en-US")} logical tool calls. ` +
+              "Reduce the mutation set or split it into separately reviewed executions only when necessary; every write still requires individual approval.",
+          });
+        }
+        writeCalls += 1;
+      }
+
       this.telemetry.recordCall(entry.ref);
 
-      if (entry.effect === "read") readServers.set(entry.serverName, entry.trust);
+      if (isReadCall) readServers.set(entry.serverName, entry.trust);
       else attemptedWrite = true;
 
       const call = async () => {
@@ -488,7 +516,7 @@ export class CodeModeManager {
       // Writes are serialized globally: a script that fans out mutations in
       // parallel would ask the user to approve several at once, with no stable
       // order to reason about. Reads are bounded per server instead.
-      if (entry.effect !== "read") {
+      if (!isReadCall) {
         const run = writeQueue.chain.then(call, call);
         writeQueue.chain = run.then(
           () => undefined,
@@ -497,15 +525,11 @@ export class CodeModeManager {
         return run;
       }
 
-      const inFlight = readSlots.get(entry.serverName) ?? 0;
-      if (inFlight >= MAX_CONCURRENT_READS_PER_SERVER) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      readSlots.set(entry.serverName, inFlight + 1);
+      const releaseReadSlot = await acquireReadSlot(readGates, entry.serverName);
       try {
         return await call();
       } finally {
-        readSlots.set(entry.serverName, (readSlots.get(entry.serverName) ?? 1) - 1);
+        releaseReadSlot();
       }
     };
 
@@ -527,6 +551,45 @@ export class CodeModeManager {
 
     return { ...result, provenance: summarizeProvenance(readServers, attemptedWrite) };
   }
+}
+
+interface ReadGate {
+  active: number;
+  readonly waiters: (() => void)[];
+}
+
+async function acquireReadSlot(
+  gates: Map<string, ReadGate>,
+  serverName: string,
+): Promise<() => void> {
+  let gate = gates.get(serverName);
+  if (!gate) {
+    gate = { active: 0, waiters: [] };
+    gates.set(serverName, gate);
+  }
+
+  if (gate.active < MAX_CONCURRENT_READS_PER_SERVER) {
+    gate.active += 1;
+  } else {
+    await new Promise<void>((resolve) => gate.waiters.push(resolve));
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+
+    const next = gate.waiters.shift();
+    if (next) {
+      // Transfer the occupied slot directly. Keeping `active` unchanged means
+      // a new arrival cannot overtake a waiter between release and resumption.
+      next();
+      return;
+    }
+
+    gate.active -= 1;
+    if (gate.active === 0) gates.delete(serverName);
+  };
 }
 
 const TRUST_ORDER: readonly ServerTrust[] = ["untrusted", "reviewed", "managed"];

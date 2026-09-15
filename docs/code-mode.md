@@ -122,12 +122,23 @@ The snapshot fingerprint covers identity, namespace, schemas and their provenanc
 
 An execution is bounded so a runaway script degrades into a refusal rather than a large bill:
 
-- 64 tool calls per execution, 8 concurrent reads per server
-- Writes are serialized, so a script that fans out mutations cannot ask for several approvals at once with no order to reason about
+- 1,024 logical read calls and 16 logical write/approval-gated calls per execution
+- Reads remain limited to 8 concurrent upstream calls per server, even if the script queues all
+  1,024 with `Promise.all`
+- Writes are serialized and each one enters the shared FIFO approval queue separately, so a script
+  cannot fan out mutations into overlapping prompts or dispatches
 - Search returns 5 results by default and at most 20; `describe` accepts at most 20 refs
 - Discovery responses are capped at 24 KB and returned values at 48 KB
 
 An oversized return value is refused with an explanation, not silently truncated: half a serialized object is worse than none. Cancellation reaches the policy and the upstream MCP call, and disposes the isolate.
+
+The counters admit logical script calls, not transport attempts. The current dispatcher makes one
+upstream attempt per admitted call; the existing automatic-retry ceilings remain 3 reads total and
+0 writes. Unknown, ambiguous, stale-schema, and pre-admission cancelled calls fail before a counter
+because no current tool posture can be admitted. Once a known call is admitted, it consumes the
+budget selected by the policy's approval posture even if argument validation fails, approval is
+declined or unavailable, or cancellation arrives before dispatch. This prevents invalid-call and
+denial loops from bypassing the write ceiling.
 
 Plan discovery first, then make one `code_execute` call containing the complete calculation. If an undeclared result shape blocks the first attempt, one bounded inspection execution followed by one corrected retry is reasonable. Repeated executions are not extra call-budget allotments; narrow the query or paginate more coarsely instead.
 

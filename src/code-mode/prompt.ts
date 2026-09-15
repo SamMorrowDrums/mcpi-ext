@@ -106,7 +106,7 @@ export function renderPromptSection(options: PromptSectionOptions): string {
     "",
     "Plan discovery first, then use one `code_execute` for all calls and exact work. If an unknown",
     "shape blocks it, use `codemode.inspect(result)` in one bounded inspection execution, then one",
-    "corrected retry. Retries do not expand the per-execution tool-call budget.",
+    "corrected retry. Retries do not expand per-execution call budgets.",
     "",
     "Write tools pause for approval mid-script. Sanity-check the result before reporting.",
     "",
