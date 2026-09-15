@@ -16,6 +16,8 @@ export interface DiscoveryFunnel {
   readonly describe: number;
   readonly describedRefs: number;
   readonly calls: number;
+  /** Automatic upstream retries, separate from logical script calls. */
+  readonly readRetries: number;
   readonly blindCalls: number;
   /** Calls to tools never described in this session, over total calls. */
   readonly blindCallRate: number;
@@ -37,6 +39,7 @@ export class DiscoveryTelemetry {
   private search = 0;
   private describe = 0;
   private calls = 0;
+  private readRetries = 0;
   private blindCalls = 0;
   /** ref -> the schemaHash that was shown when it was described. */
   private readonly described = new Map<string, string>();
@@ -73,6 +76,10 @@ export class DiscoveryTelemetry {
     if (!this.described.has(ref)) this.blindCalls += 1;
   }
 
+  recordReadRetry(): void {
+    this.readRetries += 1;
+  }
+
   /** Whether this ref has been described, and so may be called informed. */
   hasDescribed(ref: string): boolean {
     return this.described.has(ref);
@@ -92,6 +99,7 @@ export class DiscoveryTelemetry {
       describe: this.describe,
       describedRefs: this.described.size,
       calls: this.calls,
+      readRetries: this.readRetries,
       blindCalls: this.blindCalls,
       blindCallRate: this.calls === 0 ? 0 : this.blindCalls / this.calls,
       browseRatio: discoveryOps === 0 ? 0 : this.browse / discoveryOps,
@@ -105,6 +113,7 @@ export class DiscoveryTelemetry {
     this.search = 0;
     this.describe = 0;
     this.calls = 0;
+    this.readRetries = 0;
     this.blindCalls = 0;
     this.described.clear();
   }

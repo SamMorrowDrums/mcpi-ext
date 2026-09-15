@@ -11,9 +11,9 @@ import { formatToolCliForPrompt } from "./tool-cli/format.js";
 const CURRENT_TOKENS = {
   routing: 1005,
   toolCli: 422,
-  codeMode: 968,
+  codeMode: 952,
   footer: 117,
-  combined: 2509,
+  combined: 2493,
 } as const;
 
 const bridgeInfo: BridgeInfo = {

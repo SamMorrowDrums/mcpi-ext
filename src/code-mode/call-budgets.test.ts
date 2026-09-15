@@ -317,7 +317,7 @@ describe("Code Mode per-execution call budgets", () => {
     });
   });
 
-  it("currently makes one upstream attempt per logical call and preserves retry ceilings", async () => {
+  it("does not retry an ordinary non-rate transport failure", async () => {
     const callTool = vi.fn(async () => {
       throw new Error("transport failed");
     });

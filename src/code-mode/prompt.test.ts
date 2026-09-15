@@ -106,10 +106,27 @@ describe("turn-0 prompt budget", () => {
       sandboxAvailable: true,
     });
 
-    expect(section).toContain("Plan discovery first, then use one `code_execute`");
-    expect(section).toContain("one bounded inspection execution");
-    expect(section).toContain("corrected retry");
-    expect(section).toContain("do not expand per-execution call budgets");
+    expect(section).toContain("Use one `code_execute` for the complete calculation");
+    expect(section).toContain("inspect once");
+    expect(section).toContain("at most one corrected retry");
+    expect(section).toContain("do not expand call budgets");
+  });
+
+  it("shows one bounded parallel-read pattern without suggesting parallel writes", () => {
+    const section = renderPromptSection({
+      namespaces: namespacesFor(declared),
+      sandboxAvailable: true,
+    });
+
+    expect(section).toContain(
+      "Independent READ calls may use `Promise.all`; the runtime enforces per-server concurrency/rate limits",
+    );
+    expect(section).toContain(
+      'const results = await Promise.all(items.map((x) => codemode.call("server/read_item", { id: x.id })));',
+    );
+    expect(section).toContain("Never parallelize writes");
+    expect(section.match(/Promise\.all/g)).toHaveLength(2);
+    expect(section.match(/const results = await Promise\.all/g)).toHaveLength(1);
   });
 });
 

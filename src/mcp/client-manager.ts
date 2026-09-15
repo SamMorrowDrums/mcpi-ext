@@ -29,6 +29,7 @@ import {
 } from "./client-factory.js";
 import type { McpConfig, ServerConfig } from "./config.js";
 import { McpHostElicitationError } from "./host-elicitation.js";
+import { withMcpRateLimitSignals } from "./rate-limit.js";
 
 /** A lossless MCP tool as discovered from a server, tagged with its origin. */
 export type McpTool = Tool & {
@@ -427,6 +428,7 @@ function createTransport(config: ServerConfig): Transport {
     requestInit: {
       headers: config.headers ?? {},
     },
+    fetch: withMcpRateLimitSignals(globalThis.fetch),
   });
 }
 

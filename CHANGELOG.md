@@ -13,7 +13,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Code Mode now budgets each execution independently for up to 1,024 logical read calls and 16
   approval-gated calls, preserving per-server read concurrency and one-at-a-time FIFO write
-  approvals instead of making both classes compete for one 64-call counter.
+  approvals instead of making both classes compete for one 64-call counter. Independent reads now
+  have a concise `Promise.all` prompt example and share per-server backpressure for structured HTTP
+  429 responses, honoring retry/reset headers within the execution deadline without ever retrying
+  writes or application-level error output.
 
 ## [1.1.4] — 2026-09-15
 

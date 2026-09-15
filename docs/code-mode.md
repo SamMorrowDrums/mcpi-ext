@@ -132,13 +132,21 @@ An execution is bounded so a runaway script degrades into a refusal rather than 
 
 An oversized return value is refused with an explanation, not silently truncated: half a serialized object is worse than none. Cancellation reaches the policy and the upstream MCP call, and disposes the isolate.
 
-The counters admit logical script calls, not transport attempts. The current dispatcher makes one
-upstream attempt per admitted call; the existing automatic-retry ceilings remain 3 reads total and
-0 writes. Unknown, ambiguous, stale-schema, and pre-admission cancelled calls fail before a counter
-because no current tool posture can be admitted. Once a known call is admitted, it consumes the
-budget selected by the policy's approval posture even if argument validation fails, approval is
-declined or unavailable, or cancellation arrives before dispatch. This prevents invalid-call and
-denial loops from bypassing the write ceiling.
+The counters admit logical script calls, not transport attempts. Read-only calls automatically retry
+at most 3 times across the execution after structured transport-level 429 responses, without
+spending another logical read. `Retry-After`, standard `RateLimit-Reset`, and GitHub's
+`X-RateLimit-Reset` are honored;
+without reset metadata, fallback delays are 500 ms, 1 second, then 2 seconds. One rate limit pauses
+new read admissions to that server behind a shared backoff window and one serialized recovery probe,
+while other servers continue. Cancellation interrupts the wait, and a reset beyond the execution
+deadline fails without sleeping past it. Writes are never retried.
+
+Ordinary tool output is not a transport signal: text blocks and `isError` results do not trigger a
+retry, even if their text says “429” or “rate limit.” Unknown, ambiguous, stale-schema, and
+pre-admission cancelled calls fail before a counter because no current tool posture can be admitted.
+Once a known call is admitted, it consumes the budget selected by the policy's approval posture even
+if argument validation fails, approval is declined or unavailable, or cancellation arrives before
+dispatch. This prevents invalid-call and denial loops from bypassing the write ceiling.
 
 Plan discovery first, then make one `code_execute` call containing the complete calculation. If an undeclared result shape blocks the first attempt, one bounded inspection execution followed by one corrected retry is reasonable. Repeated executions are not extra call-budget allotments; narrow the query or paginate more coarsely instead.
 
