@@ -7,6 +7,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Concurrent approval-gated calls now queue their host confirmation prompts in strict FIFO order,
+  preventing direct proxy, Code Mode, and tool-cli requests from replacing one another and
+  deadlocking the agent turn.
+
 ## [1.1.3] — 2026-09-11
 
 ### Fixed
