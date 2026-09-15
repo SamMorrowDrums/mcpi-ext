@@ -271,5 +271,5 @@ because it would rewrite unrelated execution surfaces.
 
 **Date:** 2026-09-15
 **Context:** A live model serialized independent reads even after seeing an optional `Promise.all` example, paying one full network latency per item while the runtime's eight-call gate sat idle.
-**Decision:** The Code Mode prompt requires independent reads to use `Promise.all`, while dependent calls, cursor-driven pagination, and all writes remain sequential. Generated code never implements sleeps or throttling; per-server concurrency and rate-limit backoff belong to the runtime.
-**Rationale:** Naming the execution boundary removes the ambiguity of “async” or “may parallelize.” It lets independent reads fill the bounded gate without teaching unsafe write fan-out or breaking pagination dependencies.
+**Decision:** The Code Mode prompt requires independent reads to use `Promise.all`, while dependent calls, cursor-driven pagination, and all writes remain sequential. It says only that the runtime handles concurrency and rate limits; numeric limits, queue/admission behavior, backoff, sleeps, and throttling remain implementation and developer-documentation details.
+**Rationale:** Naming the execution boundary removes the ambiguity of “async” or “may parallelize.” Keeping runtime mechanics out of the model-facing rule lets independent reads fill the bounded gate without inviting generated throttling, unsafe write fan-out, or broken pagination dependencies.

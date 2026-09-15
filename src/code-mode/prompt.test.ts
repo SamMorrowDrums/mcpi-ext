@@ -118,12 +118,11 @@ describe("turn-0 prompt budget", () => {
       sandboxAvailable: true,
     });
 
-    expect(section).toMatch(/Run independent read calls concurrently with `Promise\.all`/);
-    expect(section).toMatch(/dependent calls,[\s\S]{0,100}all writes sequential/);
+    expect(section).toContain(
+      "Run independent reads concurrently with `Promise.all`; the runtime handles concurrency and rate limits.",
+    );
+    expect(section).toMatch(/Keep dependent calls,[\s\S]{0,100}all writes sequential/);
     expect(section).toMatch(/next cursor depends on the previous page/);
-    expect(section).toMatch(/runtime enforces per-server concurrency and rate-limit backoff/);
-    expect(section).toMatch(/do not serialize independent\s+reads/);
-    expect(section).toMatch(/do not serialize[\s\S]{0,100}sleeps\/throttling/);
     expect(section).toContain(
       'const results = await Promise.all(items.map(x => codemode.call("server/read_item", { id: x.id })));',
     );
@@ -134,6 +133,10 @@ describe("turn-0 prompt budget", () => {
       section.indexOf("### Available namespaces"),
     );
     expect(rule).not.toMatch(/\basync\b/i);
+    expect(rule).not.toMatch(/\b8\b/);
+    expect(rule).not.toMatch(/per-server|backoff|admission|queue|sleep|throttl/i);
+    expect(section).not.toContain("MAX_CONCURRENT_READS_PER_SERVER");
+    expect(section).not.toMatch(/\b8\s+(?:concurrent|per server)/i);
   });
 
   it("fails the normative parallelism contract when Promise.all or independent-read wording is removed", () => {
@@ -142,14 +145,14 @@ describe("turn-0 prompt budget", () => {
       sandboxAvailable: true,
     });
     const assertRule = (candidate: string) => {
-      expect(candidate).toMatch(/independent read/i);
+      expect(candidate).toMatch(/independent reads/i);
       expect(candidate).toContain("Promise.all");
-      expect(candidate).toMatch(/dependent calls,[\s\S]{0,100}all writes sequential/);
+      expect(candidate).toMatch(/Keep dependent calls,[\s\S]{0,100}all writes sequential/);
     };
 
     assertRule(section);
     expect(() => assertRule(section.replaceAll("Promise.all", "serial loop"))).toThrow();
-    expect(() => assertRule(section.replace(/independent read/gi, "read"))).toThrow();
+    expect(() => assertRule(section.replace(/independent reads/gi, "reads"))).toThrow();
   });
 });
 
