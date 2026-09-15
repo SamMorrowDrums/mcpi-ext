@@ -100,7 +100,7 @@ describe("turn-0 prompt budget", () => {
     expect(section).not.toContain("result.items");
   });
 
-  it("allows only bounded inspect recovery and never treats retries as extra call budget", () => {
+  it("allows only bounded inspect recovery and never treats retries as extra call budgets", () => {
     const section = renderPromptSection({
       namespaces: namespacesFor(declared),
       sandboxAvailable: true,
@@ -109,7 +109,7 @@ describe("turn-0 prompt budget", () => {
     expect(section).toContain("Plan discovery first, then use one `code_execute`");
     expect(section).toContain("one bounded inspection execution");
     expect(section).toContain("corrected retry");
-    expect(section).toContain("do not expand the per-execution tool-call budget");
+    expect(section).toContain("do not expand per-execution call budgets");
   });
 });
 

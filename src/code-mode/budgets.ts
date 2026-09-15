@@ -20,8 +20,10 @@ export const LIST_PAGE_DEFAULT = 25;
 /** Serialized byte cap for a single discovery response. */
 export const DISCOVERY_RESPONSE_BYTE_CAP = 24_000;
 
-/** Maximum MCP tool calls one execution may make. */
-export const MAX_CHILD_CALLS = 64;
+/** Maximum logical unattended/read-only MCP calls one execution may admit. */
+export const MAX_READ_CALLS = 1_024;
+/** Maximum logical approval-gated/write MCP calls one execution may admit. */
+export const MAX_WRITE_CALLS = 16;
 /** Concurrent read calls allowed against a single server. */
 export const MAX_CONCURRENT_READS_PER_SERVER = 8;
 /** Writes are serialized globally: one in flight, ever. */

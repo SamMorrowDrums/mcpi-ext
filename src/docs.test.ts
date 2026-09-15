@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readme = readFileSync(join(root, "README.md"), "utf8");
+const codeModeDoc = readFileSync(join(root, "docs", "code-mode.md"), "utf8");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
   version: string;
   peerDependencies: Record<string, string>;
@@ -36,6 +37,23 @@ const publicDocs = [{ name: "README.md", body: readme }, ...docFiles];
 
 /** Docs a new user reads. Contributor guidance is allowed to go deeper. */
 const userFacingDocs = publicDocs.filter((d) => d.name !== "docs/server-developer-guide.md");
+
+describe("Code Mode call-budget guidance", () => {
+  it("states the separate logical read and approval-gated limits", () => {
+    expect(codeModeDoc).toContain(
+      "1,024 logical read calls and 16 logical write/approval-gated calls",
+    );
+    expect(codeModeDoc).toContain("8 concurrent upstream calls per server");
+    expect(codeModeDoc).toContain("shared FIFO approval queue separately");
+  });
+
+  it("does not teach repeated code_execute calls as a routine budget bypass", () => {
+    expect(codeModeDoc).toContain("Repeated executions are not extra call-budget allotments");
+    expect(codeModeDoc).not.toMatch(
+      /(?:run|use|try)\s+(?:another|repeated)\s+`code_execute`[\s\S]{0,100}(?:bypass|budget)/i,
+    );
+  });
+});
 
 describe("stale strings never return", () => {
   // Each of these was live in published documentation and each one broke a real
