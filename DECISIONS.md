@@ -266,3 +266,10 @@ because it would rewrite unrelated execution surfaces.
 **Context:** Raising the read budget makes `Promise.all` useful for large independent lookups, but a concurrency gate alone still admits fresh requests as earlier calls report provider quota exhaustion. MCP tool output is untrusted application data, while Streamable HTTP exposes a reliable 429 status and standard retry headers before the SDK reduces the error to status and text.
 **Decision:** Wrap the remote transport's supported custom fetch seam to preserve only structured HTTP 429 metadata (`Retry-After`, `RateLimit-Reset`, and `X-RateLimit-Reset`). Code Mode read calls share one backoff window and one serialized recovery probe per server, with at most three automatic retries per execution; retries do not consume logical-call budget. Missing metadata uses a bounded 500/1,000/2,000 ms fallback. Cancellation and the execution deadline bound every wait. Writes and ordinary `CallToolResult.isError` or text output never retry.
 **Rationale:** Per-server admission backpressure protects the user's quota without blocking independent servers. Restricting detection to transport status and headers avoids letting attacker-controlled tool text steer scheduler behavior, while retaining the existing read-only classification as the sole idempotence decision.
+
+## 035 — Independent reads are normative parallel work, not optional syntax
+
+**Date:** 2026-09-15
+**Context:** A live model serialized independent reads even after seeing an optional `Promise.all` example, paying one full network latency per item while the runtime's eight-call gate sat idle.
+**Decision:** The Code Mode prompt requires independent reads to use `Promise.all`, while dependent calls, cursor-driven pagination, and all writes remain sequential. Generated code never implements sleeps or throttling; per-server concurrency and rate-limit backoff belong to the runtime.
+**Rationale:** Naming the execution boundary removes the ambiguity of “async” or “may parallelize.” It lets independent reads fill the bounded gate without teaching unsafe write fan-out or breaking pagination dependencies.

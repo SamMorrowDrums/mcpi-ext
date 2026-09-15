@@ -112,21 +112,44 @@ describe("turn-0 prompt budget", () => {
     expect(section).toContain("do not expand call budgets");
   });
 
-  it("shows one bounded parallel-read pattern without suggesting parallel writes", () => {
+  it("requires parallel independent reads and keeps dependent calls and writes sequential", () => {
     const section = renderPromptSection({
       namespaces: namespacesFor(declared),
       sandboxAvailable: true,
     });
 
+    expect(section).toMatch(/Run independent read calls concurrently with `Promise\.all`/);
+    expect(section).toMatch(/dependent calls,[\s\S]{0,100}all writes sequential/);
+    expect(section).toMatch(/next cursor depends on the previous page/);
+    expect(section).toMatch(/runtime enforces per-server concurrency and rate-limit backoff/);
+    expect(section).toMatch(/do not serialize independent\s+reads/);
+    expect(section).toMatch(/do not serialize[\s\S]{0,100}sleeps\/throttling/);
     expect(section).toContain(
-      "Independent READ calls may use `Promise.all`; the runtime enforces per-server concurrency/rate limits",
+      'const results = await Promise.all(items.map(x => codemode.call("server/read_item", { id: x.id })));',
     );
-    expect(section).toContain(
-      'const results = await Promise.all(items.map((x) => codemode.call("server/read_item", { id: x.id })));',
-    );
-    expect(section).toContain("Never parallelize writes");
     expect(section.match(/Promise\.all/g)).toHaveLength(2);
     expect(section.match(/const results = await Promise\.all/g)).toHaveLength(1);
+    const rule = section.slice(
+      section.indexOf("Run independent read"),
+      section.indexOf("### Available namespaces"),
+    );
+    expect(rule).not.toMatch(/\basync\b/i);
+  });
+
+  it("fails the normative parallelism contract when Promise.all or independent-read wording is removed", () => {
+    const section = renderPromptSection({
+      namespaces: namespacesFor(declared),
+      sandboxAvailable: true,
+    });
+    const assertRule = (candidate: string) => {
+      expect(candidate).toMatch(/independent read/i);
+      expect(candidate).toContain("Promise.all");
+      expect(candidate).toMatch(/dependent calls,[\s\S]{0,100}all writes sequential/);
+    };
+
+    assertRule(section);
+    expect(() => assertRule(section.replaceAll("Promise.all", "serial loop"))).toThrow();
+    expect(() => assertRule(section.replace(/independent read/gi, "read"))).toThrow();
   });
 });
 

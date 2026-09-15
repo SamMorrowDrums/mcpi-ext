@@ -180,6 +180,34 @@ describe("Code Mode per-execution call budgets", () => {
     expect(maxConcurrency).toBe(8);
   });
 
+  it("makes Promise.all reads overlap under fake time while serial loops and all writes stay sequential", async () => {
+    vi.useFakeTimers({ now: 0 });
+    try {
+      const serialReads = await timedScenario("serial-reads", 16);
+      const parallelReads = await timedScenario("parallel-reads", 16);
+      const parallelWrites = await timedScenario("parallel-writes", 4);
+
+      expect(serialReads).toMatchObject({
+        elapsedMs: 1_600,
+        maxConcurrency: 1,
+        approvals: 0,
+      });
+      expect(parallelReads).toMatchObject({
+        elapsedMs: 200,
+        maxConcurrency: 8,
+        approvals: 0,
+      });
+      expect(parallelReads.elapsedMs).toBeLessThan(serialReads.elapsedMs);
+      expect(parallelWrites).toMatchObject({
+        elapsedMs: 400,
+        maxConcurrency: 1,
+        approvals: 4,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("charges declined writes so repeated denials cannot evade the write budget", async () => {
     const confirm = vi.fn(async () => false);
     const callTool = vi.fn(async () => terminal());
@@ -432,4 +460,54 @@ function isInvalidArgumentAudit(record: McpAuditRecord): boolean {
     record.reason === "invalid_arguments" &&
     record.approval === undefined
   );
+}
+
+type TimedScenario = "serial-reads" | "parallel-reads" | "parallel-writes";
+
+async function timedScenario(
+  scenario: TimedScenario,
+  callCount: number,
+): Promise<{ elapsedMs: number; maxConcurrency: number; approvals: number }> {
+  vi.setSystemTime(0);
+  let concurrency = 0;
+  let maxConcurrency = 0;
+  const confirm = vi.fn(async () => true);
+  const callTool = vi.fn(async () => {
+    concurrency += 1;
+    maxConcurrency = Math.max(maxConcurrency, concurrency);
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    concurrency -= 1;
+    return terminal();
+  });
+  const isWrite = scenario === "parallel-writes";
+  const { codeMode } = fixture({
+    tools: [tool(isWrite ? "write" : "read", { readOnlyHint: !isWrite })],
+    callTool,
+    ...(isWrite ? { confirm } : {}),
+    sandboxExecutor: (request) =>
+      capture(async () => {
+        const target = identity(isWrite ? "write" : "read");
+        if (scenario === "serial-reads") {
+          for (let index = 0; index < callCount; index += 1) {
+            await request.dispatch(target, { index });
+          }
+        } else {
+          await Promise.all(
+            Array.from({ length: callCount }, (_, index) => request.dispatch(target, { index })),
+          );
+        }
+        return callCount;
+      }),
+  });
+
+  const execution = codeMode.executeCode("return null;");
+  await vi.runAllTimersAsync();
+  const result = await execution;
+  expect(result.error).toBeUndefined();
+  expect(result.result).toBe(callCount);
+  return {
+    elapsedMs: Date.now(),
+    maxConcurrency,
+    approvals: confirm.mock.calls.length,
+  };
 }

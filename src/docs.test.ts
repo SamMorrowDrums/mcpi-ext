@@ -49,6 +49,12 @@ describe("Code Mode call-budget guidance", () => {
     expect(codeModeDoc).toContain("X-RateLimit-Reset");
     expect(codeModeDoc).toContain("Writes are never retried");
     expect(codeModeDoc).toMatch(/text blocks and `isError` results do not trigger a\s+retry/);
+    expect(codeModeDoc).toContain(
+      "Generated code must run independent read calls concurrently with `Promise.all`",
+    );
+    expect(codeModeDoc).toMatch(
+      /next cursor depends on the previous page[\s\S]{0,50}write stay sequential/,
+    );
   });
 
   it("does not teach repeated code_execute calls as a routine budget bypass", () => {
