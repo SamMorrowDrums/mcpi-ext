@@ -467,9 +467,13 @@ describe("mechanisms, facilities, and degradation", () => {
     );
   });
 
-  it("documents the raw Code Mode result envelope rather than a top-level output schema", () => {
+  it("documents declared Code Mode DTOs, legacy envelopes, and explicit errors", () => {
     const codeMode = docFiles.find((doc) => doc.name === "docs/code-mode.md")?.body ?? "";
-    expect(codeMode).toContain("raw MCP `CallToolResult` envelope");
+    expect(codeMode).toContain("MCP `CallToolResult` envelope");
+    expect(codeMode).toContain("`Promise<DTO>`");
+    expect(codeMode).toContain("`result.issues.length`");
+    expect(codeMode).toContain("invalid_structured_content");
+    expect(codeMode).toContain("upstream_error");
     expect(codeMode).toContain("result.structuredContent");
     expect(codeMode).toContain("isError");
     expect(codeMode).toContain("_meta");

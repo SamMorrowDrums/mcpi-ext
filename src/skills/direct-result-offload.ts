@@ -124,7 +124,8 @@ export function isDirectMcpResultOffloadFailureDetails(
 
 /**
  * Render one registered direct MCP proxy result. No other execution surface
- * calls this adapter, so Code Mode and tool-cli retain their raw envelopes.
+ * calls this adapter. Code Mode unwraps declared DTOs separately; tool-cli
+ * retains raw envelopes.
  */
 export async function renderDirectMcpProxyResult(
   terminal: TerminalCallToolResult,

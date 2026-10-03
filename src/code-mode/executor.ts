@@ -228,7 +228,9 @@ async function runInIsolate(
         const r = await __dispatch.apply(undefined, [JSON.stringify(target), JSON.stringify(args ?? {})], { arguments: { copy: true }, result: { promise: true, copy: true } });
         const response = JSON.parse(r);
         if (!response.ok) {
-          throw new Error(${JSON.stringify(STRUCTURED_ERROR_PREFIX)} + JSON.stringify(response.error));
+          const error = new Error(${JSON.stringify(STRUCTURED_ERROR_PREFIX)} + JSON.stringify(response.error));
+          error.details = response.error;
+          throw error;
         }
         return response.value;
       };

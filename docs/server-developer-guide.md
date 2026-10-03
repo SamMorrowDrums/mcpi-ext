@@ -275,9 +275,9 @@ return {
 };
 ```
 
-The harness preserves the complete terminal MCP result. Code Mode code reads the declared data from `result.structuredContent`, including falsey scalar values such as `false`, `0`, `""`, and `null`. It also retains `content`, `_meta`, `isError`, resources, mixed content, text-only results, and extension fields.
+The harness preserves the complete terminal MCP result below the Code Mode boundary. Code Mode returns declared `structuredContent` directly as the DTO, including falsey scalar values such as `false`, `0`, `""`, and `null`. For tools without an output schema it retains the raw envelope, including `content`, `_meta`, resources, mixed content, text-only results, and extension fields.
 
-The MCP v2 client requires and validates structured content for successful non-error results when an output schema is declared. Tool-level error envelopes can still omit it, so callers must guard `result.isError || result.structuredContent === undefined`.
+The MCP v2 client requires and validates structured content for successful non-error results when an output schema is declared. Code Mode throws `upstream_error` for every tool-level `isError` result, and `invalid_structured_content` for a declared success missing structured content. Scripts can handle these with `try`/`catch`; successful declared results need no envelope guard.
 
 ### How result signatures are generated
 
@@ -287,12 +287,10 @@ The harness reads your `inputSchema` and `outputSchema` and returns an on-demand
 weather/check_weather_for_city [read]
   input:
     city: string
-  returns: Promise<{ content: Array<{ type: string } & Record<string, unknown>>;
-    structuredContent?: { temperature: number; conditions: string; humidity: number; city: string; };
-    isError?: boolean; _meta?: Record<string, unknown>; [field: string]: unknown }>
+  returns: Promise<{ temperature: number; conditions: string; humidity: number; city: string; }>
 ```
 
-The output schema appears under `structuredContent`, never as the top-level return value. The namespace-only system prompt stays fixed; per-tool signatures enter the transcript only when requested. Write good `description` fields on input properties because `describe` includes them beside the parameters.
+The declared output schema is the top-level return type, matching Code Mode's runtime DTO. Schema-less tools instead advertise the raw envelope with unknown structured content. The namespace-only system prompt stays fixed; per-tool signatures enter the transcript only when requested. Write good `description` fields on input properties because `describe` includes them beside the parameters.
 
 ### Schema best practices
 

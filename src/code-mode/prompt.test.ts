@@ -88,15 +88,18 @@ describe("turn-0 prompt budget", () => {
     expect(estimateTokens(block)).toBeLessThanOrEqual(50);
   });
 
-  it("teaches the raw result envelope and structuredContent pagination", () => {
+  it("teaches declared DTOs, legacy envelopes, and throwing errors", () => {
     const section = renderPromptSection({
       namespaces: namespacesFor(declared),
       sandboxAvailable: true,
     });
 
     expect(section).toContain("raw MCP `CallToolResult` envelope");
-    expect(section).toContain("result.structuredContent");
-    expect(section).toContain("result.structuredContent === undefined");
+    expect(section).toContain("returns structuredContent directly as the declared DTO");
+    expect(section).toContain("Without an outputSchema");
+    expect(section).toContain("return result.total_count");
+    expect(section).toContain("throw upstream_error");
+    expect(section).toContain("throw invalid_structured_content");
     expect(section).not.toContain("result.items");
   });
 

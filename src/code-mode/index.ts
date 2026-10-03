@@ -524,7 +524,28 @@ export class CodeModeManager {
           },
           ...(signal !== undefined ? { signal } : {}),
         });
-        return terminal.result;
+        const result = terminal.result;
+        if (result.isError) {
+          throw new CodeModeDispatchError({
+            error: CODE_MODE_ERRORS.UPSTREAM_ERROR,
+            message: `MCP tool ${entry.ref} reported an error: ${
+              result.content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("\n") || "No text diagnostic provided."
+            }`,
+          });
+        }
+        if (entry.entry.outputSchemaProvenance === "declared") {
+          if (result.structuredContent === undefined) {
+            throw new CodeModeDispatchError({
+              error: CODE_MODE_ERRORS.INVALID_STRUCTURED_CONTENT,
+              message: `MCP tool ${entry.ref} declared an outputSchema but returned no structuredContent.`,
+            });
+          }
+          return result.structuredContent;
+        }
+        return result;
       };
 
       // Writes are serialized globally: a script that fans out mutations in

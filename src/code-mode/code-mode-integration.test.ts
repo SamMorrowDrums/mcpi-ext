@@ -83,13 +83,10 @@ describe("code mode integration (weather server)", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toMatchObject({
-      content: [{ type: "text", text: expect.stringContaining("26") }],
-      structuredContent: {
-        temperature: 26,
-        conditions: "Sunny",
-        humidity: 55,
-        city: "Tokyo",
-      },
+      temperature: 26,
+      conditions: "Sunny",
+      humidity: 55,
+      city: "Tokyo",
     });
   });
 
@@ -99,7 +96,7 @@ describe("code mode integration (weather server)", () => {
       const results = [];
       for (const city of cities) {
         const w = await codemode.check_weather_for_city({ city });
-        results.push({ city, temp: w.structuredContent.temperature });
+        results.push({ city, temp: w.temperature });
       }
       return results;
     `);
@@ -137,8 +134,7 @@ describe("code mode integration (weather server)", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toMatchObject({
-      content: [{ type: "text", text: "Echo: hello code mode" }],
-      structuredContent: { echo: "hello code mode" },
+      echo: "hello code mode",
     });
   });
 
@@ -148,11 +144,9 @@ describe("code mode integration (weather server)", () => {
       return w;
     `);
 
-    expect(result.error).toBeUndefined();
-    expect(result.result).toMatchObject({
-      content: [{ type: "text", text: expect.stringContaining("Output validation error") }],
-      isError: true,
-    });
+    expect(result.errorDetails?.error).toBe("upstream_error");
+    expect(result.error).toContain("Output validation error");
+    expect(result.result).toBeUndefined();
   });
 
   it("discovers tools without executing code", () => {

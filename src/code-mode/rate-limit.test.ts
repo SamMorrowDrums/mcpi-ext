@@ -320,8 +320,8 @@ describe("Code Mode read rate-limit backpressure", () => {
 
     const result = await codeMode.executeCode("return null;");
 
-    expect(result.error).toBeUndefined();
-    expect(result.result).toEqual(protocolResult);
+    expect(result.errorDetails?.error).toBe("upstream_error");
+    expect(result.result).toBeUndefined();
     expect(callTool).toHaveBeenCalledTimes(1);
     expect(scheduler.sleeps).toEqual([]);
     expect(codeMode.getTelemetry()).toMatchObject({ calls: 1, readRetries: 0 });

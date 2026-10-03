@@ -273,3 +273,10 @@ because it would rewrite unrelated execution surfaces.
 **Context:** A live model serialized independent reads even after seeing an optional `Promise.all` example, paying one full network latency per item while the runtime's eight-call gate sat idle.
 **Decision:** The Code Mode prompt requires independent reads to use `Promise.all`, while dependent calls, cursor-driven pagination, and all writes remain sequential. It says only that the runtime handles concurrency and rate limits; numeric limits, queue/admission behavior, backoff, sleeps, and throttling remain implementation and developer-documentation details.
 **Rationale:** Naming the execution boundary removes the ambiguity of “async” or “may parallelize.” Keeping runtime mechanics out of the model-facing rule lets independent reads fill the bounded gate without inviting generated throttling, unsafe write fan-out, or broken pagination dependencies.
+
+## 036 — Declared Code Mode outputs return the DTO, not its transport envelope
+
+**Date:** 2026-10-03
+**Context:** Typed MCP outputs must be readable at the same level described by their output schema. Returning an envelope makes code written against the DTO silently miss its fields.
+**Decision:** Return successful `structuredContent` directly when the server declares `outputSchema`; preserve the raw envelope for schema-less tools. All tool-level `isError` results throw `upstream_error`, and a declared success without structured content throws `invalid_structured_content`. Discovery signatures, prompts, and aliases share this contract.
+**Rationale:** Declared types become executable contracts without inventing types or parsing text for legacy servers. Explicit failures cannot masquerade as empty DTOs, and remain distinct from transport-level rate limits.

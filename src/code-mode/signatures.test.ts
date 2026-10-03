@@ -27,20 +27,20 @@ function tool(overrides: Partial<McpTool> = {}): McpTool {
 }
 
 describe("compact Code Mode result signatures", () => {
-  it("keeps the real search_issues count on structuredContent", () => {
+  it("keeps the real search_issues count on the returned DTO", () => {
     const searchIssues = loadGithubFixture().find((entry) => entry.name === "search_issues");
     expect(searchIssues).toBeDefined();
     if (!searchIssues) return;
 
     const signature = signatureFor(searchIssues);
 
-    expect(signature).toContain("structuredContent?: { total_count?: null | number;");
+    expect(signature).toContain("returns: Promise<{ total_count?: null | number;");
     expect(signature).toContain("incomplete_results?: null | boolean;");
     expect(signature).toContain("items: null | Record<string, unknown>[];");
-    expect(signature).not.toContain("returns: Promise<{ total_count:");
+    expect(signature).not.toContain("structuredContent?:");
   });
 
-  it("types a declared schema inside the raw CallToolResult envelope", () => {
+  it("types a declared schema as the direct return value", () => {
     const signature = signatureFor(
       tool({
         outputSchema: {
@@ -63,10 +63,9 @@ describe("compact Code Mode result signatures", () => {
     );
 
     expect(signature).toContain("returns: Promise<{");
-    expect(signature).toContain("content: Array<{ type: string } & Record<string, unknown>>");
-    expect(signature).toContain("structuredContent?: { total_count: number;");
-    expect(signature).toContain("isError?: boolean");
-    expect(signature).toContain("_meta?: Record<string, unknown>");
+    expect(signature).toContain("returns: Promise<{ total_count: number;");
+    expect(signature).not.toContain("structuredContent?:");
+    expect(signature).toContain("isError results throw upstream_error");
     expect(signature).toContain("schemaHash (not snapshotId):");
     expect(signature).not.toContain("output (declared):");
   });
@@ -109,5 +108,22 @@ describe("compact Code Mode result signatures", () => {
       (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
     );
     expect(syntaxErrors).toEqual([]);
+  });
+
+  it("preserves nullability when an oversized nullable object is summarized", () => {
+    const signature = signatureFor(
+      tool({
+        outputSchema: {
+          type: ["object", "null"],
+          properties: Object.fromEntries(
+            Array.from({ length: 100 }, (_, index) => [
+              `field_${String(index)}`,
+              { type: "string" },
+            ]),
+          ),
+        },
+      }),
+    );
+    expect(signature).toContain("returns: Promise<Record<string, unknown> | null>");
   });
 });

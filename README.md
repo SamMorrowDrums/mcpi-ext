@@ -231,7 +231,7 @@ worth being precise about which you get.
 Measured against `ghcr.io/github/github-mcp-server:latest` (server `v1.12.0`, protocol `2026-07-28`)
 with the default toolset: **45 tools**, of which **26** are read-only and non-destructive and run
 unattended in Code Mode; the rest pause for approval when called. A declared `outputSchema` types
-`result.structuredContent`, while an absent schema is shown honestly as
+the directly returned DTO, while an absent schema retains the raw envelope with
 `structuredContent?: unknown`. The server does **not** declare the
 `io.modelcontextprotocol/skills` extension, so it contributes **no skills** — mcpi-ext logs the
 negotiation result and falls back to legacy `skill://` discovery, which also finds none.
@@ -306,8 +306,9 @@ With servers connected, exercise MCP dispatch:
 
 Expect **`code_search`** (finding dispatchable tools) then **`code_execute`** looping over paginated
 results. Every `code_search` response prints the full `snapshotId`; pass that exact value to
-`code_execute`. Tool calls return the raw MCP envelope, so declared data is under
-`result.structuredContent`, not at the result's top level.
+`code_execute`. Tools with a declared output schema return their structured DTO directly;
+schema-less tools retain the raw MCP envelope. Tool-level errors throw rather than returning
+an empty DTO.
 
 ### tool-cli — works with any MCP server
 
