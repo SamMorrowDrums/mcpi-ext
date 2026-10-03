@@ -1,4 +1,8 @@
-import type { CallToolResult } from "@modelcontextprotocol/client";
+import {
+  ProtocolError,
+  ProtocolErrorCode,
+  type CallToolResult,
+} from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
@@ -352,6 +356,21 @@ describe("CodeModeManager reliability", () => {
     const result = await codeMode.executeCode("return await codemode.declared_read({});");
     expect(result.errorDetails?.error).toBe("invalid_structured_content");
     expect(result.result).toBeUndefined();
+  });
+
+  it("does not relabel unrelated protocol failures as invalid structured output", async () => {
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
+      [makeTool("declared_read", { annotations: { readOnlyHint: true }, outputSchema: {} })],
+      vi.fn(() => Promise.reject(new ProtocolError(ProtocolErrorCode.InvalidParams, "Bad query"))),
+    );
+    const result = await codeMode.executeCode(`
+      try { return await codemode.declared_read({}); }
+      catch (error) { return { message: error.message, classified: Boolean(error.details) }; }
+    `);
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual({ message: "Bad query", classified: false });
   });
 
   it.each([true, false])(

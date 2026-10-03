@@ -1,4 +1,4 @@
-import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { InMemoryTransport, isJSONRPCResultResponse } from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpClientManager } from "../mcp/client-manager.js";
 import { McpPolicy } from "../mcp/policy.js";
@@ -15,6 +15,17 @@ describe("code mode integration (weather server)", () => {
   const server = createWeatherServer();
   const manager = new McpClientManager({ transportFactory: () => clientTransport });
   const codeMode = new CodeModeManager();
+  let outputFault: "missing" | "mismatch" | undefined;
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = (message, options) => {
+    if (outputFault && isJSONRPCResultResponse(message) && "structuredContent" in message.result) {
+      const result = { ...message.result };
+      if (outputFault === "missing") delete result.structuredContent;
+      else result.structuredContent = { echo: 123 };
+      return send({ ...message, result }, options);
+    }
+    return send(message, options);
+  };
 
   beforeAll(async () => {
     await server.connect(serverTransport);
@@ -155,4 +166,31 @@ describe("code mode integration (weather server)", () => {
     expect(listed.tools.length).toBeGreaterThan(0);
     expect(listed.tools.some((tool) => tool.ref.endsWith("/echo"))).toBe(true);
   });
+
+  it.each(["missing", "mismatch"] as const)(
+    "classifies SDK-rejected %s output as invalid_structured_content inside the isolate",
+    async (fault) => {
+      outputFault = fault;
+      try {
+        const caught = await codeMode.executeCode(`
+          try { return await codemode.echo({ message: "hello" }); }
+          catch (error) { return { code: error.details.error, message: error.message }; }
+        `);
+        expect(caught.error).toBeUndefined();
+        expect(caught.result).toMatchObject({
+          code: "invalid_structured_content",
+          message: expect.stringContaining(
+            fault === "missing" ? "did not return structured content" : "does not match",
+          ),
+        });
+        const uncaught = await codeMode.executeCode(
+          'return await codemode.echo({ message: "hello" });',
+        );
+        expect(uncaught.errorDetails?.error).toBe("invalid_structured_content");
+        expect(uncaught.result).toBeUndefined();
+      } finally {
+        outputFault = undefined;
+      }
+    },
+  );
 });

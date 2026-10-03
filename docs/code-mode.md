@@ -55,6 +55,8 @@ For **all tools**, `isError: true` throws a catchable error with
 These errors never return a DTO and never trigger automatic retries. A declared
 schema's successful result missing `structuredContent` throws
 `invalid_structured_content` rather than returning an empty object or envelope.
+SDK rejections of missing or schema-invalid declared structured output have the
+same classification in `error.details.error`, before any DTO reaches the script.
 Uncaught errors fail `code_execute`; scripts may handle them with `try`/`catch`.
 This return contract is identical for `codemode.call`, `callRef`, and tool aliases.
 
@@ -113,6 +115,10 @@ and explicit `additionalProperties` maps. Local references to named `$defs`
 (JSON Schema 2020-12), `definitions`, or supplied component schemas are expanded.
 Recursive or unresolved references become `unknown`; external references are not
 fetched. Compact signatures summarize oversized schemas at valid type boundaries.
+When an object mixes declared properties and additional keys, the index value type
+includes both kinds and `undefined` for optional declared properties. This avoids
+an index signature that rejects otherwise schema-valid DTOs; declared fields keep
+their precise types.
 
 Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and never added to MCP traffic.
 
