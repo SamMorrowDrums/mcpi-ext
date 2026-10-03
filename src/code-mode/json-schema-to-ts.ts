@@ -132,6 +132,8 @@ function objectToTs(
     Array.isArray(schema.required) ? (schema.required as string[]) : [],
   );
   const lines: string[] = [];
+  const propertyTypes: string[] = [];
+  let hasOptionalProperty = false;
 
   for (const [key, propSchema] of Object.entries(properties)) {
     const desc = propSchema.description as string | undefined;
@@ -140,12 +142,27 @@ function objectToTs(
     }
     const optional = required.has(key) ? "" : "?";
     const typeStr = jsonSchemaToTypeString(propSchema, definitions, depth + 1, seen);
+    propertyTypes.push(typeStr);
+    hasOptionalProperty ||= optional === "?";
     lines.push(`  ${safeName(key)}${optional}: ${typeStr};`);
   }
 
   const object = `{\n${lines.join("\n")}\n}`;
+  const indexTypes = [
+    additionalType,
+    ...propertyTypes,
+    ...(hasOptionalProperty ? ["undefined"] : []),
+  ];
+  const indexType = indexTypes.some((part) => /(^| \| )unknown($| \| )/.test(part))
+    ? "unknown"
+    : [...new Set(indexTypes)]
+        .map((part) => (part.includes(" & ") ? `(${part})` : part))
+        .join(" | ");
+  const compactIndexType = indexTypes.every((part) => part === additionalType)
+    ? additionalType
+    : indexType;
   return additional === true || (additional && typeof additional === "object")
-    ? `(${object} & Record<string, ${additionalType}>)`
+    ? `(${object} & Record<string, ${compactIndexType}>)`
     : object;
 }
 

@@ -252,6 +252,34 @@ describe("jsonSchemaToTypeString", () => {
     expect(result).not.toContain("unknown");
   });
 
+  it("widens additionalProperties to include declared keys and optional undefined", () => {
+    expect(
+      jsonSchemaToTypeString({
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: { type: "integer" },
+      }),
+    ).toBe("({\n  name: string;\n} & Record<string, number | string>)");
+    expect(
+      jsonSchemaToTypeString({
+        type: "object",
+        properties: { name: { type: "string" }, active: { type: "boolean" } },
+        required: ["name"],
+        additionalProperties: { type: "integer" },
+      }),
+    ).toBe(
+      "({\n  name: string;\n  active?: boolean;\n} & Record<string, number | string | boolean | undefined>)",
+    );
+    expect(
+      jsonSchemaToTypeString({
+        type: "object",
+        properties: { name: {} },
+        additionalProperties: { type: "integer" },
+      }),
+    ).toContain("Record<string, unknown>");
+  });
+
   it("guards recursive $defs and decodes JSON Pointer definition names", () => {
     expect(
       jsonSchemaToTypeString({
