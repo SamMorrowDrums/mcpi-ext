@@ -1,4 +1,4 @@
-import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { InMemoryTransport, isJSONRPCResultResponse } from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { McpClientManager } from "../mcp/client-manager.js";
 import { McpPolicy } from "../mcp/policy.js";
@@ -15,6 +15,17 @@ describe("code mode integration (weather server)", () => {
   const server = createWeatherServer();
   const manager = new McpClientManager({ transportFactory: () => clientTransport });
   const codeMode = new CodeModeManager();
+  let outputFault: "missing" | "mismatch" | undefined;
+  const send = serverTransport.send.bind(serverTransport);
+  serverTransport.send = (message, options) => {
+    if (outputFault && isJSONRPCResultResponse(message) && "structuredContent" in message.result) {
+      const result = { ...message.result };
+      if (outputFault === "missing") delete result.structuredContent;
+      else result.structuredContent = { echo: 123 };
+      return send({ ...message, result }, options);
+    }
+    return send(message, options);
+  };
 
   beforeAll(async () => {
     await server.connect(serverTransport);
@@ -83,13 +94,10 @@ describe("code mode integration (weather server)", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toMatchObject({
-      content: [{ type: "text", text: expect.stringContaining("26") }],
-      structuredContent: {
-        temperature: 26,
-        conditions: "Sunny",
-        humidity: 55,
-        city: "Tokyo",
-      },
+      temperature: 26,
+      conditions: "Sunny",
+      humidity: 55,
+      city: "Tokyo",
     });
   });
 
@@ -99,7 +107,7 @@ describe("code mode integration (weather server)", () => {
       const results = [];
       for (const city of cities) {
         const w = await codemode.check_weather_for_city({ city });
-        results.push({ city, temp: w.structuredContent.temperature });
+        results.push({ city, temp: w.temperature });
       }
       return results;
     `);
@@ -137,8 +145,7 @@ describe("code mode integration (weather server)", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result).toMatchObject({
-      content: [{ type: "text", text: "Echo: hello code mode" }],
-      structuredContent: { echo: "hello code mode" },
+      echo: "hello code mode",
     });
   });
 
@@ -148,11 +155,9 @@ describe("code mode integration (weather server)", () => {
       return w;
     `);
 
-    expect(result.error).toBeUndefined();
-    expect(result.result).toMatchObject({
-      content: [{ type: "text", text: expect.stringContaining("Output validation error") }],
-      isError: true,
-    });
+    expect(result.errorDetails?.error).toBe("upstream_error");
+    expect(result.error).toContain("Output validation error");
+    expect(result.result).toBeUndefined();
   });
 
   it("discovers tools without executing code", () => {
@@ -161,4 +166,31 @@ describe("code mode integration (weather server)", () => {
     expect(listed.tools.length).toBeGreaterThan(0);
     expect(listed.tools.some((tool) => tool.ref.endsWith("/echo"))).toBe(true);
   });
+
+  it.each(["missing", "mismatch"] as const)(
+    "classifies SDK-rejected %s output as invalid_structured_content inside the isolate",
+    async (fault) => {
+      outputFault = fault;
+      try {
+        const caught = await codeMode.executeCode(`
+          try { return await codemode.echo({ message: "hello" }); }
+          catch (error) { return { code: error.details.error, message: error.message }; }
+        `);
+        expect(caught.error).toBeUndefined();
+        expect(caught.result).toMatchObject({
+          code: "invalid_structured_content",
+          message: expect.stringContaining(
+            fault === "missing" ? "did not return structured content" : "does not match",
+          ),
+        });
+        const uncaught = await codeMode.executeCode(
+          'return await codemode.echo({ message: "hello" });',
+        );
+        expect(uncaught.errorDetails?.error).toBe("invalid_structured_content");
+        expect(uncaught.result).toBeUndefined();
+      } finally {
+        outputFault = undefined;
+      }
+    },
+  );
 });

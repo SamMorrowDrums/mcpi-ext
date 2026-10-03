@@ -87,36 +87,32 @@ export function renderCompactSignature(entry: CatalogEntry): string {
 }
 
 /**
- * Render the asynchronous result as the raw MCP envelope Code Mode returns.
- *
- * The declared output schema types `structuredContent`, not the top level.
- * Unknown and future envelope fields remain representable through the index
- * signature, while `content`, `isError`, and `_meta` stay visible.
+ * Declared outputs are DTOs; schema-less outputs retain the MCP envelope.
  */
 export function renderOutputNote(entry: CatalogEntry): string {
-  const structuredContentType =
+  const declaredType =
     entry.entry.outputSchemaProvenance === "declared" && entry.entry.outputSchema
       ? boundedSchemaType(
           entry.entry.outputSchema as JsonSchema,
           readDefinitions(entry.entry.outputSchema as JsonSchema),
           STRUCTURED_CONTENT_TYPE_CHARS,
         )
-      : "unknown";
+      : undefined;
+  if (declaredType !== undefined) return `returns: Promise<${declaredType}>`;
   return (
     `returns: Promise<{ content: ${CONTENT_BLOCK_TYPE}; ` +
-    `structuredContent?: ${structuredContentType}; isError?: boolean; ` +
+    `structuredContent?: unknown; isError?: boolean; ` +
     `_meta?: Record<string, unknown>; [field: string]: unknown }>`
   );
 }
 
 function renderResultGuard(entry: CatalogEntry): string {
   if (entry.entry.outputSchemaProvenance !== "declared" || !entry.entry.outputSchema) {
-    return UNKNOWN_OUTPUT_NOTE;
+    return `${UNKNOWN_OUTPUT_NOTE} Tool-level isError results throw upstream_error.`;
   }
   return (
-    "result guard: successful non-error structuredContent is MCP-client validated, but an " +
-    "isError envelope may omit it. Check result.isError || " +
-    "result.structuredContent === undefined before reading declared fields."
+    "result note: returns MCP-client validated structuredContent directly, not the envelope. " +
+    "Tool-level isError results throw upstream_error; missing structuredContent throws invalid_structured_content."
   );
 }
 
@@ -153,6 +149,8 @@ function boundedSchemaType(
 ): string {
   const complete = collapseType(jsonSchemaToTypeString(schema, definitions));
   if (complete.length <= maxChars) return complete;
+
+  if (Array.isArray(schema.type)) return coarseSchemaType(schema, definitions);
 
   const { properties, required } = readProperties(schema);
   if (Object.keys(properties).length === 0) return coarseSchemaType(schema, definitions);
@@ -213,7 +211,8 @@ function coarseSchemaType(
     case "array": {
       const items = schema.items;
       if (!items || Array.isArray(items) || typeof items !== "object") return "unknown[]";
-      return `${coarseSchemaType(items as JsonSchema, definitions, depth + 1)}[]`;
+      const itemType = coarseSchemaType(items as JsonSchema, definitions, depth + 1);
+      return `${itemType.includes(" | ") ? `(${itemType})` : itemType}[]`;
     }
     case "object":
       return "Record<string, unknown>";

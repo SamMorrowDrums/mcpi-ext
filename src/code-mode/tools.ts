@@ -186,7 +186,7 @@ export function createCodeExecuteTool(manager: CodeModeManager) {
     name: "code_execute",
     label: "Code Execute",
     description:
-      "Execute one JavaScript program that chains MCP tool calls for computation over their raw CallToolResult envelopes — aggregate, filter, loop, join, paginate, and read declared data from result.structuredContent. Call tools with `await codemode.call('server/tool', args)`; use code_search or `codemode.describe` first to get exact parameters, and pass code_search's full snapshotId for stale-catalog protection. Each tool call is authorized individually. Runs in a sandbox — no filesystem, network, or Node.js API access.",
+      "Execute one JavaScript program that chains MCP tool calls — aggregate, filter, loop, join, and paginate. Declared outputSchema tools return structuredContent directly as the DTO; schema-less tools return raw CallToolResult envelopes. Tool-level isError results throw. Call tools with `await codemode.call('server/tool', args)`; use code_search or `codemode.describe` first to get exact parameters, and pass code_search's full snapshotId for stale-catalog protection. Each tool call is authorized individually. Runs in a sandbox — no filesystem, network, or Node.js API access.",
     parameters: CodeInput,
 
     async execute(

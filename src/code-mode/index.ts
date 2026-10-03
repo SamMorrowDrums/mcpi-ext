@@ -1,3 +1,4 @@
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/client";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
 import { McpPolicyError, type McpPolicy } from "../mcp/policy.js";
 import { McpRateLimitError, declaredRateLimitDelayMs } from "../mcp/rate-limit.js";
@@ -524,7 +525,28 @@ export class CodeModeManager {
           },
           ...(signal !== undefined ? { signal } : {}),
         });
-        return terminal.result;
+        const result = terminal.result;
+        if (result.isError) {
+          throw new CodeModeDispatchError({
+            error: CODE_MODE_ERRORS.UPSTREAM_ERROR,
+            message: `MCP tool ${entry.ref} reported an error: ${
+              result.content
+                .filter((block) => block.type === "text")
+                .map((block) => block.text)
+                .join("\n") || "No text diagnostic provided."
+            }`,
+          });
+        }
+        if (entry.entry.outputSchemaProvenance === "declared") {
+          if (result.structuredContent === undefined) {
+            throw new CodeModeDispatchError({
+              error: CODE_MODE_ERRORS.INVALID_STRUCTURED_CONTENT,
+              message: `MCP tool ${entry.ref} declared an outputSchema but returned no structuredContent.`,
+            });
+          }
+          return result.structuredContent;
+        }
+        return result;
       };
 
       // Writes are serialized globally: a script that fans out mutations in
@@ -867,6 +889,23 @@ function cancelled(): CodeModeDispatchError {
  * for confirmation, rather than implying the tool was never reachable.
  */
 function toCodeModeDispatchError(error: unknown, entry: CatalogEntry): unknown {
+  // The pinned MCP v2 client rejects invalid output before returning its envelope.
+  if (
+    entry.entry.outputSchemaProvenance === "declared" &&
+    error instanceof ProtocolError &&
+    ((error.code === ProtocolErrorCode.InvalidRequest &&
+      error.message ===
+        `Tool ${entry.toolName} has an output schema but did not return structured content`) ||
+      (error.code === ProtocolErrorCode.InvalidParams &&
+        error.message.startsWith("Structured content does not match the tool's output schema:")))
+  ) {
+    return new CodeModeDispatchError({
+      error: CODE_MODE_ERRORS.INVALID_STRUCTURED_CONTENT,
+      message: error.message,
+      serverName: entry.serverName,
+      toolName: entry.toolName,
+    });
+  }
   if (error instanceof McpRateLimitError) {
     return new CodeModeDispatchError({
       error: CODE_MODE_ERRORS.RATE_LIMITED,

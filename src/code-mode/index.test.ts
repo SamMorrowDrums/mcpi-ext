@@ -1,4 +1,8 @@
-import type { CallToolResult } from "@modelcontextprotocol/client";
+import {
+  ProtocolError,
+  ProtocolErrorCode,
+  type CallToolResult,
+} from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { adaptTerminalCallToolResult } from "../mcp/call-tool-result.js";
 import type { McpClientManager, McpTool } from "../mcp/index.js";
@@ -272,7 +276,7 @@ describe("CodeModeManager reliability", () => {
   );
 
   it.each([false, 0, "", null])(
-    "preserves falsey declared structuredContent inside the terminal envelope: %j",
+    "returns falsey declared structuredContent directly: %j",
     async (structuredContent) => {
       const protocolResult: CallToolResult = { content: [], structuredContent };
       const callTool = vi.fn(async () => adaptTerminalCallToolResult(protocolResult));
@@ -289,8 +293,7 @@ describe("CodeModeManager reliability", () => {
       );
 
       const result = await codeMode.executeCode(`
-        const terminal = await codemode.declared_read({});
-        return terminal.structuredContent;
+        return await codemode.declared_read({});
       `);
 
       expect(result.error).toBeUndefined();
@@ -298,7 +301,7 @@ describe("CodeModeManager reliability", () => {
     },
   );
 
-  it("preserves a declared mixed-content error envelope when structuredContent is absent", async () => {
+  it("throws for a declared mixed-content error when structuredContent is absent", async () => {
     const protocolResult: CallToolResult = {
       content: [
         { type: "text", text: "GitHub rejected the query" },
@@ -338,9 +341,136 @@ describe("CodeModeManager reliability", () => {
 
     const result = await codeMode.executeCode("return await codemode.declared_read({});");
 
+    expect(result.errorDetails?.error).toBe("upstream_error");
+    expect(result.error).toContain("GitHub rejected the query");
+    expect(result.result).toBeUndefined();
+  });
+
+  it("rejects a declared success missing structuredContent instead of returning an empty DTO", async () => {
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
+      [makeTool("declared_read", { annotations: { readOnlyHint: true }, outputSchema: {} })],
+      vi.fn(async () => adaptTerminalCallToolResult({ content: [] })),
+    );
+    const result = await codeMode.executeCode("return await codemode.declared_read({});");
+    expect(result.errorDetails?.error).toBe("invalid_structured_content");
+    expect(result.result).toBeUndefined();
+  });
+
+  it("does not relabel unrelated protocol failures as invalid structured output", async () => {
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
+      [makeTool("declared_read", { annotations: { readOnlyHint: true }, outputSchema: {} })],
+      vi.fn(() => Promise.reject(new ProtocolError(ProtocolErrorCode.InvalidParams, "Bad query"))),
+    );
+    const result = await codeMode.executeCode(`
+      try { return await codemode.declared_read({}); }
+      catch (error) { return { message: error.message, classified: Boolean(error.details) }; }
+    `);
     expect(result.error).toBeUndefined();
-    expect(result.result).toEqual(protocolResult);
-    expect(result.result).not.toHaveProperty("structuredContent");
+    expect(result.result).toEqual({ message: "Bad query", classified: false });
+  });
+
+  it.each([true, false])(
+    "throws catchable tool errors with declared output=%s",
+    async (declared) => {
+      const codeMode = new CodeModeManager();
+      initCodeMode(
+        codeMode,
+        [
+          makeTool("read_issues", {
+            annotations: { readOnlyHint: true },
+            ...(declared ? { outputSchema: {} } : {}),
+          }),
+        ],
+        vi.fn(async () =>
+          adaptTerminalCallToolResult({
+            content: [{ type: "text", text: "Query failed" }],
+            structuredContent: { issues: [] },
+            isError: true,
+          }),
+        ),
+      );
+      const result = await codeMode.executeCode(`
+      try { return await codemode.call("fixture", "read_issues", {}); }
+      catch (error) { return { code: error.details.error, message: error.message }; }
+    `);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toMatchObject({
+        code: "upstream_error",
+        message: expect.stringContaining("Query failed"),
+      });
+    },
+  );
+
+  it("describe and every call binding agree on the declared issue DTO", async () => {
+    const outputSchema = {
+      type: "object",
+      properties: {
+        issues: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              number: { type: "integer" },
+              state: { enum: ["open", "closed"] },
+            },
+            required: ["number", "state"],
+          },
+        },
+        pageInfo: {
+          type: "object",
+          properties: { hasNextPage: { type: "boolean" } },
+          required: ["hasNextPage"],
+        },
+        totalCount: { type: "integer" },
+      },
+      required: ["issues", "pageInfo", "totalCount"],
+    } as const;
+    const codeMode = new CodeModeManager();
+    initCodeMode(
+      codeMode,
+      [
+        makeTool("list_issues", {
+          serverName: "github",
+          annotations: { readOnlyHint: true },
+          outputSchema,
+        }),
+      ],
+      vi.fn(async () =>
+        adaptTerminalCallToolResult({
+          content: [{ type: "text", text: "Not the DTO" }],
+          structuredContent: {
+            issues: [
+              { number: 1, state: "open" },
+              { number: 2, state: "closed" },
+            ],
+            pageInfo: { hasNextPage: false },
+            totalCount: 2,
+          },
+          isError: false,
+        }),
+      ),
+    );
+    const described = codeMode.discover("describe", { refs: ["github/list_issues"] }) as {
+      signatures: { signature: string }[];
+    };
+    expect(described.signatures[0].signature).toContain(
+      'returns: Promise<{ issues: ({ number: number; state: "open" | "closed"; })[] | null; pageInfo: { hasNextPage: boolean; }; totalCount: number; }>',
+    );
+    const result = await codeMode.executeCode(`
+      const calls = [
+        () => codemode.call("github/list_issues", {}),
+        () => codemode.call("github", "list_issues", {}),
+        () => codemode.callRef("github/list_issues", {}),
+        () => codemode.list_issues({}),
+      ];
+      return await Promise.all(calls.map(async call => (await call()).issues.length));
+    `);
+    expect(result.error).toBeUndefined();
+    expect(result.result).toEqual([2, 2, 2, 2]);
   });
 
   it("preserves a synthesized text-only result without inventing structuredContent", async () => {
@@ -711,7 +841,7 @@ describe("CodeModeManager reliability", () => {
     );
 
     const current = codeMode.getSnapshot();
-    const wrongFullHash = `${current.snapshotId[0] === "0" ? "1" : "0"}${current.snapshotId.slice(1)}`;
+    const wrongFullHash = `${current.snapshotId.slice(0, -1)}${current.snapshotId.endsWith("0") ? "1" : "0"}`;
     const invalidSnapshotIds = [
       "",
       current.snapshotId.slice(0, 12),
@@ -722,6 +852,8 @@ describe("CodeModeManager reliability", () => {
     for (const snapshotId of invalidSnapshotIds) {
       const result = await codeMode.executeCode("return 1;", undefined, snapshotId);
       expect(result.errorDetails?.error).toBe("stale_snapshot");
+      expect(result.error).toContain(`snapshotId ${snapshotId}`);
+      expect(result.error).toContain(`current snapshotId ${current.snapshotId}`);
     }
     expect(sandboxExecutor).not.toHaveBeenCalled();
 
@@ -795,19 +927,13 @@ describe("CodeModeManager reliability", () => {
       `
         const result = await codemode.search_issues({ query: "is:issue is:open" });
         return {
-          total: result.structuredContent.total_count,
-          contentType: result.content[0].type,
-          isError: result.isError,
-          server: result._meta.serverInfo.name,
+          total: result.total_count,
         };
       `,
     );
     const firstResultText = firstRun.content.find((block) => block.type === "text")?.text;
     expect(firstResultText ? JSON.parse(firstResultText) : undefined).toEqual({
       total: 73,
-      contentType: "text",
-      isError: false,
-      server: "github-mcp-server",
     });
     expect(callTool).toHaveBeenCalledTimes(1);
 
@@ -869,7 +995,7 @@ describe("CodeModeManager reliability", () => {
       secondSnapshot,
       `
         const result = await codemode.search_issues({ query: "is:issue is:open" });
-        return result.structuredContent.total_count;
+        return result.total_count;
       `,
     );
     expect(fresh.content.find((block) => block.type === "text")?.text).toBe("73");

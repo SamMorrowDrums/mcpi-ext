@@ -21,12 +21,17 @@ export function jsonSchemaToTypeString(
 ): string {
   if (depth > 20) return "unknown";
   if (seen.has(schema)) return "unknown";
+  seen = new Set(seen);
   seen.add(schema);
+  definitions ??= (schema.$defs ?? schema.definitions) as Record<string, JsonSchema> | undefined;
 
   // Handle $ref
   if (typeof schema.$ref === "string") {
     const refPath = schema.$ref;
-    const refName = refPath.replace(/^#\/(definitions|components\/schemas|\\$defs)\//, "");
+    const refName = refPath
+      .replace(/^#\/(definitions|components\/schemas|\$defs)\//, "")
+      .replace(/~1/g, "/")
+      .replace(/~0/g, "~");
     const resolved = definitions?.[refName];
     if (resolved) {
       return jsonSchemaToTypeString(resolved, definitions, depth + 1, seen);
@@ -58,7 +63,7 @@ export function jsonSchemaToTypeString(
     const parts = (schema.allOf as JsonSchema[]).map((s) =>
       jsonSchemaToTypeString(s, definitions, depth + 1, seen),
     );
-    return parts.join(" & ");
+    return parts.map((part) => `(${part})`).join(" & ");
   }
 
   const type = schema.type as string | string[] | undefined;
@@ -114,14 +119,21 @@ function objectToTs(
   seen: Set<JsonSchema>,
 ): string {
   const properties = schema.properties as Record<string, JsonSchema> | undefined;
+  const additional = schema.additionalProperties;
+  const additionalType =
+    additional && typeof additional === "object"
+      ? jsonSchemaToTypeString(additional as JsonSchema, definitions, depth + 1, seen)
+      : "unknown";
   if (!properties || Object.keys(properties).length === 0) {
-    return "Record<string, unknown>";
+    return `Record<string, ${additional === false ? "never" : additionalType}>`;
   }
 
   const required = new Set<string>(
     Array.isArray(schema.required) ? (schema.required as string[]) : [],
   );
   const lines: string[] = [];
+  const propertyTypes: string[] = [];
+  let hasOptionalProperty = false;
 
   for (const [key, propSchema] of Object.entries(properties)) {
     const desc = propSchema.description as string | undefined;
@@ -130,10 +142,28 @@ function objectToTs(
     }
     const optional = required.has(key) ? "" : "?";
     const typeStr = jsonSchemaToTypeString(propSchema, definitions, depth + 1, seen);
+    propertyTypes.push(typeStr);
+    hasOptionalProperty ||= optional === "?";
     lines.push(`  ${safeName(key)}${optional}: ${typeStr};`);
   }
 
-  return `{\n${lines.join("\n")}\n}`;
+  const object = `{\n${lines.join("\n")}\n}`;
+  const indexTypes = [
+    additionalType,
+    ...propertyTypes,
+    ...(hasOptionalProperty ? ["undefined"] : []),
+  ];
+  const indexType = indexTypes.some((part) => /(^| \| )unknown($| \| )/.test(part))
+    ? "unknown"
+    : [...new Set(indexTypes)]
+        .map((part) => (part.includes(" & ") ? `(${part})` : part))
+        .join(" | ");
+  const compactIndexType = indexTypes.every((part) => part === additionalType)
+    ? additionalType
+    : indexType;
+  return additional === true || (additional && typeof additional === "object")
+    ? `(${object} & Record<string, ${compactIndexType}>)`
+    : object;
 }
 
 function arrayToTs(
@@ -154,7 +184,7 @@ function arrayToTs(
   }
 
   const itemType = jsonSchemaToTypeString(items, definitions, depth + 1, seen);
-  return `${itemType}[]`;
+  return `${itemType.includes(" | ") || itemType.includes(" & ") ? `(${itemType})` : itemType}[]`;
 }
 
 /** Ensure property name is a valid JS identifier, quote otherwise. */

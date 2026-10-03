@@ -16,10 +16,8 @@ const issueResult = await codemode.call("github", "list_issues", {
   fields: ["number", "title", "labels", "assignees"],
   perPage: 100,
 });
-if (issueResult.isError || issueResult.structuredContent === undefined) {
-  return { isError: issueResult.isError, content: issueResult.content };
-}
-const issues = issueResult.structuredContent.issues ?? [];
+// list_issues declares an outputSchema with issues.
+const issues = issueResult.issues ?? [];
 const critical = issues.filter((issue) => issue.labels?.some((label) => label.name === "critical"));
 return critical.map((issue) => ({
   number: issue.number,
@@ -30,19 +28,37 @@ return critical.map((issue) => ({
 
 Tools are addressed by canonical `server/tool` reference. A bare name still works when it is unique across every connected server; when it is not, the call is refused and names the candidates, because guessing between two servers is how you comment on the wrong repository.
 
-Every call returns the raw MCP `CallToolResult` envelope:
+For a tool with a **declared `outputSchema`**, a successful call returns
+`structuredContent` directly as that schema's DTO. `describe` advertises
+`Promise<DTO>`, so `result.issues.length` reads the same shape it describes.
+Falsey structured values (`null`, `false`, `0`, and `""`) are preserved.
+
+For a tool **without an output schema**, successful calls retain the existing raw
+MCP `CallToolResult` envelope, with unknown structured content:
 
 ```typescript
-type CodeModeResult<StructuredContent = unknown> = {
+type CodeModeResult = {
   content: Array<{ type: string } & Record<string, unknown>>;
-  structuredContent?: StructuredContent;
+  structuredContent?: unknown;
   isError?: boolean;
   _meta?: Record<string, unknown>;
   [field: string]: unknown;
 };
 ```
 
-The declared `outputSchema`, when present, supplies `StructuredContent`; without one it remains `unknown`. It does not replace the envelope. Text, image, audio, resource-link, embedded-resource, mixed-content, and text-only results remain in `content`, while `_meta`, `isError`, falsey structured values, and extension fields are preserved.
+Schema-less results are not parsed from JSON text. Text, image, audio, resource-link,
+embedded-resource, mixed-content, and text-only results remain in `content`, while
+`_meta`, falsey structured values, and extension fields are preserved.
+
+For **all tools**, `isError: true` throws a catchable error with
+`error.details.error === "upstream_error"` and text diagnostics in `error.message`.
+These errors never return a DTO and never trigger automatic retries. A declared
+schema's successful result missing `structuredContent` throws
+`invalid_structured_content` rather than returning an empty object or envelope.
+SDK rejections of missing or schema-invalid declared structured output have the
+same classification in `error.details.error`, before any DTO reaches the script.
+Uncaught errors fail `code_execute`; scripts may handle them with `try`/`catch`.
+This return contract is identical for `codemode.call`, `callRef`, and tool aliases.
 
 ## Sandbox isolation
 
@@ -71,7 +87,7 @@ The prompt now carries only namespaces — 529 tokens for the same server — an
 | `codemode.browse()`               | Which namespaces exist, with a one-line summary and effect class for each |
 | `codemode.search(query, options)` | Tools ranked against a query; exact and prefix matches first, then BM25   |
 | `codemode.list({ namespace })`    | One page of tools within a namespace, server, or effect class             |
-| `codemode.describe(refs)`         | Exact parameters and result-envelope type for specific tools              |
+| `codemode.describe(refs)`         | Exact parameters and return type for specific tools                       |
 | `codemode.inspect(value)`         | The real shape of a value that came back, computed inside the isolate     |
 
 The same four operations are available as the `code_search` tool for use outside a script. Both surfaces answer from one catalog snapshot, so a script and the tool never disagree.
@@ -88,10 +104,21 @@ Namespaces come from declarations, in order: server-declared toolset metadata, t
 
 Output schemas are reported as they are, not as we wish they were:
 
-- A **declared** `outputSchema` becomes the type of `result.structuredContent` in `describe`. The MCP v2 client validates successful non-error structured output against that schema.
-- `structuredContent` remains optional at the JavaScript boundary because a tool-level `isError` envelope may omit it. Check `result.isError || result.structuredContent === undefined` before reading declared fields.
+- A **declared** `outputSchema` becomes the direct return type in `describe`. The MCP v2 client validates successful non-error structured output against that schema before Code Mode unwraps it.
+- Tool-level errors and missing declared structured output throw, so a successfully returned DTO can be read directly without an envelope guard.
 - An **absent** output schema is rendered as `structuredContent?: unknown`, never as a made-up top-level object. Use `codemode.inspect(result)` first, then inspect `result.structuredContent` when present.
 - `codemode.inspect(value)` summarizes the actual shape — keys, types, array lengths, sampled elements — entirely inside the isolate, with no host call and no egress.
+
+The formatter preserves nullable arrays and objects (including `anyOf`/`oneOf`
+null branches), nested properties, literal enums, required versus optional fields,
+and explicit `additionalProperties` maps. Local references to named `$defs`
+(JSON Schema 2020-12), `definitions`, or supplied component schemas are expanded.
+Recursive or unresolved references become `unknown`; external references are not
+fetched. Compact signatures summarize oversized schemas at valid type boundaries.
+When an object mixes declared properties and additional keys, the index value type
+includes both kinds and `undefined` for optional declared properties. This avoids
+an index signature that rejects otherwise schema-valid DTOs; declared fields keep
+their precise types.
 
 Schema provenance is client-internal (`declared`, `synthesized`, or `unavailable`) and never added to MCP traffic.
 
@@ -159,7 +186,7 @@ Plan discovery first, then make one `code_execute` call containing the complete 
 
 Code Mode shines when you need real computation across many calls: pagination loops, aggregation, joining results, math. For example:
 
-- Fetch open and closed issue counts, read each `structuredContent.total_count`, and add them exactly in one execution
+- Fetch open and closed issue counts from declared-schema tools, read each `total_count`, and add them exactly in one execution
 - 876 issues across 9 pages, counting labels per issue, building a histogram
 - For each open PR, fetch reviews and compute average time-to-first-review
 - Paginate all items, filter, group, and summarize

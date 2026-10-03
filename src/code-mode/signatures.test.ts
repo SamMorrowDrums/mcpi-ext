@@ -6,6 +6,21 @@ import { toCodeModeTool } from "./eligibility.js";
 import { loadGithubFixture } from "./fixtures.js";
 import { renderCompactSignature } from "./signatures.js";
 
+function typeErrors(source: string): string[] {
+  const filename = "generated-code-mode-type.ts";
+  const options = { strict: true, noEmit: true, types: [] };
+  const host = ts.createCompilerHost(options);
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) =>
+    name === filename
+      ? ts.createSourceFile(name, source, languageVersion, true)
+      : getSourceFile(name, languageVersion, onError, shouldCreateNewSourceFile);
+  const program = ts.createProgram([filename], options, host);
+  return ts
+    .getPreEmitDiagnostics(program)
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+}
+
 function signatureFor(tool: McpTool): string {
   const snapshot = buildCatalogSnapshot([toCodeModeTool(tool)]);
   return renderCompactSignature(snapshot.entries[0]);
@@ -27,20 +42,20 @@ function tool(overrides: Partial<McpTool> = {}): McpTool {
 }
 
 describe("compact Code Mode result signatures", () => {
-  it("keeps the real search_issues count on structuredContent", () => {
+  it("keeps the real search_issues count on the returned DTO", () => {
     const searchIssues = loadGithubFixture().find((entry) => entry.name === "search_issues");
     expect(searchIssues).toBeDefined();
     if (!searchIssues) return;
 
     const signature = signatureFor(searchIssues);
 
-    expect(signature).toContain("structuredContent?: { total_count?: null | number;");
+    expect(signature).toContain("returns: Promise<{ total_count?: null | number;");
     expect(signature).toContain("incomplete_results?: null | boolean;");
     expect(signature).toContain("items: null | Record<string, unknown>[];");
-    expect(signature).not.toContain("returns: Promise<{ total_count:");
+    expect(signature).not.toContain("structuredContent?:");
   });
 
-  it("types a declared schema inside the raw CallToolResult envelope", () => {
+  it("types a declared schema as the direct return value", () => {
     const signature = signatureFor(
       tool({
         outputSchema: {
@@ -63,10 +78,9 @@ describe("compact Code Mode result signatures", () => {
     );
 
     expect(signature).toContain("returns: Promise<{");
-    expect(signature).toContain("content: Array<{ type: string } & Record<string, unknown>>");
-    expect(signature).toContain("structuredContent?: { total_count: number;");
-    expect(signature).toContain("isError?: boolean");
-    expect(signature).toContain("_meta?: Record<string, unknown>");
+    expect(signature).toContain("returns: Promise<{ total_count: number;");
+    expect(signature).not.toContain("structuredContent?:");
+    expect(signature).toContain("isError results throw upstream_error");
     expect(signature).toContain("schemaHash (not snapshotId):");
     expect(signature).not.toContain("output (declared):");
   });
@@ -110,4 +124,57 @@ describe("compact Code Mode result signatures", () => {
     );
     expect(syntaxErrors).toEqual([]);
   });
+
+  it("preserves nullability when an oversized nullable object is summarized", () => {
+    const signature = signatureFor(
+      tool({
+        outputSchema: {
+          type: ["object", "null"],
+          properties: Object.fromEntries(
+            Array.from({ length: 100 }, (_, index) => [
+              `field_${String(index)}`,
+              { type: "string" },
+            ]),
+          ),
+        },
+      }),
+    );
+    expect(signature).toContain("returns: Promise<Record<string, unknown> | null>");
+  });
+
+  it.each([false, true])(
+    "describe accepts schema-valid DTOs with mixed additionalProperties and optional=%s",
+    (optional) => {
+      const signature = signatureFor(
+        tool({
+          outputSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              ...(optional ? { active: { type: "boolean" } } : {}),
+            },
+            required: ["name"],
+            additionalProperties: { type: "integer" },
+          },
+        }),
+      );
+      const returnType = /^ {2}returns: (.+)$/m.exec(signature)?.[1];
+      expect(returnType).toBeDefined();
+      expect(signature).toContain("Record<string, number | string");
+      if (optional) expect(signature).toContain("boolean | undefined");
+      expect(
+        typeErrors(`
+        type DTO = Awaited<${returnType}>;
+        const value: DTO = { name: "example", extra: 1 };
+        ${optional ? 'const optionalValue: DTO = { name: "example", active: true, extra: 1 };' : ""}
+      `),
+      ).toEqual([]);
+      expect(
+        typeErrors(`
+        type DTO = Awaited<${returnType}>;
+        const invalid: DTO = { name: 123, extra: 1 };
+      `),
+      ).not.toEqual([]);
+    },
+  );
 });
